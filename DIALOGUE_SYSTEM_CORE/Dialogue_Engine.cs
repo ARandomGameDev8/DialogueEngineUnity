@@ -1,0 +1,2839 @@
+using UnityEngine;
+using UnityEngine.UIElements;
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.IO;
+
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
+
+// ── Enums ─────────────────────────────────────────────────────────────────────
+public enum PortraitMode         { None, Single, Dual }      // Single = uni mode, Dual = duel mode
+public enum PortraitPlacement    { Inside, OnBorder, Outside, CharacterPanel }
+public enum CharacterPanelOrder  { ImageTop, NameTop, ImageLeft, NameLeft }
+public enum PortraitShape        { Circle, Square, Rectangle, Rounded }
+public enum ToolbarSlideDirection { Top, Bottom, Left, Right }
+public enum PanelSizeMode        { Percent, Pixels }
+public enum BackgroundMode       { Colour, Image }
+public enum ImageScaleMode       { Stretch, Tile }           // how an image fills its area
+public enum TiledAnimDirection   { None, Left, Right, Up, Down }
+public enum NamePosition         { Above, Below, Left, Right } // name relative to the portrait image
+public enum LetterMode           { Normal, Wave, Zigzag, Staircase }
+public enum TextVAnchor           { Top, Center, Bottom }
+public enum TextHAnchor           { Left, Center, Right }
+public enum PortraitDisplayType  { Figure, Icon }            // Figure = whole image fitted, Icon = image fills the shape
+public enum PortraitFillMode     { Fit, FillCrop, Stretch }  // Fit = contain, FillCrop = cover, Stretch = 100%
+
+// ── Tiled / animated image settings (main background, borders, icon borders) ──
+[Serializable]
+public class TiledImageSettings
+{
+    public Sprite               sprite;
+    [Tooltip("Absolute file path fallback — loaded at runtime if Sprite is empty.")]
+    public string               path;
+    [Tooltip("Multiply the image's pixels by a colour (white = untouched).")]
+    public bool                 tintEnabled = false;
+    public Color                tintColour   = Color.white;
+    public ImageScaleMode       scaleMode    = ImageScaleMode.Tile;
+    public bool                 animate      = false;
+    public TiledAnimDirection   animDirection = TiledAnimDirection.Left;
+    public float                animSpeed    = 30f;          // world px per second
+    public bool                 loop         = true;         // wrap around forever (false = stop at the end)
+    [Range(0.1f, 8f)] public float tileScale = 1f;           // multiplier for Tile-mode tile size
+}
+
+// ── History entry ─────────────────────────────────────────────────────────────
+[Serializable]
+public class DialogueHistoryEntry
+{
+    public string speaker;
+    public string text;
+}
+
+// ── Unresolved portrait entry ─────────────────────────────────────────────────
+[Serializable]
+public class UnresolvedPortrait
+{
+    public string key;
+    public Sprite sprite;
+    public string path;
+}
+
+// ── Dirty script entry ────────────────────────────────────────────────────────
+[Serializable]
+public class DirtyScriptEntry
+{
+    public string       path;
+    public List<string> unresolvedKeys = new List<string>();
+}
+
+// ── Preset data (sidecar .json stored next to the preset .uxml) ───────────────
+// The UXML stores all style values. The JSON stores everything else that a
+// UXML file cannot hold: sprite/font/panel-settings asset references (by GUID)
+// and the animation/behaviour settings. Both are written by "Save As Preset".
+[Serializable]
+public class DialoguePresetDTO
+{
+    // Panel
+    public string panelSettingsGuid = "";
+    public int    panelWidthMode;   public float panelWidthValue = 90f;
+    public int    panelHeightMode;  public float panelHeightValue = 30f;
+    public float  panelOffsetX, panelOffsetY;
+    public int    padLeft = 28, padRight = 28, padTop = 20, padBottom = 20;
+
+    // Background
+    public int   backgroundMode;
+    public Color backgroundColour;
+    public string backgroundSpriteGuid = "";  public int backgroundScaleMode;
+    public bool  backgroundAnimate;           public int  backgroundAnimDir;
+    public float backgroundAnimSpeed = 30f;   public bool backgroundLoop = true;
+    public float backgroundTileScale = 1f;
+
+    // Border
+    public float borderWidth = 1f;            public Color borderColour;
+    public float borderRadiusTL = 12f, borderRadiusTR = 12f, borderRadiusBL = 12f, borderRadiusBR = 12f;
+    public string borderSpriteGuid = "";      public int borderScaleMode;
+    public bool  borderAnimate;               public int  borderAnimDir;
+    public float borderAnimSpeed = 30f;       public bool borderLoop = true;
+    public float borderTileScale = 1f;
+
+    // Speaker name
+    public Color  nameColour;                 public int  nameFontSize = 18;
+    public bool   nameUppercase = true;       public string nameFontGuid = "";
+    public int    namePosition;               public float nameDistance = 6f;
+    public int    nameLetterMode;             public float nameLetterAmplitude = 6f;
+    public float  nameLetterFrequency = 0.6f; public float nameLetterSpacing = 0f;
+
+    // Dialogue text
+    public Color  textColour;                 public int  textFontSize = 15;
+    public string textFontGuid = "";
+    public int    textLetterMode;             public float textLetterAmplitude = 6f;
+    public float  textLetterFrequency = 0.6f; public float textLetterSpacing = 0f;
+
+    // Typewriter
+    public bool  enableTypewriter = true;     public float typewriterSpeed = 0.03f;
+
+    // Portrait
+    public bool  showPortrait = true;         public int portraitMode;
+    public int   portraitPlacement;           public int portraitShape;
+    public int   portraitDisplayType;         public int portraitFillMode;
+    public float portraitSize = 96f;          public bool dynamicPortraitSize;
+    public float maxPortraitSize = 256f;      public float portraitOffsetX, portraitOffsetY;
+    public bool  showPortraitWhenEmpty;
+    public Color portraitBorderColour;        public bool  showPortraitBorder = true;
+    public float portraitBorderWidth = 1f;    public float portraitBorderRadius = 8f;
+    public string portraitBorderSpriteGuid = ""; public int portraitBorderScaleMode;
+    public bool  portraitBorderAnimate;       public int  portraitBorderAnimDir;
+    public float portraitBorderAnimSpeed = 30f; public bool portraitBorderLoop = true;
+    public float portraitBorderTileScale = 1f;
+    public float activePortraitOpacity = 1f;  public float inactivePortraitOpacity = 0.4f;
+    public Color inactiveTintColour = new Color(0.5f, 0.5f, 0.5f, 1f);
+
+    // Advance hint
+    public bool   showAdvanceHint = true;     public string advanceHintText = "SPACE  /  ENTER";
+    public Color  hintColour;                 public int hintFontSize = 10;
+
+    // Toolbar
+    public bool  showToolbar = true;          public bool showSettingsButton = true;
+    public int   toolbarSlideDirection;
+
+    // File-path fallbacks + tints for the image layers
+    public string backgroundSpritePath = "";
+    public string borderSpritePath = "";
+    public string portraitBorderSpritePath = "";
+    public bool   backgroundTintEnabled;         public Color backgroundTintColour = Color.white;
+    public bool   borderTintEnabled;             public Color borderTintColour = Color.white;
+    public bool   portraitBorderTintEnabled;     public Color portraitBorderTintColour = Color.white;
+
+    // Text anchoring (VN-style)
+    public int textVAnchor = 1;  // Center
+    public int textHAnchor = 0;  // Left
+
+    // Character figure panel
+    public bool  characterPanelShowImagePanel = true;
+    public bool  characterPanelShowNamePanel  = true;
+    public int   characterPanelOrder;
+    public float characterPanelWidth = 160f;
+    public Color characterPanelBg;
+    public Color characterPanelBorderColour;
+    public float characterPanelBorderWidth = 1f;
+    public float characterPanelRadius = 10f;
+    public int   charPanelPadL = 12, charPanelPadR = 12, charPanelPadT = 12, charPanelPadB = 12;
+    public float characterPanelSpacing = 8f;
+    public Color characterImagePanelBg;
+    public Color characterImagePanelBorderColour;
+    public float characterImagePanelBorderWidth;
+    public float characterImagePanelRadius = 8f;
+    public int   charImagePadL = 8, charImagePadR = 8, charImagePadT = 8, charImagePadB = 8;
+    public Color characterNamePanelBg;
+    public Color characterNamePanelBorderColour;
+    public float characterNamePanelBorderWidth;
+    public float characterNamePanelRadius = 8f;
+    public int   charNamePadL = 8, charNamePadR = 8, charNamePadT = 6, charNamePadB = 6;
+
+    // Placeholder + interaction
+    public bool   useDefaultPortraitPlaceholder = true;
+    public string defaultPortraitSpriteGuid = "";
+    public string defaultPortraitPath = "";
+    public bool   clickToAdvance = true;
+}
+
+[DefaultExecutionOrder(-100)]
+public class Dialogue_Engine : MonoBehaviour
+{
+    public static Dialogue_Engine Instance { get; private set; }
+    public static event Action<string> OnEmit;
+
+    // ─── Paths ────────────────────────────────────────────────────────────────
+    // The project root is the Unity project folder, e.g. /home/george/GameTut
+    public const string PRESETS_PATH = "Assets/Scripts/Dialogue_Presets";
+    public const string UXML_PATH    = "Assets/Scripts/Dialogue_Presets/dialogue_generated.uxml";
+    public const string GENERATED_FILE_NAME = "dialogue_generated";
+
+    // ─── Preset ───────────────────────────────────────────────────────────────
+    [Header("Preset")]
+    [Tooltip("Name of a preset UXML file inside Dialogue_Presets (without extension). Leave empty to use the inspector fields directly (generated layout).")]
+    public string presetName = "";
+
+    // ─── Panel ────────────────────────────────────────────────────────────────
+    [Header("Panel")]
+    public PanelSettings panelSettings;
+
+    [Header("Panel Size & Position")]
+    public PanelSizeMode panelWidthMode  = PanelSizeMode.Percent;
+    [Range(1f, 100f)] public float panelWidthValue  = 90f;    // % or px depending on mode
+    public PanelSizeMode panelHeightMode = PanelSizeMode.Percent;
+    [Range(1f, 100f)] public float panelHeightValue = 30f;    // % or px depending on mode
+    [Range(-500f, 500f)] public float panelOffsetX = 0f;      // px shift from the anchored position
+    [Range(-500f, 500f)] public float panelOffsetY = 0f;
+    public RectOffset padding;
+
+    // ─── Background ───────────────────────────────────────────────────────────
+    [Header("Background")]
+    public BackgroundMode backgroundMode = BackgroundMode.Colour;
+    public Color backgroundColour = new Color(0.05f, 0.05f, 0.05f, 0.92f);
+    [Tooltip("Image background: repeating (Tile), looping and animating are supported.")]
+    public TiledImageSettings backgroundImage = new TiledImageSettings();
+
+    // ─── Border ───────────────────────────────────────────────────────────────
+    [Header("Box Border")]
+    [Range(0f, 8f)]  public float borderWidth    = 1f;
+    public Color borderColour = new Color(1f, 1f, 1f, 1f);
+    [Range(0f, 32f)] public float borderRadiusTL = 12f;
+    [Range(0f, 32f)] public float borderRadiusTR = 12f;
+    [Range(0f, 32f)] public float borderRadiusBL = 12f;
+    [Range(0f, 32f)] public float borderRadiusBR = 12f;
+    [Tooltip("Image border: drawn inside the border ring only, fully tiled/looped/animated.")]
+    public TiledImageSettings borderImage = new TiledImageSettings();
+
+    // ─── Speaker Name ─────────────────────────────────────────────────────────
+    [Header("Speaker Name")]
+    public Color nameColour = new Color(0.98f, 0.82f, 0.44f, 1f);
+    [Range(8, 64)] public int nameFontSize = 18;
+    public bool nameUppercase = true;
+    public Font nameFont;
+    [Header("Name Position (relative to portrait image)")]
+    public NamePosition namePosition = NamePosition.Above;
+    [Range(0f, 64f)] public float nameDistance = 6f;
+    [Header("Name Letter Behaviour")]
+    public LetterMode nameLetterMode = LetterMode.Normal;
+    [Range(0f, 48f)] public float nameLetterAmplitude = 6f;
+    [Range(0.05f, 3f)] public float nameLetterFrequency = 0.6f;
+    [Range(-8f, 32f)] public float nameLetterSpacing = 0f;
+
+    // ─── Dialogue Text ────────────────────────────────────────────────────────
+    [Header("Dialogue Text")]
+    public Color textColour = new Color(0.93f, 0.93f, 0.93f, 1f);
+    [Range(8, 64)] public int textFontSize = 15;
+    public Font textFont;
+    [Header("Text Anchoring (VN-style)")]
+    [Tooltip("Vertical anchor of the text inside the panel. Center = classic VN look.")]
+    public TextVAnchor textVAnchor = TextVAnchor.Center;
+    public TextHAnchor textHAnchor = TextHAnchor.Left;
+    [Header("Letter Behaviour (per-word letter layout)")]
+    public LetterMode textLetterMode = LetterMode.Normal;
+    [Range(0f, 48f)] public float textLetterAmplitude = 6f;
+    [Range(0.05f, 3f)] public float textLetterFrequency = 0.6f;
+    [Range(-8f, 32f)] public float textLetterSpacing = 0f;
+
+    // ─── Typewriter ───────────────────────────────────────────────────────────
+    [Header("Typewriter")]
+    public bool enableTypewriter = true;
+    [Range(0.005f, 0.1f)] public float typewriterSpeed = 0.03f;
+
+    // ─── Portrait ─────────────────────────────────────────────────────────────
+    [Header("Portrait")]
+    public bool              showPortrait       = true;
+    public PortraitMode      portraitMode       = PortraitMode.Single;   // uni / duel
+    public PortraitPlacement portraitPlacement  = PortraitPlacement.Inside;
+    public PortraitShape     portraitShape      = PortraitShape.Rounded;
+    [Header("Portrait Display")]
+    [Tooltip("Figure = the whole image fitted inside. Icon = a geometric shape filled by the image (cropped).")]
+    public PortraitDisplayType portraitDisplayType = PortraitDisplayType.Figure;
+    public PortraitFillMode  portraitFillMode   = PortraitFillMode.Fit;
+    [Range(48f, 512f)] public float portraitSize = 96f;
+    [Tooltip("Fit the portrait box to the image's aspect ratio instead of a fixed square.")]
+    public bool dynamicPortraitSize = false;
+    [Range(48f, 512f)] public float maxPortraitSize = 256f;
+    [Tooltip("Extra offset of the portrait relative to its parent container (px).")]
+    [Range(-300f, 300f)] public float portraitOffsetX = 0f;
+    [Range(-300f, 300f)] public float portraitOffsetY = 0f;
+    [Tooltip("When there is no image, show an empty framed box instead of hiding the portrait.")]
+    public bool showPortraitWhenEmpty = false;
+
+    [Header("Portrait Border")]
+    public Color portraitBorderColour = new Color(1f, 1f, 1f, 1f);
+    public bool  showPortraitBorder   = true;
+    [Range(0f, 8f)]  public float portraitBorderWidth  = 1f;
+    [Range(0f, 32f)] public float portraitBorderRadius = 8f;
+    [Tooltip("Optional image drawn inside the portrait border ring (tiled/looped/animated).")]
+    public TiledImageSettings portraitBorderImage = new TiledImageSettings();
+
+    [Header("Portrait Opacity (duel mode)")]
+    [Range(0f, 1f)] public float activePortraitOpacity   = 1f;
+    [Range(0f, 1f)] public float inactivePortraitOpacity = 0.4f;
+    public Color inactiveTintColour = new Color(0.5f, 0.5f, 0.5f, 1f);
+
+    // ─── Character Figure Panel ───────────────────────────────────────────────
+    [Header("Character Panel (figure panel)")]
+    [Tooltip("The figure panel sits OUTSIDE the main panel ([figure panel] [main panel]). It is segmented into an image panel and a name panel, both fully customizable.")]
+    public bool characterPanelShowImagePanel = true;
+    public bool characterPanelShowNamePanel  = true;
+    [Tooltip("Default layout: image panel on top, name panel below.")]
+    public CharacterPanelOrder characterPanelOrder = CharacterPanelOrder.ImageTop;
+    [Range(80f, 600f)] public float characterPanelWidth = 160f;
+    public Color characterPanelBg = new Color(0.07f, 0.07f, 0.08f, 0.9f);
+    public Color characterPanelBorderColour = new Color(0.55f, 0.55f, 0.6f, 1f);
+    [Range(0f, 8f)]  public float characterPanelBorderWidth = 1f;
+    [Range(0f, 32f)] public float characterPanelRadius = 10f;
+    public RectOffset characterPanelPadding = new RectOffset(12, 12, 12, 12);
+    [Range(0f, 32f)] public float characterPanelSpacing = 8f;
+
+    [Header("Character Panel — Image Panel")]
+    public Color characterImagePanelBg = new Color(0.10f, 0.10f, 0.12f, 1f);
+    public Color characterImagePanelBorderColour = new Color(0.45f, 0.45f, 0.5f, 1f);
+    [Range(0f, 8f)]  public float characterImagePanelBorderWidth = 0f;
+    [Range(0f, 32f)] public float characterImagePanelRadius = 8f;
+    public RectOffset characterImagePanelPadding = new RectOffset(8, 8, 8, 8);
+
+    [Header("Character Panel — Name Panel")]
+    public Color characterNamePanelBg = new Color(0.05f, 0.05f, 0.06f, 0.9f);
+    public Color characterNamePanelBorderColour = new Color(0.45f, 0.45f, 0.5f, 1f);
+    [Range(0f, 8f)]  public float characterNamePanelBorderWidth = 0f;
+    [Range(0f, 32f)] public float characterNamePanelRadius = 8f;
+    public RectOffset characterNamePanelPadding = new RectOffset(8, 8, 6, 6);
+
+    [Header("Default Portrait Placeholder")]
+    [Tooltip("When no portrait image is loaded, show a shaded unidentified-character silhouette (or your own sprite / file).")]
+    public bool   useDefaultPortraitPlaceholder = true;
+    public Sprite defaultPortraitSprite;
+    public string defaultPortraitPath = "";
+
+    [Header("Interaction")]
+    [Tooltip("Click on the dialogue box to advance (or complete the typewriter).")]
+    public bool clickToAdvance = true;
+
+    // ─── Advance Hint ─────────────────────────────────────────────────────────
+    [Header("Advance Hint")]
+    public bool   showAdvanceHint = true;
+    public string advanceHintText = "SPACE  /  ENTER";
+    public Color  hintColour      = new Color(1f, 1f, 1f, 0.35f);
+    [Range(6, 24)] public int hintFontSize = 10;
+
+    // ─── Toolbar / History / Settings ─────────────────────────────────────────
+    [Header("Toolbar & History")]
+    public bool                 showToolbar           = true;
+    public bool                 showSettingsButton    = true;
+    public ToolbarSlideDirection toolbarSlideDirection = ToolbarSlideDirection.Bottom;
+
+    // ─── Unresolved portraits & dirty scripts ─────────────────────────────────
+    [Header("Unresolved Portraits")]
+    [SerializeField] public List<UnresolvedPortrait> portraits = new List<UnresolvedPortrait>();
+    [Header("Dirty Scripts")]
+    [Tooltip("Scripts whose last compile produced unresolved portrait placeholders.")]
+    [SerializeField] public List<DirtyScriptEntry> dirtyScripts = new List<DirtyScriptEntry>();
+    [HideInInspector] [SerializeField] string lastLoadedScript = "";
+
+    // ─── Internals ─────────────────────────────────────────────────────────────
+    UIDocument document;
+
+    VisualElement rowContainer;
+    VisualElement box;
+    VisualElement backgroundLayer;
+    VisualElement borderLayer;
+
+    VisualElement insideLeftWrapper,  insideRightWrapper;
+    VisualElement insideLeftHost,     insideRightHost;
+    VisualElement frameInsideLeft,    frameInsideRight;
+    VisualElement portraitInsideLeft, portraitInsideRight;
+    VisualElement overlayInsideLeft,  overlayInsideRight;
+    VisualElement nameInsideLeft,     nameInsideRight;
+
+    VisualElement outsideLeftWrapper,  outsideRightWrapper;
+    VisualElement outsideLeftHost,     outsideRightHost;
+    VisualElement frameOutsideLeft,    frameOutsideRight;
+    VisualElement portraitOutsideLeft, portraitOutsideRight;
+    VisualElement overlayOutsideLeft,  overlayOutsideRight;
+    VisualElement nameOutsideLeft,     nameOutsideRight;
+
+    VisualElement borderLeftWrapper,  borderRightWrapper;
+    VisualElement borderLeftHost,     borderRightHost;
+    VisualElement frameBorderLeft,    frameBorderRight;
+    VisualElement portraitBorderLeft, portraitBorderRight;
+    VisualElement overlayBorderLeft,  overlayBorderRight;
+    VisualElement nameBorderLeft,     nameBorderRight;
+
+    // Character figure panels (outside, segmented into image + name panels)
+    VisualElement charLeftWrapper,  charRightWrapper;
+    VisualElement charLeftHost, charRightHost;
+    VisualElement frameCharLeft, frameCharRight;
+    VisualElement portraitCharLeft, portraitCharRight;
+    VisualElement overlayCharLeft, overlayCharRight;
+    VisualElement nameCharLeft, nameCharRight;
+
+    ScrollView    textScroll;
+    Label         dialogueTextLabel;
+    Label         advanceHintLabel;
+    VisualElement choiceContainer;
+
+    VisualElement toolbarPanel;
+    VisualElement historyPanel;
+    ScrollView    historyContent;
+    VisualElement settingsPanel;
+    ScrollView    settingsContent;
+    Button        toolbarToggleButton, historyButton, settingsButton, rewindButton;
+    Button        closeHistoryButton, closeSettingsButton;
+
+    bool toolbarVisible = false;
+    bool layoutApplied  = false;
+
+    // ─── Professional polish state ────────────────────────────────────────────
+    List<Button>      choiceButtons  = new List<Button>();
+    List<OptionToken> choiceOptions  = new List<OptionToken>();
+    int               choiceHighlight = -1;
+
+    IVisualElementScheduledItem openTween, hintPulseTask, caretBlinkTask;
+    IVisualElementScheduledItem slotTween0, slotTween1;
+    float slotCur0 = 1f, slotCur1 = 1f;
+    float hintPhase = 0f;
+    bool  caretOn   = true;
+    string shownText = "";
+
+    // Dual portrait slot ownership
+    string[] slotOwner = new string[2] { null, null };
+
+    // History — array-backed list for O(1) indexed access
+    List<DialogueHistoryEntry> history = new List<DialogueHistoryEntry>();
+
+    // ─── Graph & Traversal State ──────────────────────────────────────────────
+    DialogueGraph graph;
+    SectionToken  currentSection;
+    int           currentIndex;
+    Stack<(SectionToken section, int index)> sectionStack = new Stack<(SectionToken section, int index)>();
+
+    bool        isOpen    = false;
+    public bool isSuccess = false;
+
+    // Typewriter
+    Coroutine typewriterCoroutine;
+    bool      isTyping        = false;
+    string    currentFullText = "";
+
+    // ─── Animated image layers ────────────────────────────────────────────────
+    class TilerRuntime
+    {
+        public VisualElement clip, mover;
+        public List<VisualElement> tiles = new List<VisualElement>();
+        public TiledImageSettings settings;
+        public Vector2 clipSize, tileSize;   // tileSize == clipSize when stretch
+        public float   offset;
+        public bool    stretch;
+        public bool    finished;             // non-loop animation reached the end
+        public IVisualElementScheduledItem sched; // owning Every() task — paused on rebuild
+        public void Tick(float dt)
+        {
+            if (finished || settings == null || !settings.animate || clip == null) return;
+            offset += settings.animSpeed * dt;
+            float range = stretch ? (settings.animDirection == TiledAnimDirection.Left || settings.animDirection == TiledAnimDirection.Right ? clipSize.x : clipSize.y)
+                                  : (settings.animDirection == TiledAnimDirection.Left || settings.animDirection == TiledAnimDirection.Right ? tileSize.x : tileSize.y);
+            if (range <= 0f) return;
+            if (settings.loop) offset %= range;
+            else if (offset >= range) { offset = range; finished = true; }
+            Apply();
+        }
+        public void Apply()
+        {
+            float dx = 0f, dy = 0f;
+            float p = offset;
+            if (settings.animDirection == TiledAnimDirection.Left)  dx = -p;
+            if (settings.animDirection == TiledAnimDirection.Right) dx = p - (stretch ? clipSize.x : tileSize.x);
+            if (settings.animDirection == TiledAnimDirection.Up)    dy = -p;
+            if (settings.animDirection == TiledAnimDirection.Down)  dy = p - (stretch ? clipSize.y : tileSize.y);
+            if (stretch)
+            {
+                // Two stretched tiles wrap around seamlessly-ish
+                for (int i = 0; i < tiles.Count && i < 2; i++)
+                {
+                    float x = (settings.animDirection == TiledAnimDirection.Left || settings.animDirection == TiledAnimDirection.Right)
+                        ? -p + i * clipSize.x : 0f;
+                    float y = (settings.animDirection == TiledAnimDirection.Up || settings.animDirection == TiledAnimDirection.Down)
+                        ? -p + i * clipSize.y : 0f;
+                    tiles[i].style.left = x;
+                    tiles[i].style.top  = y;
+                }
+            }
+            else if (mover != null)
+            {
+                mover.style.translate = new Translate(dx, dy, 0);
+            }
+        }
+    }
+
+    readonly Dictionary<VisualElement, TilerRuntime> tilers = new Dictionary<VisualElement, TilerRuntime>();
+    readonly Dictionary<VisualElement, Vector2>      layerSizes = new Dictionary<VisualElement, Vector2>();
+    Vector2 lastBoxSize;
+
+    // ──────────────────────────────────────────────────────────────────────────
+    void Awake()
+    {
+        if (padding == null) padding = new RectOffset(28, 28, 20, 20);
+        if (Instance != null && Instance != this) { Destroy(gameObject); return; }
+        Instance = this;
+
+        Debug.Log("Dialogue_Engine: Awake started.");
+
+        foreach (var old in GetComponents<UIDocument>())
+            Destroy(old);
+
+        document = gameObject.AddComponent<UIDocument>();
+
+        if (panelSettings == null)
+        { Debug.LogError("Dialogue_Engine: PanelSettings not assigned."); return; }
+
+        document.panelSettings = panelSettings;
+
+        // ── Resolve which UXML to attach: a saved preset or the generated one ──
+        string uxmlPath = null;
+
+        #if UNITY_EDITOR
+        uxmlPath = ResolvePresetPath();
+        if (uxmlPath == null)
+        {
+            // No preset selected → (re)generate the layout from the current
+            // inspector fields so edits are always reflected on play. The file
+            // is only rewritten (and re-imported) when something changed.
+            uxmlPath = UXML_PATH;
+            string desired = GenerateUxml(this);
+            bool changed = !File.Exists(uxmlPath) || File.ReadAllText(uxmlPath) != desired;
+            if (changed)
+            {
+                string dir = Path.GetDirectoryName(uxmlPath);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                File.WriteAllText(uxmlPath, desired);
+                AssetDatabase.ImportAsset(uxmlPath, ImportAssetOptions.ForceUpdate);
+            }
+        }
+        var uxml = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(uxmlPath);
+        #else
+        // In builds the generated layout must live inside a Resources folder.
+        var uxml = Resources.Load<VisualTreeAsset>("Dialogue_Presets/dialogue_generated");
+        #endif
+
+        if (uxml == null)
+        { Debug.LogError($"Dialogue_Engine: UXML not found at {(uxmlPath ?? "Resources/Dialogue_Presets/dialogue_generated")}. Build the layout first."); return; }
+
+        document.visualTreeAsset = uxml;
+
+        var docRoot = document.rootVisualElement;
+        if (docRoot == null)
+        { Debug.LogError("Dialogue_Engine: rootVisualElement is null."); return; }
+
+        // ── Core element refs ─────────────────────────────────────────────────
+        rowContainer       = docRoot.Q("RowContainer");
+        box                = docRoot.Q("DialogueBox");
+        backgroundLayer    = docRoot.Q("BackgroundLayer");
+        borderLayer        = docRoot.Q("BorderLayer");
+        textScroll         = docRoot.Q<ScrollView>("TextScroll");
+        dialogueTextLabel  = docRoot.Q<Label>("DialogueText");
+        advanceHintLabel   = docRoot.Q<Label>("AdvanceHint");
+        choiceContainer    = docRoot.Q("ChoiceContainer");
+
+        // Portrait wrappers
+        insideLeftWrapper  = docRoot.Q("InsideLeftWrapper");
+        insideRightWrapper = docRoot.Q("InsideRightWrapper");
+        insideLeftHost     = docRoot.Q("PortraitHostInsideLeft");
+        insideRightHost    = docRoot.Q("PortraitHostInsideRight");
+        frameInsideLeft    = docRoot.Q("PortraitFrameInsideLeft");
+        frameInsideRight   = docRoot.Q("PortraitFrameInsideRight");
+        portraitInsideLeft = docRoot.Q("PortraitInsideLeft");
+        portraitInsideRight= docRoot.Q("PortraitInsideRight");
+        overlayInsideLeft  = docRoot.Q("PortraitBorderOverlayInsideLeft");
+        overlayInsideRight = docRoot.Q("PortraitBorderOverlayInsideRight");
+        nameInsideLeft     = docRoot.Q("NameInsideLeft");
+        nameInsideRight    = docRoot.Q("NameInsideRight");
+
+        outsideLeftWrapper  = docRoot.Q("OutsideLeftWrapper");
+        outsideRightWrapper = docRoot.Q("OutsideRightWrapper");
+        outsideLeftHost     = docRoot.Q("PortraitHostOutsideLeft");
+        outsideRightHost    = docRoot.Q("PortraitHostOutsideRight");
+        frameOutsideLeft    = docRoot.Q("PortraitFrameOutsideLeft");
+        frameOutsideRight   = docRoot.Q("PortraitFrameOutsideRight");
+        portraitOutsideLeft = docRoot.Q("PortraitOutsideLeft");
+        portraitOutsideRight= docRoot.Q("PortraitOutsideRight");
+        overlayOutsideLeft  = docRoot.Q("PortraitBorderOverlayOutsideLeft");
+        overlayOutsideRight = docRoot.Q("PortraitBorderOverlayOutsideRight");
+        nameOutsideLeft     = docRoot.Q("NameOutsideLeft");
+        nameOutsideRight    = docRoot.Q("NameOutsideRight");
+
+        borderLeftWrapper  = docRoot.Q("BorderLeftWrapper");
+        borderRightWrapper = docRoot.Q("BorderRightWrapper");
+        borderLeftHost     = docRoot.Q("PortraitHostBorderLeft");
+        borderRightHost    = docRoot.Q("PortraitHostBorderRight");
+        frameBorderLeft    = docRoot.Q("PortraitFrameBorderLeft");
+        frameBorderRight   = docRoot.Q("PortraitFrameBorderRight");
+        portraitBorderLeft = docRoot.Q("PortraitBorderLeft");
+        portraitBorderRight= docRoot.Q("PortraitBorderRight");
+        overlayBorderLeft  = docRoot.Q("PortraitBorderOverlayBorderLeft");
+        overlayBorderRight = docRoot.Q("PortraitBorderOverlayBorderRight");
+        nameBorderLeft     = docRoot.Q("NameBorderLeft");
+        nameBorderRight    = docRoot.Q("NameBorderRight");
+
+        // Character figure panels
+        charLeftWrapper   = docRoot.Q("CharacterPanelLeftWrapper");
+        charRightWrapper  = docRoot.Q("CharacterPanelRightWrapper");
+        charLeftHost   = docRoot.Q("PortraitHostCharLeft");
+        charRightHost  = docRoot.Q("PortraitHostCharRight");
+        frameCharLeft  = docRoot.Q("PortraitFrameCharLeft");
+        frameCharRight = docRoot.Q("PortraitFrameCharRight");
+        portraitCharLeft  = docRoot.Q("PortraitCharLeft");
+        portraitCharRight = docRoot.Q("PortraitCharRight");
+        overlayCharLeft   = docRoot.Q("PortraitBorderOverlayCharLeft");
+        overlayCharRight  = docRoot.Q("PortraitBorderOverlayCharRight");
+        nameCharLeft      = docRoot.Q("NameCharLeft");
+        nameCharRight     = docRoot.Q("NameCharRight");
+
+        // Toolbar / history / settings
+        toolbarPanel        = docRoot.Q("ToolbarPanel");
+        historyPanel        = docRoot.Q("HistoryPanel");
+        historyContent      = docRoot.Q<ScrollView>("HistoryContent");
+        settingsPanel       = docRoot.Q("SettingsPanel");
+        settingsContent     = docRoot.Q<ScrollView>("SettingsContent");
+        toolbarToggleButton = docRoot.Q<Button>("ToolbarToggle");
+        historyButton       = docRoot.Q<Button>("HistoryButton");
+        settingsButton      = docRoot.Q<Button>("SettingsButton");
+        rewindButton        = docRoot.Q<Button>("RewindButton");
+        closeHistoryButton  = docRoot.Q<Button>("CloseHistoryButton");
+        closeSettingsButton = docRoot.Q<Button>("CloseSettingsButton");
+
+        // Wire buttons
+        if (toolbarToggleButton != null) toolbarToggleButton.clicked += ToggleToolbar;
+        if (historyButton       != null) historyButton.clicked       += ShowHistory;
+        if (settingsButton      != null) settingsButton.clicked      += ShowSettings;
+        if (rewindButton        != null) rewindButton.clicked        += OnRewind;
+        if (closeHistoryButton  != null) closeHistoryButton.clicked  += HideHistory;
+        if (closeSettingsButton != null) closeSettingsButton.clicked += HideSettings;
+
+        if (box == null)               Debug.LogError("Dialogue_Engine: 'DialogueBox' not found in UXML.");
+        if (dialogueTextLabel == null) Debug.LogError("Dialogue_Engine: 'DialogueText' not found in UXML.");
+
+        if (box != null) box.style.display = DisplayStyle.None;
+
+        // ── Interaction wiring (keyboard navigation, click-to-advance) ────────
+        docRoot.focusable = true;
+        docRoot.RegisterCallback<KeyDownEvent>(OnKeyDown);
+        if (clickToAdvance && box != null)
+            box.RegisterCallback<ClickEvent>(OnBoxClicked);
+
+        // Apply the runtime layout (sizing, image layers, shapes…). Runs once
+        // immediately and again after the first layout pass via GeometryChanged.
+        ApplyRuntimeLayout();
+        if (box != null)
+            box.RegisterCallback<GeometryChangedEvent>(evt =>
+            {
+                if (!layoutApplied) { layoutApplied = true; ApplyRuntimeLayout(); }
+                RebuildDynamicLayers();
+            });
+
+        Debug.Log($"Dialogue_Engine: Awake done. box={box != null}");
+    }
+
+    #if UNITY_EDITOR
+    void OnValidate()
+    {
+        // Border colours are full-opacity by design: translucent borders read
+        // as "greyed out" on dark panels. Heal any legacy serialized alpha
+        // (old defaults were 0.12 / 0.18) so picked colours show exactly.
+        if (borderColour.a < 1f) borderColour.a = 1f;
+        if (portraitBorderColour.a < 1f) portraitBorderColour.a = 1f;
+    }
+    #endif
+
+    #if UNITY_EDITOR
+    // Returns the path of the selected preset (applying its sidecar .json),
+    // or null when no preset is selected / the preset file is missing.
+    string ResolvePresetPath()
+    {
+        if (string.IsNullOrEmpty(presetName)) return null;
+
+        string fileName = presetName.Trim();
+        if (!fileName.EndsWith(".uxml", StringComparison.OrdinalIgnoreCase))
+            fileName += ".uxml";
+        string fullPath = Path.Combine(PRESETS_PATH, fileName);
+
+        if (!File.Exists(fullPath))
+        {
+            Debug.LogWarning($"Dialogue_Engine: Preset \"{presetName}\" not found in {PRESETS_PATH} — using the generated layout instead.");
+            return null;
+        }
+
+        // Apply the sidecar (sprites/fonts/animations) if present.
+        string jsonPath = Path.ChangeExtension(fullPath, ".json");
+        if (File.Exists(jsonPath))
+        {
+            try
+            {
+                var dto = JsonUtility.FromJson<DialoguePresetDTO>(File.ReadAllText(jsonPath));
+                if (dto != null) ApplyPreset(dto);
+            }
+            catch (Exception ex) { Debug.LogWarning($"Dialogue_Engine: Failed to read preset sidecar {jsonPath}: {ex.Message}"); }
+        }
+        return fullPath;
+    }
+    #endif
+
+    // ─── Preset helpers ────────────────────────────────────────────────────────
+    public void ApplyPreset(DialoguePresetDTO d)
+    {
+        if (d == null) return;
+
+        #if UNITY_EDITOR
+        if (!string.IsNullOrEmpty(d.panelSettingsGuid))
+            panelSettings = AssetDatabase.LoadAssetAtPath<PanelSettings>(AssetDatabase.GUIDToAssetPath(d.panelSettingsGuid));
+        #endif
+
+        panelWidthMode = (PanelSizeMode)d.panelWidthMode; panelWidthValue = d.panelWidthValue;
+        panelHeightMode = (PanelSizeMode)d.panelHeightMode; panelHeightValue = d.panelHeightValue;
+        panelOffsetX = d.panelOffsetX; panelOffsetY = d.panelOffsetY;
+        padding = new RectOffset(d.padLeft, d.padRight, d.padTop, d.padBottom);
+
+        backgroundMode = (BackgroundMode)d.backgroundMode;
+        backgroundColour = d.backgroundColour;
+        ApplyTiledDTO(backgroundImage, d.backgroundSpriteGuid, d.backgroundSpritePath, d.backgroundScaleMode, d.backgroundAnimate, d.backgroundAnimDir, d.backgroundAnimSpeed, d.backgroundLoop, d.backgroundTileScale, d.backgroundTintEnabled, d.backgroundTintColour);
+
+        borderWidth = d.borderWidth; borderColour = d.borderColour;
+        borderRadiusTL = d.borderRadiusTL; borderRadiusTR = d.borderRadiusTR;
+        borderRadiusBL = d.borderRadiusBL; borderRadiusBR = d.borderRadiusBR;
+        ApplyTiledDTO(borderImage, d.borderSpriteGuid, d.borderSpritePath, d.borderScaleMode, d.borderAnimate, d.borderAnimDir, d.borderAnimSpeed, d.borderLoop, d.borderTileScale, d.borderTintEnabled, d.borderTintColour);
+
+        nameColour = d.nameColour; nameFontSize = d.nameFontSize; nameUppercase = d.nameUppercase;
+        #if UNITY_EDITOR
+        if (!string.IsNullOrEmpty(d.nameFontGuid)) nameFont = AssetDatabase.LoadAssetAtPath<Font>(AssetDatabase.GUIDToAssetPath(d.nameFontGuid));
+        #endif
+        namePosition = (NamePosition)d.namePosition; nameDistance = d.nameDistance;
+        nameLetterMode = (LetterMode)d.nameLetterMode; nameLetterAmplitude = d.nameLetterAmplitude;
+        nameLetterFrequency = d.nameLetterFrequency; nameLetterSpacing = d.nameLetterSpacing;
+
+        textColour = d.textColour; textFontSize = d.textFontSize;
+        #if UNITY_EDITOR
+        if (!string.IsNullOrEmpty(d.textFontGuid)) textFont = AssetDatabase.LoadAssetAtPath<Font>(AssetDatabase.GUIDToAssetPath(d.textFontGuid));
+        #endif
+        textLetterMode = (LetterMode)d.textLetterMode; textLetterAmplitude = d.textLetterAmplitude;
+        textLetterFrequency = d.textLetterFrequency; textLetterSpacing = d.textLetterSpacing;
+        textVAnchor = (TextVAnchor)d.textVAnchor;
+        textHAnchor = (TextHAnchor)d.textHAnchor;
+
+        enableTypewriter = d.enableTypewriter; typewriterSpeed = d.typewriterSpeed;
+
+        showPortrait = d.showPortrait; portraitMode = (PortraitMode)d.portraitMode;
+        portraitPlacement = (PortraitPlacement)d.portraitPlacement; portraitShape = (PortraitShape)d.portraitShape;
+        portraitDisplayType = (PortraitDisplayType)d.portraitDisplayType; portraitFillMode = (PortraitFillMode)d.portraitFillMode;
+        portraitSize = d.portraitSize; dynamicPortraitSize = d.dynamicPortraitSize; maxPortraitSize = d.maxPortraitSize;
+        portraitOffsetX = d.portraitOffsetX; portraitOffsetY = d.portraitOffsetY;
+        showPortraitWhenEmpty = d.showPortraitWhenEmpty;
+        portraitBorderColour = d.portraitBorderColour; showPortraitBorder = d.showPortraitBorder;
+        portraitBorderWidth = d.portraitBorderWidth; portraitBorderRadius = d.portraitBorderRadius;
+        ApplyTiledDTO(portraitBorderImage, d.portraitBorderSpriteGuid, d.portraitBorderSpritePath, d.portraitBorderScaleMode, d.portraitBorderAnimate, d.portraitBorderAnimDir, d.portraitBorderAnimSpeed, d.portraitBorderLoop, d.portraitBorderTileScale, d.portraitBorderTintEnabled, d.portraitBorderTintColour);
+        activePortraitOpacity = d.activePortraitOpacity; inactivePortraitOpacity = d.inactivePortraitOpacity;
+        inactiveTintColour = d.inactiveTintColour;
+
+        showAdvanceHint = d.showAdvanceHint; advanceHintText = d.advanceHintText;
+        hintColour = d.hintColour; hintFontSize = d.hintFontSize;
+
+        showToolbar = d.showToolbar; showSettingsButton = d.showSettingsButton;
+        toolbarSlideDirection = (ToolbarSlideDirection)d.toolbarSlideDirection;
+
+        characterPanelShowImagePanel = d.characterPanelShowImagePanel;
+        characterPanelShowNamePanel  = d.characterPanelShowNamePanel;
+        characterPanelOrder = (CharacterPanelOrder)d.characterPanelOrder;
+        characterPanelWidth = d.characterPanelWidth;
+        characterPanelBg = d.characterPanelBg;
+        characterPanelBorderColour = d.characterPanelBorderColour;
+        characterPanelBorderWidth = d.characterPanelBorderWidth;
+        characterPanelRadius = d.characterPanelRadius;
+        characterPanelPadding = new RectOffset(d.charPanelPadL, d.charPanelPadR, d.charPanelPadT, d.charPanelPadB);
+        characterPanelSpacing = d.characterPanelSpacing;
+        characterImagePanelBg = d.characterImagePanelBg;
+        characterImagePanelBorderColour = d.characterImagePanelBorderColour;
+        characterImagePanelBorderWidth = d.characterImagePanelBorderWidth;
+        characterImagePanelRadius = d.characterImagePanelRadius;
+        characterImagePanelPadding = new RectOffset(d.charImagePadL, d.charImagePadR, d.charImagePadT, d.charImagePadB);
+        characterNamePanelBg = d.characterNamePanelBg;
+        characterNamePanelBorderColour = d.characterNamePanelBorderColour;
+        characterNamePanelBorderWidth = d.characterNamePanelBorderWidth;
+        characterNamePanelRadius = d.characterNamePanelRadius;
+        characterNamePanelPadding = new RectOffset(d.charNamePadL, d.charNamePadR, d.charNamePadT, d.charNamePadB);
+
+        useDefaultPortraitPlaceholder = d.useDefaultPortraitPlaceholder;
+        defaultPortraitPath = d.defaultPortraitPath;
+        #if UNITY_EDITOR
+        defaultPortraitSprite = !string.IsNullOrEmpty(d.defaultPortraitSpriteGuid)
+            ? AssetDatabase.LoadAssetAtPath<Sprite>(AssetDatabase.GUIDToAssetPath(d.defaultPortraitSpriteGuid)) : null;
+        #endif
+        clickToAdvance = d.clickToAdvance;
+    }
+
+    static void ApplyTiledDTO(TiledImageSettings t, string guid, string path, int scaleMode, bool animate, int dir, float speed, bool loop, float tileScale, bool tintEnabled, Color tintColour)
+    {
+        if (t == null) return;
+        #if UNITY_EDITOR
+        t.sprite = !string.IsNullOrEmpty(guid) ? AssetDatabase.LoadAssetAtPath<Sprite>(AssetDatabase.GUIDToAssetPath(guid)) : null;
+        #endif
+        t.path = path;
+        t.scaleMode = (ImageScaleMode)scaleMode;
+        t.animate = animate; t.animDirection = (TiledAnimDirection)dir;
+        t.animSpeed = speed; t.loop = loop; t.tileScale = tileScale;
+        t.tintEnabled = tintEnabled; t.tintColour = tintColour;
+    }
+
+    public DialoguePresetDTO BuildPresetDTO()
+    {
+        var d = new DialoguePresetDTO();
+        #if UNITY_EDITOR
+        d.panelSettingsGuid = panelSettings != null ? AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(panelSettings)) : "";
+        #endif
+        d.panelWidthMode = (int)panelWidthMode; d.panelWidthValue = panelWidthValue;
+        d.panelHeightMode = (int)panelHeightMode; d.panelHeightValue = panelHeightValue;
+        d.panelOffsetX = panelOffsetX; d.panelOffsetY = panelOffsetY;
+        if (padding == null) padding = new RectOffset(28, 28, 20, 20);
+        d.padLeft = padding.left; d.padRight = padding.right; d.padTop = padding.top; d.padBottom = padding.bottom;
+
+        d.backgroundMode = (int)backgroundMode; d.backgroundColour = backgroundColour;
+        FillTiledDTO(backgroundImage, ref d.backgroundSpriteGuid, ref d.backgroundSpritePath, ref d.backgroundScaleMode, ref d.backgroundAnimate, ref d.backgroundAnimDir, ref d.backgroundAnimSpeed, ref d.backgroundLoop, ref d.backgroundTileScale, ref d.backgroundTintEnabled, ref d.backgroundTintColour);
+
+        d.borderWidth = borderWidth; d.borderColour = borderColour;
+        d.borderRadiusTL = borderRadiusTL; d.borderRadiusTR = borderRadiusTR;
+        d.borderRadiusBL = borderRadiusBL; d.borderRadiusBR = borderRadiusBR;
+        FillTiledDTO(borderImage, ref d.borderSpriteGuid, ref d.borderSpritePath, ref d.borderScaleMode, ref d.borderAnimate, ref d.borderAnimDir, ref d.borderAnimSpeed, ref d.borderLoop, ref d.borderTileScale, ref d.borderTintEnabled, ref d.borderTintColour);
+
+        d.nameColour = nameColour; d.nameFontSize = nameFontSize; d.nameUppercase = nameUppercase;
+        #if UNITY_EDITOR
+        d.nameFontGuid = nameFont != null ? AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(nameFont)) : "";
+        #endif
+        d.namePosition = (int)namePosition; d.nameDistance = nameDistance;
+        d.nameLetterMode = (int)nameLetterMode; d.nameLetterAmplitude = nameLetterAmplitude;
+        d.nameLetterFrequency = nameLetterFrequency; d.nameLetterSpacing = nameLetterSpacing;
+
+        d.textColour = textColour; d.textFontSize = textFontSize;
+        #if UNITY_EDITOR
+        d.textFontGuid = textFont != null ? AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(textFont)) : "";
+        #endif
+        d.textLetterMode = (int)textLetterMode; d.textLetterAmplitude = textLetterAmplitude;
+        d.textLetterFrequency = textLetterFrequency; d.textLetterSpacing = textLetterSpacing;
+        d.textVAnchor = (int)textVAnchor;
+        d.textHAnchor = (int)textHAnchor;
+
+        d.enableTypewriter = enableTypewriter; d.typewriterSpeed = typewriterSpeed;
+
+        d.showPortrait = showPortrait; d.portraitMode = (int)portraitMode;
+        d.portraitPlacement = (int)portraitPlacement; d.portraitShape = (int)portraitShape;
+        d.portraitDisplayType = (int)portraitDisplayType; d.portraitFillMode = (int)portraitFillMode;
+        d.portraitSize = portraitSize; d.dynamicPortraitSize = dynamicPortraitSize; d.maxPortraitSize = maxPortraitSize;
+        d.portraitOffsetX = portraitOffsetX; d.portraitOffsetY = portraitOffsetY;
+        d.showPortraitWhenEmpty = showPortraitWhenEmpty;
+        d.portraitBorderColour = portraitBorderColour; d.showPortraitBorder = showPortraitBorder;
+        d.portraitBorderWidth = portraitBorderWidth; d.portraitBorderRadius = portraitBorderRadius;
+        FillTiledDTO(portraitBorderImage, ref d.portraitBorderSpriteGuid, ref d.portraitBorderSpritePath, ref d.portraitBorderScaleMode, ref d.portraitBorderAnimate, ref d.portraitBorderAnimDir, ref d.portraitBorderAnimSpeed, ref d.portraitBorderLoop, ref d.portraitBorderTileScale, ref d.portraitBorderTintEnabled, ref d.portraitBorderTintColour);
+        d.activePortraitOpacity = activePortraitOpacity; d.inactivePortraitOpacity = inactivePortraitOpacity;
+        d.inactiveTintColour = inactiveTintColour;
+
+        d.showAdvanceHint = showAdvanceHint; d.advanceHintText = advanceHintText;
+        d.hintColour = hintColour; d.hintFontSize = hintFontSize;
+
+        d.showToolbar = showToolbar; d.showSettingsButton = showSettingsButton;
+        d.toolbarSlideDirection = (int)toolbarSlideDirection;
+
+        d.characterPanelShowImagePanel = characterPanelShowImagePanel;
+        d.characterPanelShowNamePanel  = characterPanelShowNamePanel;
+        d.characterPanelOrder = (int)characterPanelOrder;
+        d.characterPanelWidth = characterPanelWidth;
+        d.characterPanelBg = characterPanelBg;
+        d.characterPanelBorderColour = characterPanelBorderColour;
+        d.characterPanelBorderWidth = characterPanelBorderWidth;
+        d.characterPanelRadius = characterPanelRadius;
+        if (characterPanelPadding == null) characterPanelPadding = new RectOffset(12, 12, 12, 12);
+        d.charPanelPadL = characterPanelPadding.left; d.charPanelPadR = characterPanelPadding.right;
+        d.charPanelPadT = characterPanelPadding.top; d.charPanelPadB = characterPanelPadding.bottom;
+        d.characterPanelSpacing = characterPanelSpacing;
+        d.characterImagePanelBg = characterImagePanelBg;
+        d.characterImagePanelBorderColour = characterImagePanelBorderColour;
+        d.characterImagePanelBorderWidth = characterImagePanelBorderWidth;
+        d.characterImagePanelRadius = characterImagePanelRadius;
+        if (characterImagePanelPadding == null) characterImagePanelPadding = new RectOffset(8, 8, 8, 8);
+        d.charImagePadL = characterImagePanelPadding.left; d.charImagePadR = characterImagePanelPadding.right;
+        d.charImagePadT = characterImagePanelPadding.top; d.charImagePadB = characterImagePanelPadding.bottom;
+        d.characterNamePanelBg = characterNamePanelBg;
+        d.characterNamePanelBorderColour = characterNamePanelBorderColour;
+        d.characterNamePanelBorderWidth = characterNamePanelBorderWidth;
+        d.characterNamePanelRadius = characterNamePanelRadius;
+        if (characterNamePanelPadding == null) characterNamePanelPadding = new RectOffset(8, 8, 6, 6);
+        d.charNamePadL = characterNamePanelPadding.left; d.charNamePadR = characterNamePanelPadding.right;
+        d.charNamePadT = characterNamePanelPadding.top; d.charNamePadB = characterNamePanelPadding.bottom;
+
+        d.useDefaultPortraitPlaceholder = useDefaultPortraitPlaceholder;
+        d.defaultPortraitPath = defaultPortraitPath;
+        #if UNITY_EDITOR
+        d.defaultPortraitSpriteGuid = defaultPortraitSprite != null
+            ? AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(defaultPortraitSprite)) : "";
+        #endif
+        d.clickToAdvance = clickToAdvance;
+        return d;
+    }
+
+    static void FillTiledDTO(TiledImageSettings t, ref string guid, ref string path, ref int scaleMode, ref bool animate, ref int dir, ref float speed, ref bool loop, ref float tileScale, ref bool tintEnabled, ref Color tintColour)
+    {
+        if (t == null) return;
+        #if UNITY_EDITOR
+        guid = t.sprite != null ? AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(t.sprite)) : "";
+        #endif
+        path = t.path;
+        scaleMode = (int)t.scaleMode; animate = t.animate; dir = (int)t.animDirection;
+        speed = t.animSpeed; loop = t.loop; tileScale = t.tileScale;
+        tintEnabled = t.tintEnabled; tintColour = t.tintColour;
+    }
+
+    // ─── Public API ────────────────────────────────────────────────────────────
+    public static void Play(string path)
+    {
+        if (Instance == null) { Debug.LogError("Dialogue_Engine: No instance in scene."); return; }
+        Instance.Create(path);
+    }
+
+    public void Create(string path_input)
+    {
+        if (string.IsNullOrEmpty(path_input))
+        { Debug.LogError("Dialogue_Engine: Path is null or empty."); return; }
+
+        var file = new File_S(path_input);
+        if (file.get_reader() == null)
+        { Debug.LogError($"Dialogue_Engine: Could not open {path_input}"); return; }
+
+        graph = Compiler_S.Compile(file);
+        if (graph == null || graph.EntryNode == null)
+        { Debug.LogError("Dialogue_Engine: Compilation failed or empty graph."); return; }
+
+        if (path_input != lastLoadedScript)
+        {
+            portraits.Clear();
+            lastLoadedScript = path_input;
+        }
+
+        foreach (string key in graph.UnresolvedPortraitKeys)
+        {
+            if (!portraits.Exists(p => p.key == key))
+            {
+                portraits.Add(new UnresolvedPortrait { key = key });
+                Debug.LogWarning($"Dialogue_Engine: Unresolved portrait \"{key}\" — assign in Inspector.");
+            }
+        }
+
+        // ── Dirty-list bookkeeping (scripts compiled with unresolved placeholders) ──
+        TrackDirtyScript(path_input, graph);
+
+        #if UNITY_EDITOR
+        EditorUtility.SetDirty(this);
+        #endif
+
+        isSuccess = false;
+
+        // Reset state
+        history.Clear();
+        slotOwner[0] = null;
+        slotOwner[1] = null;
+        toolbarVisible = false;
+        ResetPortraitSlots();
+        if (historyPanel != null) historyPanel.style.display = DisplayStyle.None;
+        if (toolbarPanel != null) toolbarPanel.style.display = DisplayStyle.None;
+
+        // Stack reset
+        sectionStack.Clear();
+        currentSection = graph.EntryNode;
+        currentIndex   = 0;
+        sectionStack.Push((currentSection, 0));
+
+        if (box == null) { Debug.LogError("Dialogue_Engine: box is null."); return; }
+        box.style.display = DisplayStyle.Flex;
+        isOpen = true;
+
+        // ── Professional polish: reset, animate in, focus, ambient FX ────────
+        choiceButtons.Clear();
+        choiceOptions.Clear();
+        choiceHighlight = -1;
+        if (document != null && document.rootVisualElement != null)
+            document.rootVisualElement.Focus();
+        PlayOpenAnimation();
+        StartHintPulse();
+
+        AdvanceSection();
+    }
+
+    // ─── Dirty-list tracking ───────────────────────────────────────────────────
+    void TrackDirtyScript(string path, DialogueGraph compiledGraph)
+    {
+        var entry = dirtyScripts.Find(d => d.path == path);
+        bool hasWarnings = compiledGraph != null && compiledGraph.UnresolvedPortraitKeys.Count > 0;
+
+        if (hasWarnings)
+        {
+            if (entry == null)
+            {
+                entry = new DirtyScriptEntry { path = path };
+                dirtyScripts.Add(entry);
+            }
+            entry.unresolvedKeys.Clear();
+            entry.unresolvedKeys.AddRange(compiledGraph.UnresolvedPortraitKeys);
+            Debug.LogWarning($"Dialogue_Engine: \"{path}\" marked dirty — {entry.unresolvedKeys.Count} unresolved portrait key(s): {string.Join(", ", entry.unresolvedKeys)}. Assign image sources in the Inspector.");
+        }
+        else if (entry != null)
+        {
+            // Clean compile → drop from the dirty list and free its unresolved entries.
+            dirtyScripts.Remove(entry);
+            portraits.RemoveAll(p => entry.unresolvedKeys.Contains(p.key));
+            Debug.Log($"Dialogue_Engine: \"{path}\" compiled with 0 warnings — removed from the dirty list.");
+        }
+    }
+
+    // ─── Update (Unchanged) ───────────────────────────────────────────────────
+    void Update()
+    {
+        if (!isOpen) return;
+
+        if (Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.KeypadEnter))
+        {
+            if (isTyping) { CompleteTextInstantly(); return; }
+            AdvanceSection();
+        }
+    }
+
+    // ─── AdvanceSection (Unchanged) ───────────────────────────────────────────
+    void AdvanceSection()
+    {
+        if (currentSection == null || currentSection.Children == null || currentIndex >= currentSection.Children.Count)
+        {
+            if (sectionStack.Count > 0) sectionStack.Pop();
+
+            if (sectionStack.Count > 0)
+            {
+                var parent = sectionStack.Peek();
+                currentSection = parent.section;
+                currentIndex   = parent.index;
+            }
+            else
+            {
+                CloseUI();
+            }
+            return;
+        }
+
+        var element = currentSection.Children[currentIndex];
+
+        if (element is SectionToken childSection)
+        {
+            if (sectionStack.Count > 0)
+            {
+                sectionStack.Pop();
+                sectionStack.Push((currentSection, currentIndex + 1));
+            }
+            sectionStack.Push((childSection, 0));
+            currentSection = childSection;
+            currentIndex   = 0;
+            return;
+        }
+
+        if (element is CharacterToken ct)
+        {
+            ShowCharacter(ct);
+            currentIndex++;
+            return;
+        }
+
+        if (element is ChoiceToken choice)
+        {
+            ShowChoices(choice);
+            currentIndex++;
+            return;
+        }
+
+        currentIndex++;
+    }
+
+    // ─── ShowCharacter ─────────────────────────────────────────────────────────
+    void ShowCharacter(CharacterToken ct)
+    {
+        if (typewriterCoroutine != null) StopCoroutine(typewriterCoroutine);
+
+        // Update portrait slots and speaker labels dynamically
+        UpdatePortraitSlots(ct);
+
+        // Text + typewriter
+        currentFullText = ct.Text?.TrimEnd() ?? "";
+
+        // Push to history
+        history.Add(new DialogueHistoryEntry { speaker = ct.Speaker, text = currentFullText });
+
+        if (enableTypewriter && !string.IsNullOrEmpty(currentFullText))
+            typewriterCoroutine = StartCoroutine(TypeText(currentFullText));
+        else
+        {
+            RenderDialogueText(currentFullText);
+            isTyping = false;
+        }
+
+        if (choiceContainer != null) choiceContainer.style.display = DisplayStyle.None;
+
+        Debug.Log($"Dialogue_Engine: [{ct.Speaker}]: {currentFullText}");
+    }
+
+    // ─── ShowChoices ───────────────────────────────────────────────────────────
+    void ShowChoices(ChoiceToken choice)
+    {
+        if (choiceContainer == null)
+        { Debug.LogError("Dialogue_Engine: 'ChoiceContainer' not found in UXML."); return; }
+
+        choiceContainer.Clear();
+        choiceContainer.style.display = DisplayStyle.Flex;
+        choiceButtons.Clear();
+        choiceOptions.Clear();
+        choiceHighlight = 0;
+
+        if (choice.Children == null) return;
+
+        foreach (var child in choice.Children)
+        {
+            if (child is OptionToken option)
+            {
+                var btn = new Button();
+                btn.text = option.OptionText;
+                btn.style.marginBottom = 4;
+                btn.AddToClassList("dlg-choice-button");
+                OptionToken captured = option;
+                btn.clicked += () => OnOptionSelected(captured);
+                choiceContainer.Add(btn);
+                choiceButtons.Add(btn);
+                choiceOptions.Add(captured);
+            }
+        }
+
+        HighlightChoice(0);
+        Debug.Log($"Dialogue_Engine: Showing {choice.Children.Count} choices.");
+    }
+
+    // ─── OnOptionSelected ─────────────────────────────────────────────────────
+    void OnOptionSelected(OptionToken option)
+    {
+        Debug.Log($"Dialogue_Engine: Option selected \"{option.OptionText}\" -> {option.TargetSectionID}");
+
+        if (!string.IsNullOrEmpty(option.EmitText))
+        {
+            Debug.Log($"Dialogue_Engine: @EMIT \"{option.EmitText}\"");
+            OnEmit?.Invoke(option.EmitText);
+        }
+
+        if (choiceContainer != null) choiceContainer.style.display = DisplayStyle.None;
+
+        if (!string.IsNullOrEmpty(option.TargetSectionID) &&
+            graph.AdjacencyList.TryGetValue(option.TargetSectionID, out SectionToken target))
+        {
+            sectionStack.Clear();
+            currentSection = target;
+            currentIndex   = 0;
+            sectionStack.Push((currentSection, 0));
+            AdvanceSection();
+        }
+        else CloseUI();
+    }
+
+    // ─── Typewriter ────────────────────────────────────────────────────────────
+    IEnumerator TypeText(string text)
+    {
+        isTyping = true;
+        StartCaretBlink();
+        RenderDialogueText("");
+        for (int i = 0; i <= text.Length; i++)
+        {
+            RenderDialogueText(text.Substring(0, i));
+            // Hold Ctrl to speed through the typewriter.
+            float delay = (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))
+                ? typewriterSpeed * 0.12f : typewriterSpeed;
+            yield return new WaitForSeconds(delay);
+        }
+        isTyping = false;
+        StopCaretBlink();
+        RenderDialogueText(currentFullText);
+    }
+
+    void CompleteTextInstantly()
+    {
+        if (typewriterCoroutine != null) StopCoroutine(typewriterCoroutine);
+        isTyping = false;
+        StopCaretBlink();
+        RenderDialogueText(currentFullText);
+    }
+
+    // ─── Text rendering (normal label or per-letter behaviour) ────────────────
+    void RenderDialogueText(string text)
+    {
+        shownText = text;
+        RenderShownText();
+    }
+
+    void RenderShownText()
+    {
+        if (dialogueTextLabel == null || textScroll == null) return;
+        var content = textScroll.contentContainer;
+
+        string display = shownText;
+        if (isTyping && caretOn && textLetterMode == LetterMode.Normal)
+            display += "▌";   // typewriter caret
+
+        if (textLetterMode == LetterMode.Normal)
+        {
+            if (dialogueTextLabel.parent != content) { content.Clear(); content.Add(dialogueTextLabel); }
+            dialogueTextLabel.text = display;
+            dialogueTextLabel.style.color = new StyleColor(textColour);
+            dialogueTextLabel.style.fontSize = textFontSize;
+            dialogueTextLabel.style.unityFont = textFont != null ? new StyleFont(textFont) : StyleKeyword.Null;
+            dialogueTextLabel.style.letterSpacing = new StyleLength(textLetterSpacing);
+            dialogueTextLabel.style.whiteSpace = WhiteSpace.Normal;
+            dialogueTextLabel.style.display = DisplayStyle.Flex;
+            textScroll.mode = ScrollViewMode.Vertical;
+        }
+        else
+        {
+            dialogueTextLabel.text = "";
+            dialogueTextLabel.style.display = DisplayStyle.None;
+            content.Clear();
+            BuildLetterRows(content, display, textLetterMode, textLetterAmplitude,
+                            textLetterFrequency, textLetterSpacing, textColour, textFontSize, textFont);
+            textScroll.mode = ScrollViewMode.VerticalAndHorizontal;
+        }
+        ScrollToBottom();
+    }
+
+    void BuildLetterRows(VisualElement container, string text, LetterMode mode,
+                         float amplitude, float frequency, float spacing,
+                         Color colour, int fontSize, Font font)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        Justify j = textHAnchor == TextHAnchor.Center ? Justify.Center :
+                    textHAnchor == TextHAnchor.Right  ? Justify.FlexEnd : Justify.FlexStart;
+        string[] lines = text.Split('\n');
+        foreach (string line in lines)
+        {
+            var row = new VisualElement();
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.minHeight = fontSize + amplitude * 2f + 4f;
+            row.style.width = Length.Percent(100);
+            row.style.justifyContent = j;
+            int letterIndex = 0;
+            foreach (char ch in line)
+            {
+                if (ch == ' ' || ch == '\t')
+                {
+                    var space = new Label(" ");
+                    space.style.fontSize = fontSize;
+                    space.style.width = fontSize * 0.45f + Mathf.Max(0f, spacing);
+                    row.Add(space);
+                    continue;
+                }
+                row.Add(MakeLetterLabel(ch.ToString(), letterIndex, mode, amplitude, frequency, spacing, colour, fontSize, font));
+                letterIndex++;
+            }
+            container.Add(row);
+        }
+    }
+
+    Label MakeLetterLabel(string letter, int index, LetterMode mode,
+                          float amplitude, float frequency, float spacing,
+                          Color colour, int fontSize, Font font)
+    {
+        float y = 0f;
+        switch (mode)
+        {
+            case LetterMode.Wave:      y = Mathf.Sin(index * frequency) * amplitude; break;
+            case LetterMode.Zigzag:    y = (index % 2 == 0) ? -amplitude : amplitude; break;
+            case LetterMode.Staircase: y = index * amplitude; break;
+        }
+        var lbl = new Label(letter);
+        lbl.style.fontSize = fontSize;
+        lbl.style.color = new StyleColor(colour);
+        if (font != null) lbl.style.unityFont = new StyleFont(font);
+        lbl.style.translate = new Translate(0, y, 0);
+        lbl.style.marginRight = Mathf.Max(0f, spacing);
+        lbl.style.whiteSpace = WhiteSpace.NoWrap;
+        return lbl;
+    }
+
+    void ScrollToBottom()
+    {
+        if (textScroll == null) return;
+        textScroll.schedule.Execute(() =>
+        {
+            if (textScroll != null)
+                textScroll.verticalScroller.value = textScroll.verticalScroller.highValue;
+        });
+    }
+
+    // ─── Name rendering ────────────────────────────────────────────────────────
+    void RenderName(VisualElement nameContainer, string rawName)
+    {
+        if (nameContainer == null) return;
+        string displayName = string.IsNullOrEmpty(rawName) ? "" : (nameUppercase ? rawName.ToUpper() : rawName);
+        nameContainer.Clear();
+
+        if (string.IsNullOrEmpty(displayName)) return;
+
+        if (nameLetterMode == LetterMode.Normal)
+        {
+            var lbl = new Label(displayName);
+            lbl.style.color = new StyleColor(nameColour);
+            lbl.style.fontSize = nameFontSize;
+            if (nameFont != null) lbl.style.unityFont = new StyleFont(nameFont);
+            lbl.style.letterSpacing = new StyleLength(nameLetterSpacing);
+            lbl.style.whiteSpace = WhiteSpace.NoWrap;
+            nameContainer.Add(lbl);
+        }
+        else
+        {
+            var row = new VisualElement();
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.minHeight = nameFontSize + nameLetterAmplitude * 2f + 4f;
+            int idx = 0;
+            foreach (char ch in displayName)
+            {
+                if (ch == ' ')
+                {
+                    var space = new Label(" ");
+                    space.style.fontSize = nameFontSize;
+                    space.style.width = nameFontSize * 0.45f + Mathf.Max(0f, nameLetterSpacing);
+                    row.Add(space);
+                    continue;
+                }
+                row.Add(MakeLetterLabel(ch.ToString(), idx, nameLetterMode, nameLetterAmplitude,
+                                        nameLetterFrequency, nameLetterSpacing, nameColour, nameFontSize, nameFont));
+                idx++;
+            }
+            nameContainer.Add(row);
+        }
+    }
+
+    // ─── Portrait loader ───────────────────────────────────────────────────────
+    // Runtime sprite cache for file-path images (borders, backgrounds, etc.)
+    static readonly Dictionary<string, Sprite> fileSpriteCache = new Dictionary<string, Sprite>();
+
+    static Sprite GetFileSprite(string path)
+    {
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
+        if (fileSpriteCache.TryGetValue(path, out Sprite cached)) return cached;
+
+        byte[] data = File.ReadAllBytes(path);
+        var tex = new Texture2D(2, 2);
+        if (!tex.LoadImage(data)) return null;
+
+        var sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+        fileSpriteCache[path] = sprite;
+        return sprite;
+    }
+
+    /// <summary>Sprite for a tiled layer: assigned Sprite first, file path second.</summary>
+    static Sprite ResolveTiledSprite(TiledImageSettings s)
+    {
+        if (s == null) return null;
+        if (s.sprite != null) return s.sprite;
+        return GetFileSprite(s.path);
+    }
+
+    static bool HasTiledImage(TiledImageSettings s)
+    {
+        return ResolveTiledSprite(s) != null;
+    }
+
+    void SetSlotSizes(SlotRefs slot, float w, float h)
+    {
+        if (slot.frame    != null) { slot.frame.style.width = w;    slot.frame.style.height = h; }
+        if (slot.portrait != null) { slot.portrait.style.width = w; slot.portrait.style.height = h; }
+    }
+
+    void ApplySlotSizeFromTexture(SlotRefs slot, Texture tex)
+    {
+        if (tex == null) return;
+        float w = portraitSize, h = portraitSize;
+        if (portraitShape == PortraitShape.Rectangle) { w = portraitSize * 1.3f; h = portraitSize; }
+        if (dynamicPortraitSize)
+        {
+            float scale = maxPortraitSize / Mathf.Max(tex.width, tex.height);
+            w = tex.width * scale;
+            h = tex.height * scale;
+        }
+        SetSlotSizes(slot, w, h);
+    }
+
+    void LoadPortraitFromPath(SlotRefs slot, string path)
+    {
+        if (slot.portrait == null) return;
+        if (!File.Exists(path))
+        { Debug.LogWarning($"Dialogue_Engine: Portrait file not found: \"{path}\""); return; }
+
+        byte[]    data = File.ReadAllBytes(path);
+        Texture2D tex  = new Texture2D(2, 2);
+        if (tex.LoadImage(data))
+        {
+            ApplySlotSizeFromTexture(slot, tex);
+
+            var sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+            slot.portrait.style.backgroundImage = new StyleBackground(sprite);
+            ApplyPortraitFillMode(slot.portrait);
+        }
+        else Debug.LogWarning($"Dialogue_Engine: Failed to load portrait image at \"{path}\"");
+    }
+
+    void ApplyPortraitFillMode(VisualElement slot)
+    {
+        if (slot == null) return;
+        switch (portraitFillMode)
+        {
+            case PortraitFillMode.Fit:       slot.style.backgroundSize = new BackgroundSize(BackgroundSizeType.Contain); break;
+            case PortraitFillMode.FillCrop:  slot.style.backgroundSize = new BackgroundSize(BackgroundSizeType.Cover);   break;
+            default:                         slot.style.backgroundSize = new BackgroundSize(Length.Percent(100), Length.Percent(100)); break;
+        }
+    }
+
+    // ─── CloseUI ───────────────────────────────────────────────────────────────
+    void CloseUI()
+    {
+        if (typewriterCoroutine != null) StopCoroutine(typewriterCoroutine);
+        StopCaretBlink();
+        StopHintPulse();
+        isTyping       = false;
+        isOpen         = false;
+        isSuccess      = true;
+        graph          = null;
+        currentSection = null;
+        currentIndex   = 0;
+        sectionStack.Clear();
+        choiceButtons.Clear();
+        choiceOptions.Clear();
+        choiceHighlight = -1;
+
+        // Visual cleanup happens after a short fade-out.
+        System.Action finish = () =>
+        {
+            ResetPortraitSlots();
+            if (historyPanel  != null) historyPanel.style.display  = DisplayStyle.None;
+            if (settingsPanel != null) settingsPanel.style.display = DisplayStyle.None;
+            if (toolbarPanel  != null) toolbarPanel.style.display  = DisplayStyle.None;
+            if (choiceContainer != null) choiceContainer.style.display = DisplayStyle.None;
+            if (box != null) box.style.display = DisplayStyle.None;
+        };
+        PlayCloseAnimation(finish);
+
+        #if UNITY_EDITOR
+        if (portraits.Exists(p => p.sprite == null && string.IsNullOrEmpty(p.path)))
+        {
+            Debug.Log("Dialogue_Engine: The last script had unresolved portrait placeholders — " +
+                      "assign image sources in the Inspector (Unresolved Portraits) before the next play.");
+            EditorUtility.SetDirty(this);
+        }
+        #endif
+
+        Debug.Log("Dialogue_Engine: UI closed.");
+    }
+
+    // ─── Portrait slot refs ────────────────────────────────────────────────────
+    struct SlotRefs
+    {
+        public VisualElement wrapper, host, frame, portrait, overlay, name;
+    }
+
+    SlotRefs GetSlot(bool right)
+    {
+        switch (portraitPlacement)
+        {
+            case PortraitPlacement.Outside:
+                return new SlotRefs { wrapper = right ? outsideRightWrapper : outsideLeftWrapper,
+                                      host    = right ? outsideRightHost    : outsideLeftHost,
+                                      frame   = right ? frameOutsideRight   : frameOutsideLeft,
+                                      portrait= right ? portraitOutsideRight : portraitOutsideLeft,
+                                      overlay = right ? overlayOutsideRight  : overlayOutsideLeft,
+                                      name    = right ? nameOutsideRight     : nameOutsideLeft };
+            case PortraitPlacement.OnBorder:
+                return new SlotRefs { wrapper = right ? borderRightWrapper : borderLeftWrapper,
+                                      host    = right ? borderRightHost    : borderLeftHost,
+                                      frame   = right ? frameBorderRight   : frameBorderLeft,
+                                      portrait= right ? portraitBorderRight : portraitBorderLeft,
+                                      overlay = right ? overlayBorderRight  : overlayBorderLeft,
+                                      name    = right ? nameBorderRight     : nameBorderLeft };
+            case PortraitPlacement.CharacterPanel:
+                return new SlotRefs { wrapper = right ? charRightWrapper : charLeftWrapper,
+                                      host    = right ? charRightHost    : charLeftHost,
+                                      frame   = right ? frameCharRight   : frameCharLeft,
+                                      portrait= right ? portraitCharRight : portraitCharLeft,
+                                      overlay = right ? overlayCharRight  : overlayCharLeft,
+                                      name    = right ? nameCharRight     : nameCharLeft };
+            default:
+                return new SlotRefs { wrapper = right ? insideRightWrapper : insideLeftWrapper,
+                                      host    = right ? insideRightHost    : insideLeftHost,
+                                      frame   = right ? frameInsideRight   : frameInsideLeft,
+                                      portrait= right ? portraitInsideRight : portraitInsideLeft,
+                                      overlay = right ? overlayInsideRight  : overlayInsideLeft,
+                                      name    = right ? nameInsideRight     : nameInsideLeft };
+        }
+    }
+
+    // ─── Dual portrait slot management ────────────────────────────────────────
+    void UpdatePortraitSlots(CharacterToken ct)
+    {
+        if (!showPortrait || portraitMode == PortraitMode.None)
+        {
+            HideAllPortraitWrappers();
+            return;
+        }
+
+        if (portraitMode == PortraitMode.Single)
+        {
+            var s = GetSlot(false);
+            slotOwner[0] = ct.Speaker;
+            SetPortraitContent(s, ct);
+            RenderName(s.name, ct.Speaker);
+            SetSlotOpacity(s.portrait, s.name, true, 0);
+            ShowPortraitWrappers();
+            ApplyNameLayout(GetSlot(false));
+            ApplyNameLayout(GetSlot(true));
+            return;
+        }
+
+        // Dual mode
+        int speakerSlot = -1;
+        for (int i = 0; i < 2; i++)
+            if (slotOwner[i] == ct.Speaker) { speakerSlot = i; break; }
+
+        if (speakerSlot == -1)
+        {
+            // New speaker — take the previous inactive person's slot. The
+            // previously active speaker stays on their slot and becomes the
+            // greyed-out inactive one.
+            if      (slotOwner[0] == null) speakerSlot = 0;
+            else if (slotOwner[1] == null) speakerSlot = 1;
+            else                           speakerSlot = 1;
+
+            slotOwner[speakerSlot] = ct.Speaker;
+            var slot = GetSlot(speakerSlot == 1);
+            SetPortraitContent(slot, ct);
+            RenderName(slot.name, ct.Speaker);
+        }
+
+        // The second panel stays hidden until a second speaker exists.
+        ShowPortraitWrappers();
+        ApplyNameLayout(GetSlot(false));
+        ApplyNameLayout(GetSlot(true));
+
+        // Update opacities for both slots (active vs inactive/greyed)
+        for (int i = 0; i < 2; i++)
+        {
+            bool  active = slotOwner[i] == ct.Speaker;
+            var   slot   = GetSlot(i == 1);
+            SetSlotOpacity(slot.portrait, slot.name, active, i);
+        }
+    }
+
+    void ShowPortraitWrappers()
+    {
+        bool dual    = portraitMode == PortraitMode.Dual;
+        bool leftOn  = slotOwner[0] != null;
+        bool rightOn = dual && slotOwner[1] != null;   // second panel appears only when a second person comes in
+
+        if (insideLeftWrapper   != null) insideLeftWrapper.style.display   = portraitPlacement == PortraitPlacement.Inside   && leftOn  ? DisplayStyle.Flex : DisplayStyle.None;
+        if (insideRightWrapper  != null) insideRightWrapper.style.display  = portraitPlacement == PortraitPlacement.Inside   && rightOn ? DisplayStyle.Flex : DisplayStyle.None;
+        if (outsideLeftWrapper  != null) outsideLeftWrapper.style.display  = portraitPlacement == PortraitPlacement.Outside  && leftOn  ? DisplayStyle.Flex : DisplayStyle.None;
+        if (outsideRightWrapper != null) outsideRightWrapper.style.display = portraitPlacement == PortraitPlacement.Outside  && rightOn ? DisplayStyle.Flex : DisplayStyle.None;
+        if (borderLeftWrapper   != null) borderLeftWrapper.style.display   = portraitPlacement == PortraitPlacement.OnBorder && leftOn  ? DisplayStyle.Flex : DisplayStyle.None;
+        if (borderRightWrapper  != null) borderRightWrapper.style.display  = portraitPlacement == PortraitPlacement.OnBorder && rightOn ? DisplayStyle.Flex : DisplayStyle.None;
+        if (charLeftWrapper     != null) charLeftWrapper.style.display     = portraitPlacement == PortraitPlacement.CharacterPanel && leftOn  ? DisplayStyle.Flex : DisplayStyle.None;
+        if (charRightWrapper    != null) charRightWrapper.style.display    = portraitPlacement == PortraitPlacement.CharacterPanel && rightOn ? DisplayStyle.Flex : DisplayStyle.None;
+    }
+
+    void HideAllPortraitWrappers()
+    {
+        if (insideLeftWrapper   != null) insideLeftWrapper.style.display   = DisplayStyle.None;
+        if (insideRightWrapper  != null) insideRightWrapper.style.display  = DisplayStyle.None;
+        if (outsideLeftWrapper  != null) outsideLeftWrapper.style.display  = DisplayStyle.None;
+        if (outsideRightWrapper != null) outsideRightWrapper.style.display = DisplayStyle.None;
+        if (borderLeftWrapper   != null) borderLeftWrapper.style.display   = DisplayStyle.None;
+        if (borderRightWrapper  != null) borderRightWrapper.style.display  = DisplayStyle.None;
+        if (charLeftWrapper     != null) charLeftWrapper.style.display     = DisplayStyle.None;
+        if (charRightWrapper    != null) charRightWrapper.style.display    = DisplayStyle.None;
+    }
+
+    void ResetPortraitSlots()
+    {
+        slotOwner[0] = null;
+        slotOwner[1] = null;
+        for (int i = 0; i < 2; i++)
+        {
+            var s = GetSlot(i == 1);
+            if (s.portrait != null) s.portrait.style.backgroundImage = new StyleBackground();
+            if (s.name     != null) s.name.Clear();
+        }
+        HideAllPortraitWrappers();
+    }
+
+    void SetPortraitContent(SlotRefs slot, CharacterToken ct)
+    {
+        if (slot.portrait == null) return;
+
+        bool hasImage = false;
+
+        if (!string.IsNullOrEmpty(ct.ImageSource))
+        {
+            if (ct.ImageIsUnresolved)
+            {
+                var entry = portraits.Find(p => p.key == ct.ImageSource);
+                if (entry != null)
+                {
+                    if (entry.sprite != null)
+                    {
+                        slot.portrait.style.backgroundImage = new StyleBackground(entry.sprite);
+                        hasImage = true;
+                        ApplyPortraitFillMode(slot.portrait);
+                        if (dynamicPortraitSize) ApplySlotSizeFromTexture(slot, entry.sprite.texture);
+                    }
+                    else if (!string.IsNullOrEmpty(entry.path) && File.Exists(entry.path))
+                    {
+                        LoadPortraitFromPath(slot, entry.path);
+                        hasImage = slot.portrait.style.backgroundImage.value.sprite != null;
+                    }
+                }
+            }
+            else if (File.Exists(ct.ImageSource))
+            {
+                LoadPortraitFromPath(slot, ct.ImageSource);
+                hasImage = slot.portrait.style.backgroundImage.value.sprite != null;
+            }
+        }
+
+        if (!hasImage)
+        {
+            // Empty portrait → default placeholder (silhouette or custom) where
+            // applicable (always inside character figure panels).
+            slot.portrait.style.backgroundImage = new StyleBackground();
+            Sprite placeholder = null;
+            if (useDefaultPortraitPlaceholder &&
+                (portraitPlacement == PortraitPlacement.CharacterPanel || showPortraitWhenEmpty))
+            {
+                placeholder = defaultPortraitSprite;
+                if (placeholder == null && !string.IsNullOrEmpty(defaultPortraitPath))
+                    placeholder = GetFileSprite(defaultPortraitPath);
+                if (placeholder == null)
+                    placeholder = GetSilhouetteSprite();
+            }
+            if (placeholder != null)
+            {
+                slot.portrait.style.backgroundImage = new StyleBackground(placeholder);
+                ApplyPortraitFillMode(slot.portrait);
+                hasImage = true;
+            }
+        }
+
+        bool hasBorderImage = HasTiledImage(portraitBorderImage);
+
+        // Image element: visible only with a portrait image (or a forced empty box)
+        slot.portrait.style.display = (hasImage || showPortraitWhenEmpty) ? DisplayStyle.Flex : DisplayStyle.None;
+
+        // Frame: visible with an image, a forced empty box, or a border image
+        if (slot.frame != null)
+            slot.frame.style.display = (hasImage || showPortraitWhenEmpty || hasBorderImage) ? DisplayStyle.Flex : DisplayStyle.None;
+
+        // Border-image overlay: visible exactly when a border image is loaded
+        // (NOT when the portrait image is loaded — this was the bug that made
+        // portrait border images never appear).
+        if (slot.overlay != null)
+            slot.overlay.style.display = hasBorderImage ? DisplayStyle.Flex : DisplayStyle.None;
+
+        ApplyPortraitFrame(slot);
+    }
+
+    void ApplyPortraitFrame(SlotRefs slot)
+    {
+        if (slot.frame == null || slot.portrait == null) return;
+
+        // Radius is derived from the inspector settings (not measured layout)
+        // so it is correct even before the element's first layout pass.
+        float pw = portraitShape == PortraitShape.Rectangle ? portraitSize * 1.3f : portraitSize;
+        float ph = portraitSize;
+        float radius = 0f;
+        switch (portraitShape)
+        {
+            case PortraitShape.Circle:  radius = Mathf.Min(pw, ph) * 0.5f; break;
+            case PortraitShape.Rounded: radius = portraitBorderRadius; break;
+        }
+
+        // ── Frame carries the border so it stays crisp at all times ──────────
+        bool hasBorderImage = HasTiledImage(portraitBorderImage);
+
+        if (showPortraitBorder && !hasBorderImage)
+        {
+            slot.frame.style.borderLeftWidth   = portraitBorderWidth;
+            slot.frame.style.borderRightWidth  = portraitBorderWidth;
+            slot.frame.style.borderTopWidth    = portraitBorderWidth;
+            slot.frame.style.borderBottomWidth = portraitBorderWidth;
+            // Fully opaque — translucent portrait borders read as greyed out.
+            var bc = new StyleColor(new Color(portraitBorderColour.r, portraitBorderColour.g, portraitBorderColour.b, 1f));
+            slot.frame.style.borderLeftColor = bc;
+            slot.frame.style.borderRightColor = bc;
+            slot.frame.style.borderTopColor = bc;
+            slot.frame.style.borderBottomColor = bc;
+        }
+        else
+        {
+            // No border colour when a border image is active — the image wins.
+            slot.frame.style.borderLeftWidth = 0;
+            slot.frame.style.borderRightWidth = 0;
+            slot.frame.style.borderTopWidth = 0;
+            slot.frame.style.borderBottomWidth = 0;
+        }
+
+        slot.frame.style.borderTopLeftRadius     = radius;
+        slot.frame.style.borderTopRightRadius    = radius;
+        slot.frame.style.borderBottomLeftRadius  = radius;
+        slot.frame.style.borderBottomRightRadius = radius;
+
+        // Image clips to the same rounded rect (frame has overflow:hidden).
+        slot.portrait.style.borderTopLeftRadius     = radius;
+        slot.portrait.style.borderTopRightRadius    = radius;
+        slot.portrait.style.borderBottomLeftRadius  = radius;
+        slot.portrait.style.borderBottomRightRadius = radius;
+
+        if (slot.overlay != null)
+        {
+            slot.overlay.style.borderTopLeftRadius     = radius;
+            slot.overlay.style.borderTopRightRadius    = radius;
+            slot.overlay.style.borderBottomLeftRadius  = radius;
+            slot.overlay.style.borderBottomRightRadius = radius;
+
+            slot.overlay.style.display = hasBorderImage ? DisplayStyle.Flex : DisplayStyle.None;
+
+            if (hasBorderImage)
+                ScheduleBorderRebuild(slot.overlay, portraitBorderImage, portraitBorderWidth);
+            else
+            {
+                if (tilers.TryGetValue(slot.overlay, out TilerRuntime old) && old.sched != null) old.sched.Pause();
+                tilers.Remove(slot.overlay);
+                slot.overlay.Clear();
+            }
+        }
+
+        if (slot.host != null)
+            slot.host.style.translate = new Translate(portraitOffsetX, portraitOffsetY, 0);
+    }
+
+    /// <summary>
+    /// Rebuilds a border-image layer once its element has a valid layout size
+    /// (retries a few frames — absolute overlays may not have a size on the
+    /// first layout pass).
+    /// </summary>
+    void ScheduleBorderRebuild(VisualElement clip, TiledImageSettings settings, float thickness, int attempts = 8)
+    {
+        if (clip == null || settings == null || attempts <= 0) return;
+        clip.schedule.Execute(() =>
+        {
+            if (clip.layout.width <= 0f || clip.layout.height <= 0f)
+                ScheduleBorderRebuild(clip, settings, thickness, attempts - 1);
+            else
+                RebuildBorderImageLayer(clip, settings, thickness);
+        });
+    }
+
+    void SetSlotOpacity(VisualElement portrait, VisualElement name, bool active, int slotIndex = 0)
+    {
+        // Only the image and the name grey out — the border frame (and any
+        // border image) stays at full strength, so border colours are never
+        // "filtered down" by the inactive state. The change is smoothly
+        // animated instead of snapping.
+        float target = active ? activePortraitOpacity : inactivePortraitOpacity;
+        Color tint   = active ? Color.white : inactiveTintColour;
+
+        float from = slotIndex == 0 ? slotCur0 : slotCur1;
+
+        var tween = slotIndex == 0 ? slotTween0 : slotTween1;
+        if (tween != null) tween.Pause();
+
+        if (portrait != null) portrait.style.unityBackgroundImageTintColor = new StyleColor(tint);
+
+        int idx = slotIndex;
+        tween = RunTween(0.22f, t =>
+        {
+            float v = Mathf.Lerp(from, target, t);
+            if (idx == 0) slotCur0 = v; else slotCur1 = v;
+            if (portrait != null) portrait.style.opacity = v;
+            if (name     != null) name.style.opacity     = v;
+        });
+
+        if (idx == 0) slotTween0 = tween; else slotTween1 = tween;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // PROFESSIONAL POLISH — tweens, animations, caret, ambient FX, input
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>Simple scheduler-based tween (smoothstep easing).</summary>
+    IVisualElementScheduledItem RunTween(float duration, Action<float> step, Action done = null)
+    {
+        var root = box != null ? box : (document != null ? document.rootVisualElement : null);
+        if (root == null || duration <= 0.001f)
+        {
+            step(1f);
+            if (done != null) done();
+            return null;
+        }
+
+        int steps = Mathf.Max(1, Mathf.RoundToInt(duration / 0.016f));
+        int i = 0;
+        IVisualElementScheduledItem item = null;
+        item = root.schedule.Execute(() =>
+        {
+            i++;
+            float t = Mathf.Clamp01(i / (float)steps);
+            step(t * t * (3f - 2f * t));   // smoothstep
+            if (t >= 1f)
+            {
+                if (item != null) item.Pause();
+                if (done != null) done();
+            }
+        }).Every(16);
+        return item;
+    }
+
+    void PlayOpenAnimation()
+    {
+        if (rowContainer == null) return;
+        if (openTween != null) openTween.Pause();
+        rowContainer.style.opacity = 0f;
+        rowContainer.style.translate = new Translate(0, 26, 0);
+        openTween = RunTween(0.28f, t =>
+        {
+            if (rowContainer == null) return;
+            rowContainer.style.opacity = t;
+            rowContainer.style.translate = new Translate(0, 26f * (1f - t), 0);
+        });
+    }
+
+    void PlayCloseAnimation(Action onDone)
+    {
+        if (rowContainer == null)
+        {
+            if (onDone != null) onDone();
+            return;
+        }
+        if (openTween != null) openTween.Pause();
+        openTween = RunTween(0.18f, t =>
+        {
+            if (rowContainer == null) return;
+            rowContainer.style.opacity = 1f - t;
+            rowContainer.style.translate = new Translate(0, -10f * t, 0);
+        }, onDone);
+    }
+
+    // ── Typewriter caret blink ────────────────────────────────────────────────
+    void StartCaretBlink()
+    {
+        StopCaretBlink();
+        caretOn = true;
+        var root = box != null ? box : (document != null ? document.rootVisualElement : null);
+        if (root == null) return;
+        caretBlinkTask = root.schedule.Execute(() =>
+        {
+            caretOn = !caretOn;
+            if (isTyping) RenderShownText();
+            else StopCaretBlink();
+        }).Every(400);
+    }
+
+    void StopCaretBlink()
+    {
+        if (caretBlinkTask != null) { caretBlinkTask.Pause(); caretBlinkTask = null; }
+    }
+
+    // ── Advance hint pulse ────────────────────────────────────────────────────
+    void StartHintPulse()
+    {
+        StopHintPulse();
+        if (!showAdvanceHint || advanceHintLabel == null) return;
+        var root = box != null ? box : (document != null ? document.rootVisualElement : null);
+        if (root == null) return;
+        hintPhase = 0f;
+        hintPulseTask = root.schedule.Execute(() =>
+        {
+            if (advanceHintLabel == null || !isOpen) { StopHintPulse(); return; }
+            hintPhase += 0.22f;
+            advanceHintLabel.style.opacity = Mathf.Clamp01(0.35f + 0.45f * (0.5f + 0.5f * Mathf.Sin(hintPhase)));
+        }).Every(60);
+    }
+
+    void StopHintPulse()
+    {
+        if (hintPulseTask != null) { hintPulseTask.Pause(); hintPulseTask = null; }
+        if (advanceHintLabel != null) advanceHintLabel.style.opacity = 1f;
+    }
+
+    // ── Keyboard navigation for choices (Up/Down + Enter) ─────────────────────
+    void OnKeyDown(KeyDownEvent evt)
+    {
+        if (!isOpen || evt == null) return;
+        if (choiceContainer != null && choiceContainer.style.display == DisplayStyle.Flex &&
+            choiceButtons.Count > 0)
+        {
+            if (evt.keyCode == KeyCode.DownArrow || evt.keyCode == KeyCode.UpArrow)
+            {
+                int dir = evt.keyCode == KeyCode.DownArrow ? 1 : -1;
+                HighlightChoice((choiceHighlight + dir + choiceButtons.Count) % choiceButtons.Count);
+                evt.StopPropagation();
+                return;
+            }
+            if (evt.keyCode == KeyCode.Return && choiceHighlight >= 0 && choiceHighlight < choiceOptions.Count)
+            {
+                OnOptionSelected(choiceOptions[choiceHighlight]);
+                evt.StopPropagation();
+                return;
+            }
+        }
+        if (evt.keyCode == KeyCode.Escape && historyPanel != null &&
+            historyPanel.style.display == DisplayStyle.Flex)
+        {
+            HideHistory();
+            if (settingsPanel != null) HideSettings();
+        }
+    }
+
+    void HighlightChoice(int index)
+    {
+        for (int i = 0; i < choiceButtons.Count; i++)
+        {
+            if (choiceButtons[i] == null) continue;
+            if (i == index) choiceButtons[i].AddToClassList("dlg-choice-selected");
+            else            choiceButtons[i].RemoveFromClassList("dlg-choice-selected");
+        }
+        choiceHighlight = index;
+    }
+
+    // ── Click-to-advance (inside the box, ignoring buttons) ───────────────────
+    void OnBoxClicked(ClickEvent evt)
+    {
+        if (!isOpen || evt == null) return;
+
+        // Only clicks inside the box advance; interactive children are ignored.
+        var t = evt.target as VisualElement;
+        bool insideBox = false;
+        while (t != null)
+        {
+            if (t == box) { insideBox = true; break; }
+            if (t is Button) return;                       // choices, toolbar…
+            if (t == choiceContainer || t == historyPanel ||
+                t == settingsPanel || t == toolbarPanel) return;
+            t = t.parent;
+        }
+        if (!insideBox) return;
+
+        if (isTyping) CompleteTextInstantly();
+        else AdvanceSection();
+    }
+
+    // ── Default portrait placeholder: shaded unidentified-character silhouette ─
+    static Sprite silhouetteSprite;
+
+    public static Sprite GetSilhouetteSprite()
+    {
+        if (silhouetteSprite != null) return silhouetteSprite;
+
+        int s = 128;
+        var tex = new Texture2D(s, s, TextureFormat.RGBA32, false);
+        var px = new Color[s * s];
+        Color body  = new Color(0.16f, 0.16f, 0.18f, 1f);
+        Color clear = new Color(0f, 0f, 0f, 0f);
+
+        for (int y = 0; y < s; y++)
+            for (int x = 0; x < s; x++)
+            {
+                float u = (x + 0.5f) / s;
+                float v = (y + 0.5f) / s;
+                bool inside = false;
+
+                // Head
+                float dx = u - 0.5f, dy = v - 0.30f;
+                if (dx * dx + dy * dy <= 0.14f * 0.14f) inside = true;
+
+                // Torso (shoulders → base)
+                if (!inside && v >= 0.52f && v <= 0.95f)
+                {
+                    float t = (v - 0.52f) / 0.43f;
+                    float half = Mathf.Lerp(0.20f, 0.34f, t);
+                    if (Mathf.Abs(u - 0.5f) <= half) inside = true;
+                }
+
+                px[y * s + x] = inside ? body : clear;
+            }
+
+        tex.SetPixels(px);
+        tex.Apply();
+        tex.hideFlags = HideFlags.HideAndDontSave;
+        silhouetteSprite = Sprite.Create(tex, new Rect(0, 0, s, s), new Vector2(0.5f, 0.5f));
+        return silhouetteSprite;
+    }
+
+    // ─── Name layout (position + distance relative to the portrait) ───────────
+    void ApplyNameLayout(SlotRefs slot)
+    {
+        if (slot.wrapper == null || slot.host == null || slot.name == null) return;
+
+        // Character figure panels manage their own structure (image panel +
+        // name panel); the free-floating name layout does not apply there.
+        if (portraitPlacement == PortraitPlacement.CharacterPanel) return;
+
+        bool horizontal = namePosition == NamePosition.Left || namePosition == NamePosition.Right;
+        slot.wrapper.style.flexDirection = horizontal ? FlexDirection.Row : FlexDirection.Column;
+
+        slot.name.style.marginTop = 0; slot.name.style.marginBottom = 0;
+        slot.name.style.marginLeft = 0; slot.name.style.marginRight = 0;
+
+        switch (namePosition)
+        {
+            case NamePosition.Left:  slot.name.style.marginRight = nameDistance; break;
+            case NamePosition.Right: slot.name.style.marginLeft  = nameDistance; break;
+            case NamePosition.Above: slot.name.style.marginBottom = nameDistance; break;
+            case NamePosition.Below: slot.name.style.marginTop   = nameDistance; break;
+        }
+
+        bool nameFirst = namePosition == NamePosition.Left || namePosition == NamePosition.Above;
+        slot.wrapper.Clear();
+        if (nameFirst) { slot.wrapper.Add(slot.name); slot.wrapper.Add(slot.host); }
+        else           { slot.wrapper.Add(slot.host); slot.wrapper.Add(slot.name); }
+    }
+
+    // ─── Toolbar ───────────────────────────────────────────────────────────────
+    void ToggleToolbar()
+    {
+        toolbarVisible = !toolbarVisible;
+        if (toolbarPanel != null)
+            toolbarPanel.style.display = toolbarVisible ? DisplayStyle.Flex : DisplayStyle.None;
+    }
+
+    void OnRewind()
+    {
+        // Simple rewind for now: bring the history overlay back up.
+        ShowHistory();
+    }
+
+    // ─── History ───────────────────────────────────────────────────────────────
+    void ShowHistory()
+    {
+        if (historyPanel == null || historyContent == null) return;
+        historyContent.Clear();
+
+        for (int i = 0; i < history.Count; i++)
+        {
+            var e = history[i];
+
+            var entryBox  = new VisualElement();
+            entryBox.AddToClassList("dlg-history-entry");
+            entryBox.style.marginBottom = 8;
+
+            var speakerLbl = new Label(nameUppercase ? e.speaker.ToUpper() : e.speaker);
+            speakerLbl.style.color    = new StyleColor(nameColour);
+            speakerLbl.style.fontSize = 13;
+            speakerLbl.style.unityFontStyleAndWeight = FontStyle.Bold;
+
+            var textLbl = new Label(e.text);
+            textLbl.style.color      = new StyleColor(new Color(0.75f, 0.75f, 0.75f, 1f));
+            textLbl.style.fontSize   = 12;
+            textLbl.style.whiteSpace = WhiteSpace.Normal;
+
+            entryBox.Add(speakerLbl);
+            entryBox.Add(textLbl);
+            historyContent.Add(entryBox);
+        }
+
+        historyPanel.style.display = DisplayStyle.Flex;
+    }
+
+    void HideHistory()
+    {
+        if (historyPanel != null) historyPanel.style.display = DisplayStyle.None;
+    }
+
+    // ─── Settings overlay ──────────────────────────────────────────────────────
+    void ShowSettings()
+    {
+        if (settingsPanel == null || settingsContent == null) return;
+        settingsContent.Clear();
+
+        AddSetting("Portrait", $"{portraitMode} · {portraitPlacement} · {portraitShape} · {portraitSize}px");
+        AddSetting("Portrait display", $"{portraitDisplayType} / {portraitFillMode} / dynamic={dynamicPortraitSize}");
+        AddSetting("Name position", $"{namePosition} ({nameDistance}px)");
+        AddSetting("Name letters", $"{nameLetterMode}");
+        AddSetting("Text letters", $"{textLetterMode}");
+        AddSetting("Background", $"{backgroundMode}" + (backgroundMode == BackgroundMode.Image && backgroundImage != null && backgroundImage.sprite != null ? $" ({backgroundImage.scaleMode})" : ""));
+        AddSetting("Border", $"{borderWidth}px" + (borderImage != null && borderImage.sprite != null ? " + image" : ""));
+        AddSetting("Typewriter", enableTypewriter ? $"on ({typewriterSpeed}s)" : "off");
+        AddSetting("Toolbar", $"{toolbarSlideDirection}");
+
+        settingsPanel.style.display = DisplayStyle.Flex;
+    }
+
+    void AddSetting(string key, string value)
+    {
+        var row = new VisualElement();
+        row.style.flexDirection = FlexDirection.Row;
+        row.style.marginBottom = 6;
+
+        var keyLbl = new Label(key + ":");
+        keyLbl.style.color = new StyleColor(nameColour);
+        keyLbl.style.fontSize = 13;
+        keyLbl.style.unityFontStyleAndWeight = FontStyle.Bold;
+        keyLbl.style.minWidth = 140;
+
+        var valLbl = new Label(value);
+        valLbl.style.color = new StyleColor(new Color(0.8f, 0.8f, 0.8f, 1f));
+        valLbl.style.fontSize = 13;
+        valLbl.style.whiteSpace = WhiteSpace.Normal;
+
+        row.Add(keyLbl);
+        row.Add(valLbl);
+        settingsContent.Add(row);
+    }
+
+    void HideSettings()
+    {
+        if (settingsPanel != null) settingsPanel.style.display = DisplayStyle.None;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // RUNTIME LAYOUT — sizes, image layers, shapes, positions
+    // ══════════════════════════════════════════════════════════════════════════
+    void ApplyRuntimeLayout()
+    {
+        if (box == null) return;
+
+        // ── Panel size & position ─────────────────────────────────────────────
+        if (rowContainer != null)
+        {
+            rowContainer.style.width  = Length.Percent(100);
+            rowContainer.style.height = Length.Percent(100);
+            rowContainer.style.translate = new Translate(panelOffsetX, panelOffsetY, 0);
+        }
+
+        box.style.width  = panelWidthMode == PanelSizeMode.Percent ? new StyleLength(Length.Percent(panelWidthValue)) : new StyleLength(panelWidthValue);
+        box.style.height = panelHeightMode == PanelSizeMode.Percent ? new StyleLength(Length.Percent(panelHeightValue)) : new StyleLength(panelHeightValue);
+
+        if (padding == null) padding = new RectOffset(28, 28, 20, 20);
+        box.style.paddingLeft   = padding.left;
+        box.style.paddingRight  = padding.right;
+        box.style.paddingTop    = padding.top;
+        box.style.paddingBottom = padding.bottom;
+
+        float maxRadius = Mathf.Max(borderRadiusTL, borderRadiusTR, borderRadiusBL, borderRadiusBR);
+        if (backgroundLayer != null)
+        {
+            backgroundLayer.style.borderTopLeftRadius     = maxRadius;
+            backgroundLayer.style.borderTopRightRadius    = maxRadius;
+            backgroundLayer.style.borderBottomLeftRadius  = maxRadius;
+            backgroundLayer.style.borderBottomRightRadius = maxRadius;
+        }
+        if (borderLayer != null)
+        {
+            borderLayer.style.borderTopLeftRadius     = maxRadius;
+            borderLayer.style.borderTopRightRadius    = maxRadius;
+            borderLayer.style.borderBottomLeftRadius  = maxRadius;
+            borderLayer.style.borderBottomRightRadius = maxRadius;
+        }
+
+        // ── Background ────────────────────────────────────────────────────────
+        bool bgIsImage = backgroundMode == BackgroundMode.Image && HasTiledImage(backgroundImage);
+        if (backgroundLayer != null)
+            backgroundLayer.style.display = bgIsImage ? DisplayStyle.Flex : DisplayStyle.None;
+        box.style.backgroundColor = bgIsImage ? new StyleColor(Color.clear) : new StyleColor(backgroundColour);
+
+        // ── Border image (wins over border colour) ────────────────────────────
+        // The box border paints either its colour or nothing; the image border
+        // is a separate root-level layer (BorderLayer) positioned on the ring.
+        // Border colours are always drawn fully opaque — translucent borders
+        // read as "greyed out" on dark panels.
+        bool borderIsImage = HasTiledImage(borderImage) && borderWidth > 0f;
+        Color opaqueBorder = new Color(borderColour.r, borderColour.g, borderColour.b, 1f);
+        var boxBorderC = new StyleColor(borderIsImage ? Color.clear : opaqueBorder);
+        box.style.borderTopColor    = boxBorderC;
+        box.style.borderBottomColor = boxBorderC;
+        box.style.borderLeftColor   = boxBorderC;
+        box.style.borderRightColor  = boxBorderC;
+        ApplyBorderLayerPosition();
+
+        // ── Text anchoring (VN-style, default: vertically centered, left-aligned) ──
+        if (textScroll != null)
+        {
+            var cc = textScroll.contentContainer;
+            if (cc != null)
+            {
+                // flexGrow makes the content container at least viewport-sized,
+                // so justify-content can center short text and scroll long text.
+                cc.style.flexGrow = textVAnchor == TextVAnchor.Top ? 0f : 1f;
+                cc.style.justifyContent =
+                    textVAnchor == TextVAnchor.Center ? Justify.Center :
+                    textVAnchor == TextVAnchor.Bottom ? Justify.FlexEnd : Justify.FlexStart;
+            }
+        }
+        if (dialogueTextLabel != null)
+            dialogueTextLabel.style.unityTextAlign =
+                textHAnchor == TextHAnchor.Left   ? TextAnchor.MiddleLeft :
+                textHAnchor == TextHAnchor.Center ? TextAnchor.MiddleCenter : TextAnchor.MiddleRight;
+
+        // ── Advance hint ──────────────────────────────────────────────────────
+        if (advanceHintLabel != null)
+        {
+            advanceHintLabel.style.display = showAdvanceHint ? DisplayStyle.Flex : DisplayStyle.None;
+            advanceHintLabel.text = advanceHintText;
+            advanceHintLabel.style.color = new StyleColor(hintColour);
+            advanceHintLabel.style.fontSize = hintFontSize;
+        }
+
+        // ── Toolbar visibility ────────────────────────────────────────────────
+        if (toolbarToggleButton != null) toolbarToggleButton.style.display = showToolbar ? DisplayStyle.Flex : DisplayStyle.None;
+        if (settingsButton       != null) settingsButton.style.display       = showSettingsButton ? DisplayStyle.Flex : DisplayStyle.None;
+        if (toolbarPanel != null)
+            toolbarPanel.style.display = showToolbar && toolbarVisible ? DisplayStyle.Flex : DisplayStyle.None;
+
+        // ── Portrait frame pass ───────────────────────────────────────────────
+        if (showPortrait)
+        {
+            ApplyPortraitFrame(GetSlot(false));
+            ApplyPortraitFrame(GetSlot(true));
+        }
+    }
+
+    // Re-runs the parts that depend on measured sizes (tiling, shapes, on-border placement).
+    void RebuildDynamicLayers()
+    {
+        if (box == null) return;
+        Vector2 size = box.layout.size;
+        bool boxChanged = size != lastBoxSize;
+        lastBoxSize = size;
+
+        if (backgroundLayer != null && backgroundLayer.style.display == DisplayStyle.Flex)
+            RebuildImageLayer(backgroundLayer, backgroundImage, boxChanged);
+        ApplyBorderLayerPosition();
+
+        if (showPortrait)
+        {
+            ApplyPortraitFrame(GetSlot(false));
+            ApplyPortraitFrame(GetSlot(true));
+        }
+
+        ApplyOnBorderPlacement();
+    }
+
+    // ── Border image layer (root-level, aligned to the box's border ring) ────
+    void ApplyBorderLayerPosition(int attempts = 20)
+    {
+        if (borderLayer == null || document == null) return;
+        var root = document.rootVisualElement;
+
+        bool borderIsImage = HasTiledImage(borderImage) && borderWidth > 0f;
+        if (borderLayer.style.display != (borderIsImage ? DisplayStyle.Flex : DisplayStyle.None))
+            borderLayer.style.display = borderIsImage ? DisplayStyle.Flex : DisplayStyle.None;
+        if (!borderIsImage || root == null) return;
+
+        if (box == null || box.layout.width <= 0f || box.layout.height <= 0f)
+        {
+            // Box not laid out yet — retry a few times.
+            if (attempts > 0)
+                borderLayer.schedule.Execute(() => ApplyBorderLayerPosition(attempts - 1)).ExecuteLater(50);
+            return;
+        }
+
+        // Cover exactly the box's border ring (world-space → root-local).
+        borderLayer.style.left   = box.worldBound.xMin - root.worldBound.xMin;
+        borderLayer.style.top    = box.worldBound.yMin - root.worldBound.yMin;
+        borderLayer.style.width  = box.layout.width;
+        borderLayer.style.height = box.layout.height;
+
+        ScheduleBorderRebuild(borderLayer, borderImage, borderWidth);
+    }
+
+    void ApplyOnBorderPlacement()
+    {
+        if (portraitPlacement != PortraitPlacement.OnBorder || box == null || document == null) return;
+        var root = document.rootVisualElement;
+        if (root == null || box.layout.width <= 0f || box.layout.height <= 0f) return;
+
+        // On-border = the TOP corners of the main panel:
+        // left portrait → top-left corner, right portrait → top-right corner.
+        float leftX  = box.worldBound.xMin - root.worldBound.xMin;
+        float rightX = box.worldBound.xMax - root.worldBound.xMin;
+        float topY   = box.worldBound.yMin - root.worldBound.yMin;
+
+        float half = portraitSize * 0.5f;
+
+        if (borderLeftWrapper != null)
+        {
+            borderLeftWrapper.style.left = leftX - half + portraitOffsetX;
+            borderLeftWrapper.style.top  = topY - half + portraitOffsetY;
+        }
+        if (borderRightWrapper != null)
+        {
+            borderRightWrapper.style.left = rightX - half + portraitOffsetX;
+            borderRightWrapper.style.top  = topY - half + portraitOffsetY;
+        }
+    }
+
+    // ─── Generic image layer (tiling / looping / animating) ───────────────────
+    static bool SameTilerKey(TilerRuntime tr, TiledImageSettings settings, Sprite sprite)
+    {
+        if (tr == null || settings == null || tr.settings == null) return false;
+        return tr.settings.sprite == sprite
+            && tr.settings.tileScale == settings.tileScale
+            && tr.settings.scaleMode == settings.scaleMode
+            && tr.settings.animate == settings.animate
+            && tr.settings.animDirection == settings.animDirection
+            && tr.settings.animSpeed == settings.animSpeed
+            && tr.settings.loop == settings.loop
+            && tr.settings.tintEnabled == settings.tintEnabled
+            && tr.settings.tintColour.Equals(settings.tintColour);
+    }
+
+    void RebuildImageLayer(VisualElement clip, TiledImageSettings settings, bool sizeChanged)
+    {
+        if (clip == null || settings == null) return;
+        Sprite sprite = ResolveTiledSprite(settings);
+        if (sprite == null) return;
+
+        Vector2 size = clip.layout.size;
+        if (size.x <= 0f || size.y <= 0f) return;
+
+        if (layerSizes.TryGetValue(clip, out Vector2 cached) && cached == size && !sizeChanged
+            && tilers.TryGetValue(clip, out TilerRuntime cachedTiler) && SameTilerKey(cachedTiler, settings, sprite))
+            return;
+        layerSizes[clip] = size;
+
+        // Stop the previous animation task before rebuilding, otherwise the
+        // old scheduled callback would keep ticking the new state (double speed).
+        if (tilers.TryGetValue(clip, out TilerRuntime old) && old.sched != null)
+            old.sched.Pause();
+        tilers.Remove(clip);
+
+        clip.Clear();
+
+        var tiler = new TilerRuntime { clip = clip, settings = settings, clipSize = size };
+        Vector2 texel = sprite.textureRect.size * settings.tileScale;
+
+        if (settings.scaleMode == ImageScaleMode.Stretch)
+        {
+            tiler.stretch = true;
+            tiler.tileSize = size;
+            int count = settings.animate ? 2 : 1;
+            for (int i = 0; i < count; i++)
+            {
+                var t = MakeTile(settings, sprite, size);
+                t.style.left = i * size.x;
+                t.style.top  = 0;
+                clip.Add(t);
+                tiler.tiles.Add(t);
+            }
+        }
+        else
+        {
+            tiler.tileSize = texel;
+            tiler.mover = new VisualElement();
+            tiler.mover.style.position = Position.Absolute;
+            tiler.mover.style.overflow = Overflow.Visible;
+            clip.Add(tiler.mover);
+            for (float y = -texel.y; y < size.y + texel.y; y += texel.y)
+                for (float x = -texel.x; x < size.x + texel.x; x += texel.x)
+                {
+                    var t = MakeTile(settings, sprite, texel);
+                    t.style.left = x;
+                    t.style.top  = y;
+                    tiler.mover.Add(t);
+                }
+            tiler.Apply();
+        }
+
+        tilers[clip] = tiler;
+        tiler.sched = clip.schedule.Execute(() =>
+        {
+            if (tilers.TryGetValue(clip, out TilerRuntime tr)) tr.Tick(0.016f);
+        }).Every(16);
+    }
+
+    VisualElement MakeTile(TiledImageSettings settings, Sprite sprite, Vector2 size)
+    {
+        var t = new VisualElement();
+        t.style.position = Position.Absolute;
+        t.style.backgroundImage = new StyleBackground(sprite);
+        t.style.backgroundSize = new BackgroundSize(size.x, size.y);
+        t.style.width  = size.x;
+        t.style.height = size.y;
+        t.pickingMode = PickingMode.Ignore;
+        // Optional colour tint multiplies the image's own pixels.
+        t.style.unityBackgroundImageTintColor = new StyleColor(
+            settings != null && settings.tintEnabled ? settings.tintColour : Color.white);
+        return t;
+    }
+
+    // ─── Border ring image layer (strips + corners, clipped to the radius) ────
+    void RebuildBorderImageLayer(VisualElement clip, TiledImageSettings settings, float thickness)
+    {
+        if (clip == null || settings == null || thickness <= 0f) return;
+        Sprite sprite = ResolveTiledSprite(settings);
+        if (sprite == null) { tilers.Remove(clip); clip.Clear(); return; }
+
+        Vector2 size = clip.layout.size;
+        if (size.x <= 0f || size.y <= 0f) return;
+
+        if (layerSizes.TryGetValue(clip, out Vector2 cached) && cached == size
+            && tilers.TryGetValue(clip, out TilerRuntime cachedTiler) && SameTilerKey(cachedTiler, settings, sprite))
+            return;
+        layerSizes[clip] = size;
+
+        if (tilers.TryGetValue(clip, out TilerRuntime oldT) && oldT.sched != null)
+            oldT.sched.Pause();
+        tilers.Remove(clip);
+        clip.Clear();
+
+        float bw = Mathf.Min(thickness, Mathf.Min(size.x, size.y) * 0.5f);
+        Vector2 texel = sprite.textureRect.size * settings.tileScale;
+
+        // corners first, then edge strips over them
+        AddBorderTile(clip, settings, sprite, new Rect(0, 0, bw, bw));
+        AddBorderTile(clip, settings, sprite, new Rect(size.x - bw, 0, bw, bw));
+        AddBorderTile(clip, settings, sprite, new Rect(0, size.y - bw, bw, bw));
+        AddBorderTile(clip, settings, sprite, new Rect(size.x - bw, size.y - bw, bw, bw));
+
+        AddBorderStrip(clip, settings, sprite, texel, new Rect(bw, 0, size.x - bw * 2f, bw));          // top
+        AddBorderStrip(clip, settings, sprite, texel, new Rect(bw, size.y - bw, size.x - bw * 2f, bw)); // bottom
+        AddBorderStrip(clip, settings, sprite, texel, new Rect(0, bw, bw, size.y - bw * 2f));          // left
+        AddBorderStrip(clip, settings, sprite, texel, new Rect(size.x - bw, bw, bw, size.y - bw * 2f)); // right
+    }
+
+    void AddBorderTile(VisualElement clip, TiledImageSettings settings, Sprite sprite, Rect area)
+    {
+        var strip = new VisualElement();
+        strip.style.position = Position.Absolute;
+        strip.style.left = area.x;
+        strip.style.top  = area.y;
+        strip.style.width  = area.width;
+        strip.style.height = area.height;
+        strip.style.overflow = Overflow.Hidden;
+
+        var t = MakeTile(settings, sprite, area.size);
+        t.style.left = 0; t.style.top = 0;
+        strip.Add(t);
+        clip.Add(strip);
+
+        if (settings.animate)
+        {
+            var tr = new TilerRuntime { clip = strip, settings = settings, clipSize = area.size, tileSize = area.size, stretch = true };
+            tr.tiles.Add(t);
+            tilers[strip] = tr;
+            tr.sched = strip.schedule.Execute(() =>
+            {
+                if (tilers.TryGetValue(strip, out TilerRuntime r)) r.Tick(0.016f);
+            }).Every(16);
+        }
+    }
+
+    void AddBorderStrip(VisualElement clip, TiledImageSettings settings, Sprite sprite, Vector2 texel, Rect area)
+    {
+        var strip = new VisualElement();
+        strip.style.position = Position.Absolute;
+        strip.style.left = area.x;
+        strip.style.top  = area.y;
+        strip.style.width  = area.width;
+        strip.style.height = area.height;
+        strip.style.overflow = Overflow.Hidden;
+        clip.Add(strip);
+
+        var tr = new TilerRuntime { clip = strip, settings = settings, clipSize = area.size };
+        if (settings.scaleMode == ImageScaleMode.Stretch)
+        {
+            tr.stretch = true;
+            tr.tileSize = area.size;
+            int count = settings.animate ? 2 : 1;
+            for (int i = 0; i < count; i++)
+            {
+                var t = MakeTile(settings, sprite, area.size);
+                t.style.left = i * area.width;
+                t.style.top  = 0;
+                strip.Add(t);
+                tr.tiles.Add(t);
+            }
+        }
+        else
+        {
+            tr.tileSize = texel;
+            tr.mover = new VisualElement();
+            tr.mover.style.position = Position.Absolute;
+            strip.Add(tr.mover);
+            bool horizontal = area.width > area.height;
+            if (horizontal)
+            {
+                for (float x = -texel.x; x < area.width + texel.x; x += texel.x)
+                {
+                    var t = MakeTile(settings, sprite, texel);
+                    t.style.left = x;
+                    t.style.top  = (area.height - texel.y) * 0.5f;
+                    tr.mover.Add(t);
+                }
+            }
+            else
+            {
+                for (float y = -texel.y; y < area.height + texel.y; y += texel.y)
+                {
+                    var t = MakeTile(settings, sprite, texel);
+                    t.style.left = (area.width - texel.x) * 0.5f;
+                    t.style.top  = y;
+                    tr.mover.Add(t);
+                }
+            }
+            tr.Apply();
+        }
+
+        tilers[strip] = tr;
+        tr.sched = strip.schedule.Execute(() =>
+        {
+            if (tilers.TryGetValue(strip, out TilerRuntime r)) r.Tick(0.016f);
+        }).Every(16);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // UXML GENERATION (editor-time only)
+    //
+    // This lives HERE, inside the runtime assembly, so this file never has to
+    // reference a type from Assets/Editor. Editor scripts (DialogueLayoutBuilder,
+    // DialogueEngineEditor, DialoguePreviewWindow) call Dialogue_Engine.GenerateUxml()
+    // instead — editor assemblies may reference runtime assemblies, never the
+    // other way around.
+    // ══════════════════════════════════════════════════════════════════════════
+    #if UNITY_EDITOR
+    static string Rgba(Color c)
+    {
+        return $"rgba({Mathf.RoundToInt(c.r * 255)},{Mathf.RoundToInt(c.g * 255)},{Mathf.RoundToInt(c.b * 255)},{Mathf.RoundToInt(c.a * 255)})";
+    }
+
+    // Border colours ignore the alpha channel (always 255): translucent
+    // borders render greyed-out over dark panels.
+    static string RgbaOpaque(Color c)
+    {
+        return $"rgba({Mathf.RoundToInt(c.r * 255)},{Mathf.RoundToInt(c.g * 255)},{Mathf.RoundToInt(c.b * 255)},255)";
+    }
+
+    static string Dim(PanelSizeMode mode, float value)
+    {
+        return mode == PanelSizeMode.Percent ? $"{value:0.##}%" : $"{value:0.#}px";
+    }
+
+    static string FontDef(Font f)
+    {
+        if (f == null) return "";
+        string p = AssetDatabase.GetAssetPath(f);
+        if (string.IsNullOrEmpty(p)) return "";
+        return $"-unity-font-definition: url(&quot;project://database/{p}&quot;); ";
+    }
+
+    // ── Portrait host snippet (host → portrait + border-image overlay) ─────
+    static string SlotXml(Dialogue_Engine e, string hostName, string frameName, string portraitName, string overlayName)
+    {
+        float portraitW = e.portraitShape == PortraitShape.Rectangle ? e.portraitSize * 1.3f : e.portraitSize;
+        float portraitH = e.portraitSize;
+        float portraitRadius;
+        switch (e.portraitShape)
+        {
+            case PortraitShape.Circle:  portraitRadius = Mathf.Min(portraitW, portraitH) * 0.5f; break;
+            case PortraitShape.Rounded: portraitRadius = e.portraitBorderRadius; break;
+            default:                    portraitRadius = 0f; break;
+        }
+        float  pBorderW = e.showPortraitBorder ? e.portraitBorderWidth : 0f;
+        string pBorderC = RgbaOpaque(e.portraitBorderColour);
+        bool   pBorderIsImage = e.portraitBorderImage != null && e.portraitBorderImage.sprite != null;
+
+        // The Frame owns the border (colour OR border image — never both), so
+        // greying out the inactive slot (image + name opacity) never filters
+        // the border down.
+        return $@"
+            <ui:VisualElement name=""{hostName}"" style=""flex-direction: row; align-items: center; justify-content: center;"">
+                <ui:VisualElement name=""{frameName}"" style=""width: {portraitW:0.#}px; height: {portraitH:0.#}px; flex-shrink: 0; overflow: hidden; border-width: {pBorderW:0.#}px; border-color: {(pBorderIsImage ? "rgba(0,0,0,0)" : pBorderC)}; border-top-left-radius: {portraitRadius:0.#}px; border-top-right-radius: {portraitRadius:0.#}px; border-bottom-left-radius: {portraitRadius:0.#}px; border-bottom-right-radius: {portraitRadius:0.#}px;"">
+                    <ui:VisualElement name=""{portraitName}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; background-size: contain; background-repeat: no-repeat; background-position: center; border-top-left-radius: {portraitRadius:0.#}px; border-top-right-radius: {portraitRadius:0.#}px; border-bottom-left-radius: {portraitRadius:0.#}px; border-bottom-right-radius: {portraitRadius:0.#}px;"" />
+                    <ui:VisualElement name=""{overlayName}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; border-top-left-radius: {portraitRadius:0.#}px; border-top-right-radius: {portraitRadius:0.#}px; border-bottom-left-radius: {portraitRadius:0.#}px; border-bottom-right-radius: {portraitRadius:0.#}px; overflow: hidden; picking-mode: Ignore; display: none;"" />
+                </ui:VisualElement>
+            </ui:VisualElement>";
+    }
+
+    // ── Wrapper snippet: name + host, ordered by namePosition ─────────────
+    static string WrapXml(Dialogue_Engine e, string wrapperName, string hostXml, string nameName, string extraStyle)
+    {
+        bool nameFirst = e.namePosition == NamePosition.Left || e.namePosition == NamePosition.Above;
+        bool horizontal = e.namePosition == NamePosition.Left || e.namePosition == NamePosition.Right;
+        string margin = "";
+        switch (e.namePosition)
+        {
+            case NamePosition.Left:  margin = "margin-right: "  + e.nameDistance.ToString("0.#") + "px;"; break;
+            case NamePosition.Right: margin = "margin-left: "   + e.nameDistance.ToString("0.#") + "px;"; break;
+            case NamePosition.Above: margin = "margin-bottom: " + e.nameDistance.ToString("0.#") + "px;"; break;
+            case NamePosition.Below: margin = "margin-top: "    + e.nameDistance.ToString("0.#") + "px;"; break;
+        }
+        string name = $@"<ui:VisualElement name=""{nameName}"" style=""{margin}"" />";
+        return $@"
+        <ui:VisualElement name=""{wrapperName}"" style=""flex-direction: {(horizontal ? "row" : "column")}; align-items: center; justify-content: center; display: none; {extraStyle}"">
+            {(nameFirst ? name + "\n        " + hostXml : hostXml + "\n        " + name)}
+        </ui:VisualElement>";
+    }
+
+    // ── Character figure panel: [image panel] + [name panel], fully custom ────
+    static string CharacterPanelXml(Dialogue_Engine e, bool right)
+    {
+        string side = right ? "Right" : "Left";
+
+        bool horizontal = e.characterPanelOrder == CharacterPanelOrder.ImageLeft ||
+                          e.characterPanelOrder == CharacterPanelOrder.NameLeft;
+        bool imageFirst = e.characterPanelOrder == CharacterPanelOrder.ImageTop ||
+                          e.characterPanelOrder == CharacterPanelOrder.ImageLeft;
+
+        string gap = horizontal
+            ? $"margin-left: {e.characterPanelSpacing:0.#}px;"
+            : $"margin-top: {e.characterPanelSpacing:0.#}px;";
+        string imageGap = imageFirst ? "" : gap;
+        string nameGap  = imageFirst ? gap : "";
+
+        string panelW = horizontal ? "" : $"width: {e.characterPanelWidth:0.#}px;";
+        string pad = e.characterPanelPadding != null
+            ? $"padding-top: {e.characterPanelPadding.top}px; padding-bottom: {e.characterPanelPadding.bottom}px; padding-left: {e.characterPanelPadding.left}px; padding-right: {e.characterPanelPadding.right}px;"
+            : "padding: 12px;";
+        string imgPad = e.characterImagePanelPadding != null
+            ? $"padding-top: {e.characterImagePanelPadding.top}px; padding-bottom: {e.characterImagePanelPadding.bottom}px; padding-left: {e.characterImagePanelPadding.left}px; padding-right: {e.characterImagePanelPadding.right}px;"
+            : "padding: 8px;";
+        string namePad = e.characterNamePanelPadding != null
+            ? $"padding-top: {e.characterNamePanelPadding.top}px; padding-bottom: {e.characterNamePanelPadding.bottom}px; padding-left: {e.characterNamePanelPadding.left}px; padding-right: {e.characterNamePanelPadding.right}px;"
+            : "padding: 6px 8px;";
+
+        string imagePanel = $@"
+            <ui:VisualElement name=""CharacterImagePanel{side}"" style=""{(e.characterPanelShowImagePanel ? "" : "display: none; ")}background-color: {Rgba(e.characterImagePanelBg)}; border-color: {RgbaOpaque(e.characterImagePanelBorderColour)}; border-width: {e.characterImagePanelBorderWidth:0.#}px; border-top-left-radius: {e.characterImagePanelRadius:0.#}px; border-top-right-radius: {e.characterImagePanelRadius:0.#}px; border-bottom-left-radius: {e.characterImagePanelRadius:0.#}px; border-bottom-right-radius: {e.characterImagePanelRadius:0.#}px; {imgPad} align-items: center; justify-content: center; {imageGap}"">
+                {SlotXml(e, $"PortraitHostChar{side}", $"PortraitFrameChar{side}", $"PortraitChar{side}", $"PortraitBorderOverlayChar{side}")}
+            </ui:VisualElement>";
+
+        string namePanel = $@"
+            <ui:VisualElement name=""CharacterNamePanel{side}"" style=""{(e.characterPanelShowNamePanel ? "" : "display: none; ")}background-color: {Rgba(e.characterNamePanelBg)}; border-color: {RgbaOpaque(e.characterNamePanelBorderColour)}; border-width: {e.characterNamePanelBorderWidth:0.#}px; border-top-left-radius: {e.characterNamePanelRadius:0.#}px; border-top-right-radius: {e.characterNamePanelRadius:0.#}px; border-bottom-left-radius: {e.characterNamePanelRadius:0.#}px; border-bottom-right-radius: {e.characterNamePanelRadius:0.#}px; {namePad} align-items: center; justify-content: center; {nameGap}"">
+                <ui:VisualElement name=""NameChar{side}"" />
+            </ui:VisualElement>";
+
+        return $@"
+        <ui:VisualElement name=""CharacterPanel{side}Wrapper"" style=""align-self: center; align-items: center; justify-content: center; margin-left: 12px; margin-right: 12px; display: none;"">
+            <ui:VisualElement name=""CharacterFigurePanel{side}"" style=""{panelW} flex-direction: {(horizontal ? "row" : "column")}; align-items: center; justify-content: center; background-color: {Rgba(e.characterPanelBg)}; border-color: {RgbaOpaque(e.characterPanelBorderColour)}; border-width: {e.characterPanelBorderWidth:0.#}px; border-top-left-radius: {e.characterPanelRadius:0.#}px; border-top-right-radius: {e.characterPanelRadius:0.#}px; border-bottom-left-radius: {e.characterPanelRadius:0.#}px; border-bottom-right-radius: {e.characterPanelRadius:0.#}px; {pad}"">
+                {(imageFirst ? imagePanel + "\n" + namePanel : namePanel + "\n" + imagePanel)}
+            </ui:VisualElement>
+        </ui:VisualElement>";
+    }
+
+    // ── Professional USS styling block (hover/selected states, transitions) ───
+    static string BuildUss(Dialogue_Engine e)
+    {
+        Color hover = Color.Lerp(e.backgroundColour, new Color(0.30f, 0.55f, 1f), 0.30f);
+        Color selected = Color.Lerp(e.backgroundColour, new Color(0.30f, 0.55f, 1f), 0.45f);
+        return $@"
+.dlg-choice-button {{
+    background-color: {Rgba(Color.Lerp(e.backgroundColour, Color.white, 0.07f))};
+    border-width: 1px;
+    border-color: {RgbaOpaque(Color.Lerp(e.borderColour, Color.white, 0.35f))};
+    border-radius: 8px;
+    padding-top: 8px; padding-bottom: 8px;
+    padding-left: 14px; padding-right: 14px;
+    -unity-text-align: middle-left;
+    transition-property: background-color, border-color;
+    transition-duration: 0.12s;
+}}
+.dlg-choice-button:hover {{
+    background-color: {Rgba(hover)};
+    border-color: {RgbaOpaque(new Color(0.55f, 0.75f, 1f))};
+}}
+.dlg-choice-selected {{
+    background-color: {Rgba(selected)};
+    border-color: {RgbaOpaque(new Color(0.65f, 0.82f, 1f))};
+}}
+.dlg-toolbar-button, .dlg-close-button {{
+    background-color: {Rgba(Color.Lerp(e.backgroundColour, Color.white, 0.05f))};
+    border-width: 1px;
+    border-color: {RgbaOpaque(Color.Lerp(e.borderColour, Color.white, 0.25f))};
+    border-radius: 6px;
+    padding-top: 4px; padding-bottom: 4px;
+    padding-left: 10px; padding-right: 10px;
+    margin-left: 4px; margin-right: 4px;
+    transition-property: background-color, border-color;
+    transition-duration: 0.12s;
+}}
+.dlg-toolbar-button:hover, .dlg-close-button:hover {{
+    background-color: {Rgba(hover)};
+    border-color: {RgbaOpaque(new Color(0.55f, 0.75f, 1f))};
+}}
+.dlg-history-entry {{
+    padding-bottom: 6px;
+    margin-bottom: 6px;
+    border-bottom-width: 1px;
+    border-bottom-color: {Rgba(new Color(1f, 1f, 1f, 0.08f))};
+}}";
+    }
+
+    public static string GenerateUxml(Dialogue_Engine e)
+    {
+        if (e.padding == null) e.padding = new RectOffset(28, 28, 20, 20);
+
+        string panelW = Dim(e.panelWidthMode, e.panelWidthValue);
+        string panelH = Dim(e.panelHeightMode, e.panelHeightValue);
+
+        float boxMaxRadius = Mathf.Max(e.borderRadiusTL, e.borderRadiusTR, e.borderRadiusBL, e.borderRadiusBR);
+
+        bool bgIsImage = e.backgroundMode == BackgroundMode.Image &&
+                         e.backgroundImage != null && e.backgroundImage.sprite != null;
+        bool borderIsImage = e.borderImage != null && e.borderImage.sprite != null && e.borderWidth > 0f;
+
+        string textFontDef = FontDef(e.textFont);
+
+        // Text anchoring (VN-style) → USS values
+        string textColumnJustify = e.textVAnchor == TextVAnchor.Top    ? "flex-start" :
+                                   e.textVAnchor == TextVAnchor.Bottom ? "flex-end" : "center";
+        string textAlign = e.textHAnchor == TextHAnchor.Center ? "middle-center" :
+                           e.textHAnchor == TextHAnchor.Right  ? "middle-right" : "middle-left";
+
+        string tbPosition, tbFlex;
+        switch (e.toolbarSlideDirection)
+        {
+            case ToolbarSlideDirection.Top:   tbPosition = "top: 10px; right: 10px;";   tbFlex = "flex-direction: row;";    break;
+            case ToolbarSlideDirection.Left:  tbPosition = "left: 10px; top: 10px;";    tbFlex = "flex-direction: column;"; break;
+            case ToolbarSlideDirection.Right: tbPosition = "right: 10px; top: 10px;";   tbFlex = "flex-direction: column;"; break;
+            default:                          tbPosition = "bottom: 10px; right: 10px;"; tbFlex = "flex-direction: row;"; break;
+        }
+
+        string boxHAlign = e.portraitPlacement == PortraitPlacement.OnBorder
+            ? "margin-left: auto; margin-right: auto;"
+            : "";
+
+        string insideLeft = WrapXml(e, "InsideLeftWrapper",
+            SlotXml(e, "PortraitHostInsideLeft", "PortraitFrameInsideLeft", "PortraitInsideLeft", "PortraitBorderOverlayInsideLeft"),
+            "NameInsideLeft", "margin-left: 10px; margin-right: 10px;");
+        string insideRight = WrapXml(e, "InsideRightWrapper",
+            SlotXml(e, "PortraitHostInsideRight", "PortraitFrameInsideRight", "PortraitInsideRight", "PortraitBorderOverlayInsideRight"),
+            "NameInsideRight", "margin-left: 10px; margin-right: 10px;");
+        // Outside = centered in the leftover space beside the panel (align-self
+        // overrides the row's flex-end so it grows symmetrically).
+        string outsideLeft = WrapXml(e, "OutsideLeftWrapper",
+            SlotXml(e, "PortraitHostOutsideLeft", "PortraitFrameOutsideLeft", "PortraitOutsideLeft", "PortraitBorderOverlayOutsideLeft"),
+            "NameOutsideLeft", "align-self: center; margin-left: 10px; margin-right: 10px;");
+        string outsideRight = WrapXml(e, "OutsideRightWrapper",
+            SlotXml(e, "PortraitHostOutsideRight", "PortraitFrameOutsideRight", "PortraitOutsideRight", "PortraitBorderOverlayOutsideRight"),
+            "NameOutsideRight", "align-self: center; margin-left: 10px; margin-right: 10px;");
+        string borderLeft = WrapXml(e, "BorderLeftWrapper",
+            SlotXml(e, "PortraitHostBorderLeft", "PortraitFrameBorderLeft", "PortraitBorderLeft", "PortraitBorderOverlayBorderLeft"),
+            "NameBorderLeft", "position: absolute;");
+        string borderRight = WrapXml(e, "BorderRightWrapper",
+            SlotXml(e, "PortraitHostBorderRight", "PortraitFrameBorderRight", "PortraitBorderRight", "PortraitBorderOverlayBorderRight"),
+            "NameBorderRight", "position: absolute;");
+        string charLeft  = CharacterPanelXml(e, false);
+        string charRight = CharacterPanelXml(e, true);
+        string uss = BuildUss(e);
+
+        string uxml = $@"<ui:UXML xmlns:ui=""UnityEngine.UIElements"" xmlns:uie=""UnityEditor.UIElements"" xsi=""http://www.w3.org/2001/XMLSchema-instance"" engine=""UnityEngine.UIElements"" editor=""UnityEditor.UIElements"" noNamespaceSchemaLocation=""../../UIElementsSchema/UIElements.xsd"" editor-extension-mode=""False"">
+    <ui:VisualElement name=""Root"" style=""width: 100%; height: 100%; justify-content: flex-end; align-items: center;"">
+        <ui:VisualElement name=""RowContainer"" style=""flex-direction: row; align-items: flex-end; width: 100%; height: 100%; translate: {e.panelOffsetX:0.#}px {e.panelOffsetY:0.#}px;"">
+
+            <!-- Outside Left Portrait -->
+{outsideLeft}
+
+            <!-- Character Figure Panel (left) -->
+{charLeft}
+
+            <!-- Main Dialogue Box -->
+            <ui:VisualElement name=""DialogueBox"" style=""flex-direction: row; width: {panelW}; height: {panelH}; overflow: hidden; background-color: {(bgIsImage ? "rgba(0,0,0,0)" : Rgba(e.backgroundColour))}; border-color: {(borderIsImage ? "rgba(0,0,0,0)" : RgbaOpaque(e.borderColour))}; border-width: {e.borderWidth:0.#}px; border-top-left-radius: {e.borderRadiusTL:0.#}px; border-top-right-radius: {e.borderRadiusTR:0.#}px; border-bottom-left-radius: {e.borderRadiusBL:0.#}px; border-bottom-right-radius: {e.borderRadiusBR:0.#}px; padding-top: {e.padding.top}px; padding-bottom: {e.padding.bottom}px; padding-left: {e.padding.left}px; padding-right: {e.padding.right}px; {boxHAlign}"">
+
+                <ui:VisualElement name=""BackgroundLayer"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; overflow: hidden; border-top-left-radius: {boxMaxRadius:0.#}px; border-top-right-radius: {boxMaxRadius:0.#}px; border-bottom-left-radius: {boxMaxRadius:0.#}px; border-bottom-right-radius: {boxMaxRadius:0.#}px; picking-mode: Ignore; {(bgIsImage ? "" : "display: none;")}"" />
+
+                <!-- Inside Left Portrait -->
+{insideLeft}
+
+                <!-- Text & Choices -->
+                <ui:VisualElement name=""TextColumn"" style=""flex-grow: 1; flex-direction: column; justify-content: {textColumnJustify};"">
+                    <ui:ScrollView name=""TextScroll"" mode=""Vertical"" style=""flex-grow: 1; background-color: rgba(0,0,0,0);"">
+                        <ui:Label name=""DialogueText"" style=""{textFontDef}color: {Rgba(e.textColour)}; font-size: {e.textFontSize}px; white-space: normal; letter-spacing: {e.textLetterSpacing:0.#}px; -unity-text-align: {textAlign};"" />
+                    </ui:ScrollView>
+                    <ui:VisualElement name=""ChoiceContainer"" style=""margin-top: 10px; display: none;"" />
+                    <ui:Label name=""AdvanceHint"" text=""{e.advanceHintText}"" style=""align-self: flex-end; color: {Rgba(e.hintColour)}; font-size: {e.hintFontSize}px; {(e.showAdvanceHint ? "" : "display: none;")}"" />
+                </ui:VisualElement>
+
+                <!-- Inside Right Portrait -->
+{insideRight}
+
+            </ui:VisualElement>
+
+            <!-- Outside Right Portrait -->
+{outsideRight}
+
+            <!-- Character Figure Panel (right) -->
+{charRight}
+
+        </ui:VisualElement>
+
+        <!-- Border Image Layer — root-level, positioned by the engine exactly
+             on the box's border ring. It carries NO border colour of its own,
+             so the colour border and the image border can never stack. -->
+        <ui:VisualElement name=""BorderLayer"" style=""position: absolute; overflow: hidden; border-top-left-radius: {boxMaxRadius:0.#}px; border-top-right-radius: {boxMaxRadius:0.#}px; border-bottom-left-radius: {boxMaxRadius:0.#}px; border-bottom-right-radius: {boxMaxRadius:0.#}px; picking-mode: Ignore; {(borderIsImage ? "" : "display: none;")}"" />
+
+        <!-- On-Border Portraits (positioned by the engine at runtime) -->
+{borderLeft}
+{borderRight}
+
+        <!-- History Panel Overlay -->
+        <ui:VisualElement name=""HistoryPanel"" style=""position: absolute; left: 10%; top: 15%; width: 80%; height: 70%; background-color: rgba(20, 20, 20, 0.95); border-radius: 8px; padding: 20px; display: none;"">
+            <ui:ScrollView name=""HistoryContent"" style=""flex-grow: 1;"" />
+            <ui:Button name=""CloseHistoryButton"" class=""dlg-close-button"" text=""Close History"" style=""margin-top: 10px;"" />
+        </ui:VisualElement>
+
+        <!-- Settings Panel Overlay -->
+        <ui:VisualElement name=""SettingsPanel"" style=""position: absolute; left: 10%; top: 15%; width: 80%; height: 70%; background-color: rgba(20, 20, 20, 0.95); border-radius: 8px; padding: 20px; display: none;"">
+            <ui:ScrollView name=""SettingsContent"" style=""flex-grow: 1;"" />
+            <ui:Button name=""CloseSettingsButton"" class=""dlg-close-button"" text=""Close Settings"" style=""margin-top: 10px;"" />
+        </ui:VisualElement>
+
+        <!-- Toolbar Toggle + Panel -->
+        <ui:Button name=""ToolbarToggle"" class=""dlg-toolbar-button"" text=""Menu"" style=""position: absolute; {tbPosition} {(e.showToolbar ? "" : "display: none;")}"" />
+        <ui:VisualElement name=""ToolbarPanel"" style=""position: absolute; {tbPosition} {tbFlex} display: none;"">
+            <ui:Button name=""HistoryButton"" class=""dlg-toolbar-button"" text=""History"" />
+            <ui:Button name=""SettingsButton"" class=""dlg-toolbar-button"" text=""Settings"" style=""{(e.showSettingsButton ? "" : "display: none;")}"" />
+            <ui:Button name=""RewindButton"" class=""dlg-toolbar-button"" text=""Rewind"" />
+        </ui:VisualElement>
+
+    </ui:VisualElement>
+
+    <Style>
+{uss}
+    </Style>
+</ui:UXML>";
+
+        return uxml;
+    }
+    #endif
+}
+
