@@ -139,6 +139,17 @@ public class DialoguePreviewWindow : EditorWindow
             : Mathf.Min(target.panelWidthValue, availableW);
         float boxW = target.portraitPlacement == PortraitPlacement.CharacterPanel
             ? configuredW : availableW;
+        if (target.portraitPlacement == PortraitPlacement.CharacterPanel &&
+            target.characterPanelWidthMode == CharacterPanelSizeMode.Default)
+        {
+            float minRoot = Mathf.Max(170f, target.portraitSize +
+                (target.characterPanelPadding != null
+                    ? target.characterPanelPadding.left + target.characterPanelPadding.right : 24f));
+            // Preview pixels are a reduced canvas, so scale the runtime minimum.
+            minRoot = Mathf.Min(minRoot, availableW * 0.22f);
+            int roots = target.portraitMode == PortraitMode.Dual ? 2 : 1;
+            boxW = Mathf.Min(boxW, availableW - minRoot * roots);
+        }
         Rect boxRect = new Rect(canvas.center.x - boxW * 0.5f,
             canvas.y + canvas.height - padH - 12, boxW, padH);
 

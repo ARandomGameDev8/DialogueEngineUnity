@@ -2704,9 +2704,12 @@ public class Dialogue_Engine : MonoBehaviour
 
         // The wrapper is a true sibling root of the main panel. In Default mode
         // every visible character root takes an equal share of the width left
-        // after DialogueBox. It never overlays or becomes a child of the box.
+        // after DialogueBox. A practical minimum prevents a 90%-wide dialogue
+        // box from crushing each character root into an unusable sliver.
+        float defaultMinWidth = Mathf.Max(170f, e.portraitSize +
+            (e.characterPanelPadding != null ? e.characterPanelPadding.left + e.characterPanelPadding.right : 24f));
         string wrapperWidth = e.characterPanelWidthMode == CharacterPanelSizeMode.Default
-            ? "flex-grow: 1; flex-basis: 0; min-width: 0;"
+            ? $"flex-grow: 1; flex-basis: 0; min-width: {defaultMinWidth:0.#}px;"
             : e.characterPanelWidthMode == CharacterPanelSizeMode.Custom
                 ? $"width: {e.characterPanelWidth:0.#}px; flex-shrink: 0;"
                 : "flex-shrink: 0;";
@@ -2739,7 +2742,12 @@ public class Dialogue_Engine : MonoBehaviour
             imageSizing = horizontal
                 ? "height: 100%; flex-grow: 1; min-width: 0;"
                 : $"width: 100%; flex-grow: 1; min-height: {e.portraitSize:0.#}px;";
-        string nameSizing = horizontal ? "height: 100%; flex-shrink: 0;" : "width: 100%; flex-shrink: 0;";
+        float nameMinHeight = e.nameFontSize +
+            (e.characterNamePanelPadding != null ? e.characterNamePanelPadding.top + e.characterNamePanelPadding.bottom : 12f) +
+            e.characterNamePanelBorderWidth * 2f;
+        string nameSizing = horizontal
+            ? "height: 100%; flex-shrink: 0; min-width: 72px;"
+            : $"width: 100%; min-height: {nameMinHeight:0.#}px; flex-shrink: 0;";
 
         string imagePanel = $@"
             <ui:VisualElement name=""CharacterImagePanel{side}"" style=""{(e.characterPanelShowImagePanel ? "" : "display: none; ")}background-color: {Rgba(e.characterImagePanelBg)}; border-color: {RgbaOpaque(e.characterImagePanelBorderColour)}; border-width: {imageBorderWidth:0.#}px; border-top-left-radius: {imageRadius:0.#}px; border-top-right-radius: {imageRadius:0.#}px; border-bottom-left-radius: {imageRadius:0.#}px; border-bottom-right-radius: {imageRadius:0.#}px; overflow: hidden; {imgPad} {imageSizing} align-items: center; justify-content: center; {imageGap}"">
@@ -2829,17 +2837,31 @@ public class Dialogue_Engine : MonoBehaviour
                            e.textHAnchor == TextHAnchor.Right  ? "middle-right" : "middle-left";
 
         string tbPosition, tbFlex;
+        float toolbarRightInset = 10f;
+        // In dual Character Panel mode the right root owns the screen edge.
+        // Keep Menu/toolbar on the main-panel side instead of covering Name.
+        if (e.portraitPlacement == PortraitPlacement.CharacterPanel && e.portraitMode == PortraitMode.Dual)
+        {
+            float rootWidth = e.characterPanelWidthMode == CharacterPanelSizeMode.Custom
+                ? e.characterPanelWidth
+                : Mathf.Max(170f, e.portraitSize +
+                    (e.characterPanelPadding != null ? e.characterPanelPadding.left + e.characterPanelPadding.right : 24f));
+            toolbarRightInset += rootWidth;
+        }
         switch (e.toolbarSlideDirection)
         {
-            case ToolbarSlideDirection.Top:   tbPosition = "top: 10px; right: 10px;";   tbFlex = "flex-direction: row;";    break;
-            case ToolbarSlideDirection.Left:  tbPosition = "left: 10px; top: 10px;";    tbFlex = "flex-direction: column;"; break;
-            case ToolbarSlideDirection.Right: tbPosition = "right: 10px; top: 10px;";   tbFlex = "flex-direction: column;"; break;
-            default:                          tbPosition = "bottom: 10px; right: 10px;"; tbFlex = "flex-direction: row;"; break;
+            case ToolbarSlideDirection.Top:   tbPosition = $"top: 10px; right: {toolbarRightInset:0.#}px;";   tbFlex = "flex-direction: row;";    break;
+            case ToolbarSlideDirection.Left:  tbPosition = "left: 10px; top: 10px;";                         tbFlex = "flex-direction: column;"; break;
+            case ToolbarSlideDirection.Right: tbPosition = $"right: {toolbarRightInset:0.#}px; top: 10px;";  tbFlex = "flex-direction: column;"; break;
+            default:                          tbPosition = $"bottom: 10px; right: {toolbarRightInset:0.#}px;"; tbFlex = "flex-direction: row;"; break;
         }
 
         string boxHAlign = e.portraitPlacement == PortraitPlacement.OnBorder
             ? "margin-left: auto; margin-right: auto;"
             : "";
+        // Character roots have a minimum usable width; only in this placement
+        // may the main box yield enough room to honor that minimum.
+        string boxFlexShrink = e.portraitPlacement == PortraitPlacement.CharacterPanel ? "1" : "0";
 
         string insideLeft = WrapXml(e, "InsideLeftWrapper",
             SlotXml(e, "PortraitHostInsideLeft", "PortraitFrameInsideLeft", "PortraitInsideLeft", "PortraitBorderOverlayInsideLeft"),
@@ -2876,7 +2898,7 @@ public class Dialogue_Engine : MonoBehaviour
 {charLeft}
 
             <!-- Main Dialogue Box -->
-            <ui:VisualElement name=""DialogueBox"" style=""flex-direction: row; flex-shrink: 0; width: {panelW}; height: {panelH}; overflow: hidden; background-color: {(bgIsImage ? "rgba(0,0,0,0)" : Rgba(e.backgroundColour))}; border-color: {(borderIsImage ? "rgba(0,0,0,0)" : RgbaOpaque(e.borderColour))}; border-width: {e.borderWidth:0.#}px; border-top-left-radius: {e.borderRadiusTL:0.#}px; border-top-right-radius: {e.borderRadiusTR:0.#}px; border-bottom-left-radius: {e.borderRadiusBL:0.#}px; border-bottom-right-radius: {e.borderRadiusBR:0.#}px; padding-top: {e.padding.top}px; padding-bottom: {e.padding.bottom}px; padding-left: {e.padding.left}px; padding-right: {e.padding.right}px; {boxHAlign}"">
+            <ui:VisualElement name=""DialogueBox"" style=""flex-direction: row; flex-shrink: {boxFlexShrink}; width: {panelW}; height: {panelH}; overflow: hidden; background-color: {(bgIsImage ? "rgba(0,0,0,0)" : Rgba(e.backgroundColour))}; border-color: {(borderIsImage ? "rgba(0,0,0,0)" : RgbaOpaque(e.borderColour))}; border-width: {e.borderWidth:0.#}px; border-top-left-radius: {e.borderRadiusTL:0.#}px; border-top-right-radius: {e.borderRadiusTR:0.#}px; border-bottom-left-radius: {e.borderRadiusBL:0.#}px; border-bottom-right-radius: {e.borderRadiusBR:0.#}px; padding-top: {e.padding.top}px; padding-bottom: {e.padding.bottom}px; padding-left: {e.padding.left}px; padding-right: {e.padding.right}px; {boxHAlign}"">
 
                 <ui:VisualElement name=""BackgroundLayer"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; overflow: hidden; border-top-left-radius: {boxMaxRadius:0.#}px; border-top-right-radius: {boxMaxRadius:0.#}px; border-bottom-left-radius: {boxMaxRadius:0.#}px; border-bottom-right-radius: {boxMaxRadius:0.#}px; picking-mode: Ignore; {(bgIsImage ? "" : "display: none;")}"" />
 
