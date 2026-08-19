@@ -300,11 +300,17 @@ public class DialogueEngineEditor : Editor
             e.characterPanelSpacing = EditorGUILayout.Slider("Section Spacing (px)", e.characterPanelSpacing, 0f, 32f);
 
             EditorGUILayout.Space(4);
-            EditorGUILayout.LabelField("Outer Panel", EditorStyles.miniBoldLabel);
-            e.characterPanelBg = EditorGUILayout.ColorField("Background", e.characterPanelBg);
-            e.characterPanelBorderColour = EditorGUILayout.ColorField(new GUIContent("Border Colour"), e.characterPanelBorderColour, true, false, false);
-            e.characterPanelBorderWidth  = EditorGUILayout.Slider("Border Width",  e.characterPanelBorderWidth, 0f, 8f);
-            e.characterPanelRadius       = EditorGUILayout.Slider("Radius",        e.characterPanelRadius, 0f, 32f);
+            EditorGUILayout.LabelField("Root Container (normally invisible)", EditorStyles.miniBoldLabel);
+            e.characterPanelShowBackground = EditorGUILayout.Toggle("Show Background", e.characterPanelShowBackground);
+            if (e.characterPanelShowBackground)
+                e.characterPanelBg = EditorGUILayout.ColorField("Background", e.characterPanelBg);
+            e.characterPanelShowBorder = EditorGUILayout.Toggle("Enable Border", e.characterPanelShowBorder);
+            if (e.characterPanelShowBorder)
+            {
+                e.characterPanelBorderColour = EditorGUILayout.ColorField(new GUIContent("Border Colour"), e.characterPanelBorderColour, true, false, false);
+                e.characterPanelBorderWidth = EditorGUILayout.Slider("Border Width", e.characterPanelBorderWidth, 0f, 8f);
+                e.characterPanelRadius = EditorGUILayout.Slider("Radius", e.characterPanelRadius, 0f, 32f);
+            }
             DrawRectOffset("Padding (L R T B)", ref e.characterPanelPadding);
 
             EditorGUILayout.Space(4);
@@ -329,10 +335,25 @@ public class DialogueEngineEditor : Editor
 
             EditorGUILayout.Space(4);
             EditorGUILayout.LabelField("Name Panel", EditorStyles.miniBoldLabel);
+            if (e.characterNamePanelBorderImage == null)
+                e.characterNamePanelBorderImage = new TiledImageSettings();
+            e.characterNamePanelShape = (CharacterImagePanelShape)EditorGUILayout.EnumPopup("Shape Preset", e.characterNamePanelShape);
             e.characterNamePanelBg = EditorGUILayout.ColorField("Background", e.characterNamePanelBg);
-            e.characterNamePanelBorderColour = EditorGUILayout.ColorField(new GUIContent("Border Colour"), e.characterNamePanelBorderColour, true, false, false);
-            e.characterNamePanelBorderWidth  = EditorGUILayout.Slider("Border Width",  e.characterNamePanelBorderWidth, 0f, 8f);
-            e.characterNamePanelRadius       = EditorGUILayout.Slider("Radius",        e.characterNamePanelRadius, 0f, 32f);
+            e.characterNamePanelShowBorder = EditorGUILayout.Toggle("Enable Border", e.characterNamePanelShowBorder);
+            if (e.characterNamePanelShowBorder)
+            {
+                bool hasNameBorderImage = e.characterNamePanelBorderImage != null &&
+                    (e.characterNamePanelBorderImage.sprite != null || !string.IsNullOrEmpty(e.characterNamePanelBorderImage.path));
+                GUI.enabled = !hasNameBorderImage;
+                e.characterNamePanelBorderColour = EditorGUILayout.ColorField(new GUIContent("Border Colour"), e.characterNamePanelBorderColour, true, false, false);
+                GUI.enabled = true;
+                e.characterNamePanelBorderWidth = EditorGUILayout.Slider("Border Width", e.characterNamePanelBorderWidth, 0f, 8f);
+                DrawTiledImageSettings("Border Image", e.characterNamePanelBorderImage);
+            }
+            if (e.characterNamePanelShape == CharacterImagePanelShape.Rounded)
+                e.characterNamePanelRadius = EditorGUILayout.Slider("Corner Radius", e.characterNamePanelRadius, 0f, 256f);
+            if (e.characterNamePanelShape == CharacterImagePanelShape.Circle)
+                EditorGUILayout.HelpBox("Circle is best for short names or initials; long names may be clipped.", MessageType.None);
             DrawRectOffset("Padding (L R T B)", ref e.characterNamePanelPadding);
             EditorGUI.indentLevel--;
         }

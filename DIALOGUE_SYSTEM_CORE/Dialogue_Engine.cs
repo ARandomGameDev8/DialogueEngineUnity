@@ -161,6 +161,8 @@ public class DialoguePresetDTO
     public float characterPanelWidth = 240f;
     public int   characterPanelHeightMode;
     public float characterPanelHeight = 420f;
+    public bool  characterPanelShowBackground;
+    public bool  characterPanelShowBorder;
     public Color characterPanelBg;
     public Color characterPanelBorderColour;
     public float characterPanelBorderWidth = 1f;
@@ -176,8 +178,20 @@ public class DialoguePresetDTO
     public float characterImagePanelRadius = 8f;
     public int   charImagePadL = 8, charImagePadR = 8, charImagePadT = 8, charImagePadB = 8;
     public Color characterNamePanelBg;
+    public int   characterNamePanelShape;
+    public bool  characterNamePanelShowBorder = true;
     public Color characterNamePanelBorderColour;
     public float characterNamePanelBorderWidth;
+    public string characterNameBorderSpriteGuid = "";
+    public string characterNameBorderSpritePath = "";
+    public int    characterNameBorderScaleMode;
+    public bool   characterNameBorderAnimate;
+    public int    characterNameBorderAnimDir;
+    public float  characterNameBorderAnimSpeed = 30f;
+    public bool   characterNameBorderLoop = true;
+    public float  characterNameBorderTileScale = 1f;
+    public bool   characterNameBorderTintEnabled;
+    public Color  characterNameBorderTintColour = Color.white;
     public float characterNamePanelRadius = 8f;
     public int   charNamePadL = 8, charNamePadR = 8, charNamePadT = 6, charNamePadB = 6;
 
@@ -317,6 +331,9 @@ public class Dialogue_Engine : MonoBehaviour
     [Tooltip("Default is a tall visual-novel figure panel. Custom uses pixels. Content fits the image and name.")]
     public CharacterPanelSizeMode characterPanelHeightMode = CharacterPanelSizeMode.Default;
     [Range(100f, 1000f)] public float characterPanelHeight = 420f;
+    [Tooltip("The root is layout-only by default, leaving the Image and Name panels visually separate.")]
+    public bool characterPanelShowBackground = false;
+    public bool characterPanelShowBorder = false;
     public Color characterPanelBg = new Color(0.07f, 0.07f, 0.08f, 0.9f);
     public Color characterPanelBorderColour = new Color(0.55f, 0.55f, 0.6f, 1f);
     [Range(0f, 8f)]  public float characterPanelBorderWidth = 1f;
@@ -341,9 +358,13 @@ public class Dialogue_Engine : MonoBehaviour
 
     [Header("Character Panel — Name Panel")]
     public Color characterNamePanelBg = new Color(0.05f, 0.05f, 0.06f, 0.9f);
+    public CharacterImagePanelShape characterNamePanelShape = CharacterImagePanelShape.Rounded;
+    public bool characterNamePanelShowBorder = true;
     public Color characterNamePanelBorderColour = new Color(0.45f, 0.45f, 0.5f, 1f);
     [Range(0f, 8f)]  public float characterNamePanelBorderWidth = 0f;
-    [Range(0f, 32f)] public float characterNamePanelRadius = 8f;
+    [Range(0f, 256f)] public float characterNamePanelRadius = 8f;
+    [Tooltip("Optional image drawn only in the Name Panel border ring. It replaces the colour border.")]
+    public TiledImageSettings characterNamePanelBorderImage = new TiledImageSettings();
     public RectOffset characterNamePanelPadding;
 
     [Header("Default Portrait Placeholder")]
@@ -416,6 +437,7 @@ public class Dialogue_Engine : MonoBehaviour
     VisualElement charLeftFigure, charRightFigure;
     VisualElement charLeftImagePanel, charRightImagePanel;
     VisualElement charLeftNamePanel, charRightNamePanel;
+    VisualElement charLeftNameBorderOverlay, charRightNameBorderOverlay;
 
     ScrollView    textScroll;
     Label         dialogueTextLabel;
@@ -526,6 +548,7 @@ public class Dialogue_Engine : MonoBehaviour
         if (characterPanelPadding      == null) characterPanelPadding      = new RectOffset(12, 12, 12, 12);
         if (characterImagePanelPadding == null) characterImagePanelPadding = new RectOffset(8, 8, 8, 8);
         if (characterNamePanelPadding  == null) characterNamePanelPadding  = new RectOffset(8, 8, 6, 6);
+        if (characterNamePanelBorderImage == null) characterNamePanelBorderImage = new TiledImageSettings();
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
 
@@ -646,6 +669,8 @@ public class Dialogue_Engine : MonoBehaviour
         charRightImagePanel = docRoot.Q("CharacterImagePanelRight");
         charLeftNamePanel   = docRoot.Q("CharacterNamePanelLeft");
         charRightNamePanel  = docRoot.Q("CharacterNamePanelRight");
+        charLeftNameBorderOverlay  = docRoot.Q("CharacterNameBorderOverlayLeft");
+        charRightNameBorderOverlay = docRoot.Q("CharacterNameBorderOverlayRight");
 
         // Toolbar / history / settings
         toolbarPanel        = docRoot.Q("ToolbarPanel");
@@ -804,6 +829,8 @@ public class Dialogue_Engine : MonoBehaviour
         characterPanelWidth = d.characterPanelWidth;
         characterPanelHeightMode = (CharacterPanelSizeMode)d.characterPanelHeightMode;
         characterPanelHeight = d.characterPanelHeight;
+        characterPanelShowBackground = d.characterPanelShowBackground;
+        characterPanelShowBorder = d.characterPanelShowBorder;
         characterPanelBg = d.characterPanelBg;
         characterPanelBorderColour = d.characterPanelBorderColour;
         characterPanelBorderWidth = d.characterPanelBorderWidth;
@@ -819,9 +846,15 @@ public class Dialogue_Engine : MonoBehaviour
         characterImagePanelRadius = d.characterImagePanelRadius;
         characterImagePanelPadding = new RectOffset(d.charImagePadL, d.charImagePadR, d.charImagePadT, d.charImagePadB);
         characterNamePanelBg = d.characterNamePanelBg;
+        characterNamePanelShape = (CharacterImagePanelShape)d.characterNamePanelShape;
+        characterNamePanelShowBorder = d.characterNamePanelShowBorder;
         characterNamePanelBorderColour = d.characterNamePanelBorderColour;
         characterNamePanelBorderWidth = d.characterNamePanelBorderWidth;
         characterNamePanelRadius = d.characterNamePanelRadius;
+        ApplyTiledDTO(characterNamePanelBorderImage, d.characterNameBorderSpriteGuid, d.characterNameBorderSpritePath,
+            d.characterNameBorderScaleMode, d.characterNameBorderAnimate, d.characterNameBorderAnimDir,
+            d.characterNameBorderAnimSpeed, d.characterNameBorderLoop, d.characterNameBorderTileScale,
+            d.characterNameBorderTintEnabled, d.characterNameBorderTintColour);
         characterNamePanelPadding = new RectOffset(d.charNamePadL, d.charNamePadR, d.charNamePadT, d.charNamePadB);
 
         useDefaultPortraitPlaceholder = d.useDefaultPortraitPlaceholder;
@@ -910,6 +943,8 @@ public class Dialogue_Engine : MonoBehaviour
         d.characterPanelWidth = characterPanelWidth;
         d.characterPanelHeightMode = (int)characterPanelHeightMode;
         d.characterPanelHeight = characterPanelHeight;
+        d.characterPanelShowBackground = characterPanelShowBackground;
+        d.characterPanelShowBorder = characterPanelShowBorder;
         d.characterPanelBg = characterPanelBg;
         d.characterPanelBorderColour = characterPanelBorderColour;
         d.characterPanelBorderWidth = characterPanelBorderWidth;
@@ -929,9 +964,15 @@ public class Dialogue_Engine : MonoBehaviour
         d.charImagePadL = characterImagePanelPadding.left; d.charImagePadR = characterImagePanelPadding.right;
         d.charImagePadT = characterImagePanelPadding.top; d.charImagePadB = characterImagePanelPadding.bottom;
         d.characterNamePanelBg = characterNamePanelBg;
+        d.characterNamePanelShape = (int)characterNamePanelShape;
+        d.characterNamePanelShowBorder = characterNamePanelShowBorder;
         d.characterNamePanelBorderColour = characterNamePanelBorderColour;
         d.characterNamePanelBorderWidth = characterNamePanelBorderWidth;
         d.characterNamePanelRadius = characterNamePanelRadius;
+        FillTiledDTO(characterNamePanelBorderImage, ref d.characterNameBorderSpriteGuid, ref d.characterNameBorderSpritePath,
+            ref d.characterNameBorderScaleMode, ref d.characterNameBorderAnimate, ref d.characterNameBorderAnimDir,
+            ref d.characterNameBorderAnimSpeed, ref d.characterNameBorderLoop, ref d.characterNameBorderTileScale,
+            ref d.characterNameBorderTintEnabled, ref d.characterNameBorderTintColour);
         if (characterNamePanelPadding == null) characterNamePanelPadding = new RectOffset(8, 8, 6, 6);
         d.charNamePadL = characterNamePanelPadding.left; d.charNamePadR = characterNamePanelPadding.right;
         d.charNamePadT = characterNamePanelPadding.top; d.charNamePadB = characterNamePanelPadding.bottom;
@@ -2298,11 +2339,80 @@ public class Dialogue_Engine : MonoBehaviour
         if (toolbarPanel != null)
             toolbarPanel.style.display = showToolbar && toolbarVisible ? DisplayStyle.Flex : DisplayStyle.None;
 
+        ApplyCharacterPanelDecorations();
+
         // ── Portrait frame pass ───────────────────────────────────────────────
         if (showPortrait)
         {
             ApplyPortraitFrame(GetSlot(false));
             ApplyPortraitFrame(GetSlot(true));
+        }
+    }
+
+    void ApplyCharacterPanelDecorations()
+    {
+        float outerBorder = characterPanelShowBorder ? characterPanelBorderWidth : 0f;
+        foreach (VisualElement figure in new[] { charLeftFigure, charRightFigure })
+        {
+            if (figure == null) continue;
+            figure.style.backgroundColor = new StyleColor(
+                characterPanelShowBackground ? characterPanelBg : Color.clear);
+            figure.style.borderLeftWidth = outerBorder;
+            figure.style.borderRightWidth = outerBorder;
+            figure.style.borderTopWidth = outerBorder;
+            figure.style.borderBottomWidth = outerBorder;
+        }
+
+        ApplyNamePanelDecoration(charLeftNamePanel, charLeftNameBorderOverlay);
+        ApplyNamePanelDecoration(charRightNamePanel, charRightNameBorderOverlay);
+    }
+
+    void ApplyNamePanelDecoration(VisualElement panel, VisualElement overlay)
+    {
+        if (panel == null) return;
+
+        float diameter = Mathf.Max(portraitSize, nameFontSize +
+            (characterNamePanelPadding != null
+                ? characterNamePanelPadding.top + characterNamePanelPadding.bottom : 12f) +
+            characterNamePanelBorderWidth * 2f);
+        float radius = characterNamePanelShape == CharacterImagePanelShape.Circle
+            ? diameter * 0.5f
+            : characterNamePanelShape == CharacterImagePanelShape.Rounded
+                ? characterNamePanelRadius : 0f;
+        panel.style.borderTopLeftRadius = radius;
+        panel.style.borderTopRightRadius = radius;
+        panel.style.borderBottomLeftRadius = radius;
+        panel.style.borderBottomRightRadius = radius;
+        panel.style.backgroundColor = new StyleColor(characterNamePanelBg);
+
+        bool imageBorder = characterNamePanelShowBorder &&
+            characterNamePanelBorderWidth > 0f && HasTiledImage(characterNamePanelBorderImage);
+        float colourWidth = characterNamePanelShowBorder && !imageBorder
+            ? characterNamePanelBorderWidth : 0f;
+        panel.style.borderLeftWidth = colourWidth;
+        panel.style.borderRightWidth = colourWidth;
+        panel.style.borderTopWidth = colourWidth;
+        panel.style.borderBottomWidth = colourWidth;
+        var borderColour = new StyleColor(new Color(characterNamePanelBorderColour.r,
+            characterNamePanelBorderColour.g, characterNamePanelBorderColour.b, 1f));
+        panel.style.borderLeftColor = borderColour;
+        panel.style.borderRightColor = borderColour;
+        panel.style.borderTopColor = borderColour;
+        panel.style.borderBottomColor = borderColour;
+
+        if (overlay == null) return;
+        overlay.style.borderTopLeftRadius = radius;
+        overlay.style.borderTopRightRadius = radius;
+        overlay.style.borderBottomLeftRadius = radius;
+        overlay.style.borderBottomRightRadius = radius;
+        overlay.style.display = imageBorder ? DisplayStyle.Flex : DisplayStyle.None;
+        if (imageBorder)
+            ScheduleBorderRebuild(overlay, characterNamePanelBorderImage, characterNamePanelBorderWidth);
+        else
+        {
+            if (tilers.TryGetValue(overlay, out TilerRuntime old) && old.sched != null) old.sched.Pause();
+            tilers.Remove(overlay);
+            overlay.Clear();
         }
     }
 
@@ -2318,6 +2428,7 @@ public class Dialogue_Engine : MonoBehaviour
             RebuildImageLayer(backgroundLayer, backgroundImage, boxChanged);
         ApplyBorderLayerPosition();
 
+        ApplyCharacterPanelDecorations();
         if (showPortrait)
         {
             ApplyPortraitFrame(GetSlot(false));
@@ -2748,6 +2859,21 @@ public class Dialogue_Engine : MonoBehaviour
         string nameSizing = horizontal
             ? "height: 100%; flex-shrink: 0; min-width: 72px;"
             : $"width: 100%; min-height: {nameMinHeight:0.#}px; flex-shrink: 0;";
+        float nameRadius = e.characterNamePanelShape == CharacterImagePanelShape.Circle
+            ? Mathf.Max(nameMinHeight, e.portraitSize) * 0.5f
+            : e.characterNamePanelShape == CharacterImagePanelShape.Rounded
+                ? e.characterNamePanelRadius : 0f;
+        if (e.characterNamePanelShape == CharacterImagePanelShape.Circle)
+        {
+            float diameter = Mathf.Max(nameMinHeight, e.portraitSize);
+            nameSizing = $"width: {diameter:0.#}px; height: {diameter:0.#}px; flex-shrink: 0; align-self: center;";
+        }
+        bool nameBorderIsImage = e.characterNamePanelShowBorder && e.characterNamePanelBorderImage != null &&
+            (e.characterNamePanelBorderImage.sprite != null || !string.IsNullOrEmpty(e.characterNamePanelBorderImage.path));
+        float nameBorderWidth = e.characterNamePanelShowBorder && !nameBorderIsImage
+            ? e.characterNamePanelBorderWidth : 0f;
+        float outerBorderWidth = e.characterPanelShowBorder ? e.characterPanelBorderWidth : 0f;
+        string outerBackground = e.characterPanelShowBackground ? Rgba(e.characterPanelBg) : "rgba(0,0,0,0)";
 
         string imagePanel = $@"
             <ui:VisualElement name=""CharacterImagePanel{side}"" style=""{(e.characterPanelShowImagePanel ? "" : "display: none; ")}background-color: {Rgba(e.characterImagePanelBg)}; border-color: {RgbaOpaque(e.characterImagePanelBorderColour)}; border-width: {imageBorderWidth:0.#}px; border-top-left-radius: {imageRadius:0.#}px; border-top-right-radius: {imageRadius:0.#}px; border-bottom-left-radius: {imageRadius:0.#}px; border-bottom-right-radius: {imageRadius:0.#}px; overflow: hidden; {imgPad} {imageSizing} align-items: center; justify-content: center; {imageGap}"">
@@ -2755,13 +2881,14 @@ public class Dialogue_Engine : MonoBehaviour
             </ui:VisualElement>";
 
         string namePanel = $@"
-            <ui:VisualElement name=""CharacterNamePanel{side}"" style=""{(e.characterPanelShowNamePanel ? "" : "display: none; ")}background-color: {Rgba(e.characterNamePanelBg)}; border-color: {RgbaOpaque(e.characterNamePanelBorderColour)}; border-width: {e.characterNamePanelBorderWidth:0.#}px; border-top-left-radius: {e.characterNamePanelRadius:0.#}px; border-top-right-radius: {e.characterNamePanelRadius:0.#}px; border-bottom-left-radius: {e.characterNamePanelRadius:0.#}px; border-bottom-right-radius: {e.characterNamePanelRadius:0.#}px; {namePad} {nameSizing} align-items: center; justify-content: center; {nameGap}"">
-                <ui:VisualElement name=""NameChar{side}"" />
+            <ui:VisualElement name=""CharacterNamePanel{side}"" style=""{(e.characterPanelShowNamePanel ? "" : "display: none; ")}background-color: {Rgba(e.characterNamePanelBg)}; border-color: {(nameBorderIsImage ? "rgba(0,0,0,0)" : RgbaOpaque(e.characterNamePanelBorderColour))}; border-width: {nameBorderWidth:0.#}px; border-top-left-radius: {nameRadius:0.#}px; border-top-right-radius: {nameRadius:0.#}px; border-bottom-left-radius: {nameRadius:0.#}px; border-bottom-right-radius: {nameRadius:0.#}px; overflow: hidden; {namePad} {nameSizing} align-items: center; justify-content: center; {nameGap}"">
+                <ui:VisualElement name=""NameChar{side}"" style=""position: relative;"" />
+                <ui:VisualElement name=""CharacterNameBorderOverlay{side}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; border-top-left-radius: {nameRadius:0.#}px; border-top-right-radius: {nameRadius:0.#}px; border-bottom-left-radius: {nameRadius:0.#}px; border-bottom-right-radius: {nameRadius:0.#}px; overflow: hidden; picking-mode: Ignore; {(nameBorderIsImage ? "" : "display: none;")}"" />
             </ui:VisualElement>";
 
         return $@"
         <ui:VisualElement name=""CharacterPanel{side}Wrapper"" style=""{wrapperWidth} height: 100%; align-self: stretch; align-items: stretch; justify-content: flex-end; display: none;"">
-            <ui:VisualElement name=""CharacterFigurePanel{side}"" style=""{figureWidth} {figureHeight} flex-direction: {(horizontal ? "row" : "column")}; align-items: stretch; justify-content: flex-start; background-color: {Rgba(e.characterPanelBg)}; border-color: {RgbaOpaque(e.characterPanelBorderColour)}; border-width: {e.characterPanelBorderWidth:0.#}px; border-top-left-radius: {e.characterPanelRadius:0.#}px; border-top-right-radius: {e.characterPanelRadius:0.#}px; border-bottom-left-radius: {e.characterPanelRadius:0.#}px; border-bottom-right-radius: {e.characterPanelRadius:0.#}px; overflow: hidden; {pad}"">
+            <ui:VisualElement name=""CharacterFigurePanel{side}"" style=""{figureWidth} {figureHeight} flex-direction: {(horizontal ? "row" : "column")}; align-items: stretch; justify-content: flex-start; background-color: {outerBackground}; border-color: {RgbaOpaque(e.characterPanelBorderColour)}; border-width: {outerBorderWidth:0.#}px; border-top-left-radius: {e.characterPanelRadius:0.#}px; border-top-right-radius: {e.characterPanelRadius:0.#}px; border-bottom-left-radius: {e.characterPanelRadius:0.#}px; border-bottom-right-radius: {e.characterPanelRadius:0.#}px; overflow: hidden; {pad}"">
                 {(imageFirst ? imagePanel + "\n" + namePanel : namePanel + "\n" + imagePanel)}
             </ui:VisualElement>
         </ui:VisualElement>";

@@ -326,8 +326,10 @@ public class DialoguePreviewWindow : EditorWindow
             ? new Rect(boxRect.xMax, canvas.yMax - 8f - ph, pw, ph)
             : new Rect(boxRect.x - pw, canvas.yMax - 8f - ph, pw, ph);
 
-        EditorGUI.DrawRect(panel, target.characterPanelBg);
-        DrawBorderRect(panel, target.characterPanelBorderWidth, target.characterPanelBorderColour);
+        if (target.characterPanelShowBackground)
+            EditorGUI.DrawRect(panel, target.characterPanelBg);
+        if (target.characterPanelShowBorder)
+            DrawBorderRect(panel, target.characterPanelBorderWidth, target.characterPanelBorderColour);
 
         float inset = Mathf.Min(8f, panel.width * 0.08f);
         Rect content = new Rect(panel.x + inset, panel.y + inset,
@@ -349,7 +351,7 @@ public class DialoguePreviewWindow : EditorWindow
             new Color(0.16f, 0.16f, 0.18f, 1f));
 
         EditorGUI.DrawRect(nm, target.characterNamePanelBg);
-        if (target.characterNamePanelBorderWidth > 0f)
+        if (target.characterNamePanelShowBorder && target.characterNamePanelBorderWidth > 0f)
             DrawBorderRect(nm, target.characterNamePanelBorderWidth, target.characterNamePanelBorderColour);
         string tag = right ? previewSpeakerB : previewSpeakerA;
         if (target.nameUppercase) tag = tag.ToUpper();
