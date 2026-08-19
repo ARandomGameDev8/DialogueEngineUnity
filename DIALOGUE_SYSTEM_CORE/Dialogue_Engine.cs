@@ -203,10 +203,23 @@ public class DialoguePresetDTO
 }
 
 [DefaultExecutionOrder(-100)]
-public class Dialogue_Engine : MonoBehaviour
+public class Dialogue_Engine : MonoBehaviour, IDialogueService
 {
     public static Dialogue_Engine Instance { get; private set; }
     public static event Action<string> OnEmit;
+    public static IDialogueService Service { get { return Instance; } }
+
+    public static DialogueResponse SendRequest(DialogueRequest request)
+    {
+        return Instance != null
+            ? Instance.Send(request)
+            : new DialogueResponse
+            {
+                RequestId = request != null ? request.RequestId : "",
+                Code = DialogueResponseCode.NotFound,
+                Message = "<error>Dialogue_Engine service is not running.</error>"
+            };
+    }
 
     // ─── Paths ────────────────────────────────────────────────────────────────
     // The project root is the Unity project folder, e.g. /home/george/GameTut
@@ -473,6 +486,23 @@ public class Dialogue_Engine : MonoBehaviour
     // History — array-backed list for O(1) indexed access
     List<DialogueHistoryEntry> history = new List<DialogueHistoryEntry>();
 
+    // ─── Volatile play-session database / service state ─────────────────────
+    public DialogueRuntimeDatabase RuntimeDatabase { get; private set; }
+    string currentDialogueId = "";
+    string currentDialoguePath = "";
+    string currentTextName = "";
+    string currentServiceText = "";
+    string lastEmittedEvent = "";
+    DialogueRuntimeStatus runtimeStatus = DialogueRuntimeStatus.Idle;
+    string runtimeDetail = "Not playing";
+    sealed class PendingServiceRequest
+    {
+        public DialogueRequest request;
+        public Action<DialogueResponse> completed;
+    }
+    readonly Queue<PendingServiceRequest> serviceRequests =
+        new Queue<PendingServiceRequest>();
+
     // ─── Graph & Traversal State ──────────────────────────────────────────────
     DialogueGraph graph;
     SectionToken  currentSection;
@@ -544,6 +574,9 @@ public class Dialogue_Engine : MonoBehaviour
     // ──────────────────────────────────────────────────────────────────────────
     void Awake()
     {
+        // Intentionally memory-only. A fresh database is created for every Play
+        // Mode lifetime and disappears with this engine/scene.
+        RuntimeDatabase = new DialogueRuntimeDatabase();
         if (padding == null) padding = new RectOffset(28, 28, 20, 20);
         if (characterPanelPadding      == null) characterPanelPadding      = new RectOffset(12, 12, 12, 12);
         if (characterImagePanelPadding == null) characterImagePanelPadding = new RectOffset(8, 8, 8, 8);
@@ -1019,6 +1052,14 @@ public class Dialogue_Engine : MonoBehaviour
         if (graph == null || graph.EntryNode == null)
         { Debug.LogError("Dialogue_Engine: Compilation failed or empty graph."); return; }
 
+        DialogueScriptRecord scriptRow = RuntimeDatabase.RegisterDialogue(path_input);
+        currentDialogueId = scriptRow.DialogueId;
+        currentDialoguePath = scriptRow.Path;
+        currentTextName = "";
+        currentServiceText = "";
+        lastEmittedEvent = "";
+        SetRuntimeStatus(DialogueRuntimeStatus.Transitioning, "Dialogue started");
+
         if (path_input != lastLoadedScript)
         {
             portraits.Clear();
@@ -1100,13 +1141,210 @@ public class Dialogue_Engine : MonoBehaviour
         }
     }
 
-    // ─── Update (Unchanged) ───────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // PLAY-SESSION DATABASE + IN-PROCESS CLIENT/SERVER API
+    // ══════════════════════════════════════════════════════════════════════════
+    void SetRuntimeStatus(DialogueRuntimeStatus status, string detail,
+                          string emittedEvent = "")
+    {
+        runtimeStatus = status;
+        runtimeDetail = detail ?? "";
+        if (!string.IsNullOrEmpty(emittedEvent)) lastEmittedEvent = emittedEvent;
+        if (RuntimeDatabase != null && !string.IsNullOrEmpty(currentDialogueId))
+        {
+            RuntimeDatabase.Record(currentDialogueId, currentTextName,
+                currentServiceText, status, emittedEvent, runtimeDetail);
+        }
+    }
+
+    void EmitEvent(EventToken token)
+    {
+        if (token == null) return;
+        string emitted = token.EmittedEvent ?? "";
+        SetRuntimeStatus(DialogueRuntimeStatus.EventEmitted,
+            "Emitted event " + emitted, emitted);
+        Debug.Log($"Dialogue_Engine: @EMIT \"{emitted}\"");
+        // Yes: the compiler-resolved event is emitted publicly as a string.
+        OnEmit?.Invoke(emitted);
+    }
+
+    public DialogueLiveSnapshot GetLiveSnapshot()
+    {
+        return new DialogueLiveSnapshot
+        {
+            IsPlaying = isOpen,
+            DialogueId = currentDialogueId,
+            DialoguePath = currentDialoguePath,
+            SectionId = currentSection != null ? currentSection.SectionID : "",
+            TextName = currentTextName,
+            Text = currentServiceText,
+            LastEvent = lastEmittedEvent,
+            Status = runtimeStatus,
+            Detail = runtimeDetail,
+            LatestSequence = RuntimeDatabase != null ? RuntimeDatabase.LatestSequence : 0
+        };
+    }
+
+    public DialogueResponse Send(DialogueRequest request)
+    {
+        if (request == null)
+        {
+            return new DialogueResponse
+            {
+                Code = DialogueResponseCode.InvalidRequest,
+                Message = "<error>Request is null.</error>"
+            };
+        }
+
+        var response = new DialogueResponse { RequestId = request.RequestId };
+        if (RuntimeDatabase == null)
+        {
+            response.Code = DialogueResponseCode.NotFound;
+            response.Message = "<error>Play-session database is unavailable.</error>";
+            return response;
+        }
+
+        string dialogueKey = !string.IsNullOrEmpty(request.DialogueId)
+            ? request.DialogueId
+            : !string.IsNullOrEmpty(request.DialoguePath)
+                ? request.DialoguePath : currentDialogueId;
+
+        switch (request.Type)
+        {
+            case DialogueRequestType.LiveSnapshot:
+                response.Code = DialogueResponseCode.Ok;
+                response.Snapshot = GetLiveSnapshot();
+                response.Message = response.Snapshot.ToMessage();
+                return response;
+
+            case DialogueRequestType.GetDialogue:
+                response.Dialogue = RuntimeDatabase.FindDialogue(dialogueKey);
+                response.Code = response.Dialogue != null
+                    ? DialogueResponseCode.Ok : DialogueResponseCode.NotFound;
+                response.Message = response.Dialogue != null
+                    ? "<dialogue id=\"" + DialogueMessage.Escape(response.Dialogue.DialogueId) +
+                      "\" plays=\"" + response.Dialogue.PlayCount + "\">" +
+                      DialogueMessage.Escape(response.Dialogue.Path) + "</dialogue>"
+                    : "<error>Dialogue not found.</error>";
+                return response;
+
+            case DialogueRequestType.GetEvents:
+                response.Events = RuntimeDatabase.QueryEvents(dialogueKey,
+                    request.EventName, request.SinceSequence);
+                response.Code = DialogueResponseCode.Ok;
+                response.Matched = response.Events.Count > 0;
+                response.Message = BuildEventsMessage(response.Events);
+                return response;
+
+            case DialogueRequestType.HasEvent:
+            case DialogueRequestType.WaitForEvent:
+                if (string.IsNullOrEmpty(request.EventName))
+                {
+                    response.Code = DialogueResponseCode.InvalidRequest;
+                    response.Message = "<error>EventName is required.</error>";
+                    return response;
+                }
+                response.Events = RuntimeDatabase.QueryEvents(dialogueKey,
+                    request.EventName, request.SinceSequence);
+                response.Matched = response.Events.Count > 0;
+                response.Code = response.Matched
+                    ? DialogueResponseCode.Ok : DialogueResponseCode.Pending;
+                response.Message = response.Matched
+                    ? BuildEventsMessage(response.Events)
+                    : "<pending event=\"" + DialogueMessage.Escape(request.EventName) + "\" />";
+                return response;
+
+            default:
+                response.Code = DialogueResponseCode.InvalidRequest;
+                response.Message = "<error>Unsupported request type.</error>";
+                return response;
+        }
+    }
+
+    public void SendAsync(DialogueRequest request,
+                          Action<DialogueResponse> completed)
+    {
+        serviceRequests.Enqueue(new PendingServiceRequest
+        {
+            request = request,
+            completed = completed
+        });
+    }
+
+    public IEnumerator SendBlocking(DialogueRequest request,
+                                    Action<DialogueResponse> completed)
+    {
+        if (request == null)
+        {
+            completed?.Invoke(Send(null));
+            yield break;
+        }
+
+        // "Blocking" means a coroutine wait, never a busy loop: Unity's main
+        // thread remains free to render, accept input and advance dialogue.
+        float timeout = Mathf.Max(0.01f, request.TimeoutSeconds);
+        float started = Time.realtimeSinceStartup;
+        DialogueResponse response;
+        do
+        {
+            response = Send(request);
+            if (response.Code != DialogueResponseCode.Pending)
+            {
+                completed?.Invoke(response);
+                yield break;
+            }
+            yield return null;
+        }
+        while (Time.realtimeSinceStartup - started < timeout);
+
+        response.Code = DialogueResponseCode.Timeout;
+        response.Message = "<timeout event=\"" +
+            DialogueMessage.Escape(request.EventName) + "\" />";
+        completed?.Invoke(response);
+    }
+
+    public Coroutine StartBlockingRequest(DialogueRequest request,
+                                          Action<DialogueResponse> completed)
+    {
+        return StartCoroutine(SendBlocking(request, completed));
+    }
+
+    static string BuildEventsMessage(List<DialogueEventRecord> rows)
+    {
+        var b = new System.Text.StringBuilder("<events>");
+        if (rows != null)
+        {
+            foreach (DialogueEventRecord row in rows)
+            {
+                b.Append("<event sequence=\"").Append(row.Sequence)
+                 .Append("\" dialogue=\"").Append(DialogueMessage.Escape(row.DialogueId))
+                 .Append("\" timestamp=\"").Append(row.Timestamp)
+                 .Append("\" text-name=\"").Append(DialogueMessage.Escape(row.TextName))
+                 .Append("\" status=\"").Append(row.Status).Append("\">")
+                 .Append(DialogueMessage.Escape(row.EmittedEvent)).Append("</event>");
+            }
+        }
+        return b.Append("</events>").ToString();
+    }
+
+    // ─── Update ────────────────────────────────────────────────────────────────
     void Update()
     {
+        // Async clients post requests into this in-process queue. Processing on
+        // Update gives request/response ordering without sockets or threads.
+        while (serviceRequests.Count > 0)
+        {
+            PendingServiceRequest pending = serviceRequests.Dequeue();
+            DialogueResponse response = Send(pending.request);
+            pending.completed?.Invoke(response);
+        }
+
         if (!isOpen) return;
 
         if (Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.KeypadEnter))
         {
+            SetRuntimeStatus(DialogueRuntimeStatus.Transitioning,
+                isTyping ? "Input completed typewriter" : "Enter/Space pressed");
             if (isTyping) { CompleteTextInstantly(); return; }
             AdvanceSection();
         }
@@ -1147,6 +1385,15 @@ public class Dialogue_Engine : MonoBehaviour
             return;
         }
 
+        if (element is EventToken eventToken)
+        {
+            currentIndex++;
+            EmitEvent(eventToken);
+            // Events do not wait for input; continue to the next narrative token.
+            AdvanceSection();
+            return;
+        }
+
         if (element is CharacterToken ct)
         {
             ShowCharacter(ct);
@@ -1174,16 +1421,22 @@ public class Dialogue_Engine : MonoBehaviour
 
         // Text + typewriter
         currentFullText = ct.Text?.TrimEnd() ?? "";
+        currentTextName = string.IsNullOrEmpty(ct.Speaker) ? "NARRATOR" : ct.Speaker;
+        currentServiceText = currentFullText;
 
         // Push to history
         history.Add(new DialogueHistoryEntry { speaker = ct.Speaker, text = currentFullText });
 
         if (enableTypewriter && !string.IsNullOrEmpty(currentFullText))
+        {
+            SetRuntimeStatus(DialogueRuntimeStatus.TypingText, "Rendering dialogue text");
             typewriterCoroutine = StartCoroutine(TypeText(currentFullText));
+        }
         else
         {
             RenderDialogueText(currentFullText);
             isTyping = false;
+            SetRuntimeStatus(DialogueRuntimeStatus.WaitingForInput, "Waiting for Enter/Space");
         }
 
         if (choiceContainer != null) choiceContainer.style.display = DisplayStyle.None;
@@ -1222,6 +1475,9 @@ public class Dialogue_Engine : MonoBehaviour
         }
 
         HighlightChoice(0);
+        currentTextName = "CHOICE_" + choice.ChoiceIndex;
+        currentServiceText = string.Join(" | ", choiceOptions.ConvertAll(o => o.OptionText));
+        SetRuntimeStatus(DialogueRuntimeStatus.TakingChoice, "Waiting for a choice");
         Debug.Log($"Dialogue_Engine: Showing {choice.Children.Count} choices.");
     }
 
@@ -1229,12 +1485,14 @@ public class Dialogue_Engine : MonoBehaviour
     void OnOptionSelected(OptionToken option)
     {
         Debug.Log($"Dialogue_Engine: Option selected \"{option.OptionText}\" -> {option.TargetSectionID}");
+        currentTextName = "OPTION_" + option.OptionIndex;
+        currentServiceText = option.OptionText;
+        SetRuntimeStatus(DialogueRuntimeStatus.ChoiceSelected,
+            "Selected option; goto " + option.TargetSectionID);
 
-        if (!string.IsNullOrEmpty(option.EmitText))
-        {
-            Debug.Log($"Dialogue_Engine: @EMIT \"{option.EmitText}\"");
-            OnEmit?.Invoke(option.EmitText);
-        }
+        if (option.Event != null)
+            EmitEvent(option.Event);
+
 
         if (choiceContainer != null) choiceContainer.style.display = DisplayStyle.None;
 
@@ -1267,6 +1525,7 @@ public class Dialogue_Engine : MonoBehaviour
         isTyping = false;
         StopCaretBlink();
         RenderDialogueText(currentFullText);
+        SetRuntimeStatus(DialogueRuntimeStatus.WaitingForInput, "Waiting for Enter/Space");
     }
 
     void CompleteTextInstantly()
@@ -1275,6 +1534,7 @@ public class Dialogue_Engine : MonoBehaviour
         isTyping = false;
         StopCaretBlink();
         RenderDialogueText(currentFullText);
+        SetRuntimeStatus(DialogueRuntimeStatus.WaitingForInput, "Waiting for Enter/Space");
     }
 
     // ─── Text rendering (normal label or per-letter behaviour) ────────────────
@@ -1517,6 +1777,7 @@ public class Dialogue_Engine : MonoBehaviour
         isTyping       = false;
         isOpen         = false;
         isSuccess      = true;
+        SetRuntimeStatus(DialogueRuntimeStatus.Completed, "Dialogue completed");
         graph          = null;
         currentSection = null;
         currentIndex   = 0;
@@ -2073,6 +2334,8 @@ public class Dialogue_Engine : MonoBehaviour
         }
         if (!insideBox) return;
 
+        SetRuntimeStatus(DialogueRuntimeStatus.Transitioning,
+            isTyping ? "Click completed typewriter" : "Dialogue panel clicked");
         if (isTyping) CompleteTextInstantly();
         else AdvanceSection();
     }

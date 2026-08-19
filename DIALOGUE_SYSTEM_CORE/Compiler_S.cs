@@ -68,6 +68,17 @@ public class CharacterToken : SyntaxToken
     }
 }
 
+public class EventToken : SyntaxToken
+{
+    public string EmittedEvent { get; }
+
+    public EventToken(string emittedEvent)
+    {
+        EmittedEvent = emittedEvent ?? "";
+        Children = null;
+    }
+}
+
 public class ChoiceToken : SyntaxToken
 {
     public int ChoiceIndex { get; }
@@ -82,7 +93,9 @@ public class OptionToken : SyntaxToken
 {
     public string OptionText { get; }
     public string TargetSectionID { get; }
-    public string EmitText { get; }
+    public EventToken Event { get; }
+    // Compatibility accessor for integrations compiled against the old API.
+    public string EmitText { get { return Event != null ? Event.EmittedEvent : ""; } }
     public int OptionIndex { get; }
 
     public OptionToken(
@@ -93,10 +106,14 @@ public class OptionToken : SyntaxToken
     {
         OptionText = text;
         TargetSectionID = targetSectionID;
-        EmitText = emitText;
+        Event = string.IsNullOrEmpty(emitText) ? null : new EventToken(emitText);
         OptionIndex = optionIndex;
 
-        Children = null;
+        // Inline option emissions are represented by the same leaf EventToken
+        // used by standalone @EMIT statements.
+        Children = Event != null
+            ? new List<SyntaxToken> { Event }
+            : null;
     }
 }
 
@@ -185,6 +202,11 @@ public class DialogueGraph
                 Console.WriteLine(
                     $"{indent}[Character] " +
                     $"{ct.Speaker}{portrait}: \"{debugText}\"");
+            }
+
+            else if (child is EventToken ev)
+            {
+                Console.WriteLine($"{indent}[@EMIT: {ev.EmittedEvent}]");
             }
 
             else if (child is ChoiceToken ch)
@@ -892,6 +914,21 @@ public static class Compiler_S
                 continue;
             }
 
+            if (line.StartsWith("@EMIT", StringComparison.OrdinalIgnoreCase))
+            {
+                if (inChoice)
+                {
+                    Console.WriteLine("[Error] Standalone @EMIT inside CHOICE is ambiguous; put it in an OPTION or after the CHOICE block.");
+                    return false;
+                }
+
+                EventToken eventToken = ParseEvent(line);
+                if (eventToken == null) return false;
+                currentSection.AddChild(eventToken);
+                Console.WriteLine($"  [@EMIT] \"{eventToken.EmittedEvent}\" in Section \"{currentSection.SectionID}\"");
+                continue;
+            }
+
             if (line.StartsWith("OPTION_", StringComparison.OrdinalIgnoreCase))
             {
                 if (!inChoice)
@@ -1141,6 +1178,7 @@ public static class Compiler_S
             if (adjacency.TryGetValue(ot.TargetSectionID, out SectionToken target))
             {
                 ot.Children = new List<SyntaxToken> { target };
+                if (ot.Event != null) ot.Children.Add(ot.Event);
 
                 string debugOptionText = ot.OptionText.Replace("\n", "\\n");
                 Console.WriteLine($"  [Graph] Wired \"{debugOptionText}\" -> \"{ot.TargetSectionID}\"");
@@ -1286,7 +1324,33 @@ public static class Compiler_S
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // OPTION PARSER
+    // EVENT PARSER — valid as a standalone statement in every SECTION
+    // ══════════════════════════════════════════════════════════════════════════
+
+    static EventToken ParseEvent(string line)
+    {
+        string clean = line == null ? "" : line.Trim();
+        if (!clean.EndsWith(";"))
+        {
+            Console.WriteLine("[Error] @EMIT statement must end with ';'.");
+            return null;
+        }
+
+        clean = clean.Substring(0, clean.Length - 1).TrimEnd();
+        if (!clean.StartsWith("@EMIT", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        string emitted = Resolve(clean.Substring(5).Trim());
+        if (string.IsNullOrEmpty(emitted))
+        {
+            Console.WriteLine("[Error] @EMIT requires a non-empty event string or variable.");
+            return null;
+        }
+        return new EventToken(emitted);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // OPTION PARSER (legacy inline @EMIT remains supported)
     // ══════════════════════════════════════════════════════════════════════════
 
     static OptionToken ParseOption(
