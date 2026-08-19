@@ -3,7 +3,9 @@ using UnityEngine.UIElements;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.Text;
 
 #if UNITY_EDITOR
 using UnityEditor;
@@ -440,6 +442,24 @@ public class Dialogue_Engine : MonoBehaviour
     bool        isOpen    = false;
     public bool isSuccess = false;
 
+    // ─── Dialogue database & service (the Service-Client bridge) ─────────────
+    // currentDslName  — the text DSL currently being played ("" when none).
+    // ioStatus        — the live status code of the text (recorded in the DB).
+    // lastEmitted*    — the most recent @EMIT of the current text (for the
+    //                   live snapshot: "Emitted Event <event name>").
+    // activeWaits     — blocking client waits the server is polling right now.
+    string currentDslName = "";
+    DialogueStatusCode ioStatus = DialogueStatusCode.Idle;
+    string lastEmittedEvent = "";
+    string lastEmittedAt = "";
+    readonly List<ActiveWait> activeWaits = new List<ActiveWait>();
+
+    class ActiveWait
+    {
+        public ServiceRequest Request;
+        public float Deadline;    // unscaled seconds (timeout)
+    }
+
     // Typewriter
     Coroutine typewriterCoroutine;
     bool      isTyping        = false;
@@ -508,6 +528,15 @@ public class Dialogue_Engine : MonoBehaviour
         if (characterNamePanelPadding  == null) characterNamePanelPadding  = new RectOffset(8, 8, 6, 6);
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
+
+        // A new play session / play scene = a fresh internal database.
+        // (Stopping play already wipes static state when the domain reloads;
+        // the editor hook below covers play modes without domain reload.)
+        DialogueDatabase.Reset();
+
+#if UNITY_EDITOR
+        EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+#endif
 
         Debug.Log("Dialogue_Engine: Awake started.");
 
@@ -676,6 +705,50 @@ public class Dialogue_Engine : MonoBehaviour
         if (portraitBorderColour.a < 1f) portraitBorderColour.a = 1f;
     }
     #endif
+
+    // ─── Database lifecycle (it dies with the play session) ─────────────────
+#if UNITY_EDITOR
+    // "The database dies when we stop playing" — even in play modes that do
+    // not reload the domain, exiting play mode wipes the database.
+    void OnPlayModeStateChanged(PlayModeStateChange state)
+    {
+        if (state == PlayModeStateChange.ExitedPlayMode)
+            DialogueDatabase.Reset();
+    }
+#endif
+
+    void OnDestroy()
+    {
+        // The engine is going away — no client may wait on it forever.
+        for (int i = 0; i < activeWaits.Count; i++)
+        {
+            var w = activeWaits[i];
+            DialogueService.Deliver(
+                w.Request.ClientId,
+                ServiceMessages.Fail(w.Request, "503", "engine destroyed"));
+        }
+        activeWaits.Clear();
+
+        DialogueService.DiscardPending();
+
+#if UNITY_EDITOR
+        EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+#endif
+
+        if (Instance == this)
+        {
+            Instance = null;
+            // Exited the play scene (and no other engine took over) —
+            // the database dies with it.
+            DialogueDatabase.Reset();
+        }
+    }
+
+    void OnApplicationQuit()
+    {
+        // Exiting the play scene / the application — the database dies.
+        DialogueDatabase.Reset();
+    }
 
     #if UNITY_EDITOR
     // Returns the path of the selected preset (applying its sidecar .json),
@@ -940,6 +1013,15 @@ public class Dialogue_Engine : MonoBehaviour
         if (graph == null || graph.EntryNode == null)
         { Debug.LogError("Dialogue_Engine: Compilation failed or empty graph."); return; }
 
+        // ── Internal database: register this text DSL and record the
+        //    "text started" row (nothing emitted yet -> empty event). ──
+        currentDslName   = path_input;
+        ioStatus         = DialogueStatusCode.Idle;
+        lastEmittedEvent = "";
+        lastEmittedAt    = "";
+        DialogueDatabase.RegisterDsl(path_input);
+        DialogueDatabase.Record(path_input, "", DialogueStatusCode.Idle);
+
         if (path_input != lastLoadedScript)
         {
             portraits.Clear();
@@ -1021,9 +1103,13 @@ public class Dialogue_Engine : MonoBehaviour
         }
     }
 
-    // ─── Update (Unchanged) ───────────────────────────────────────────────────
+    // ─── Update ──────────────────────────────────────────────────────────────
     void Update()
     {
+        // The service (server side) runs even while the dialogue is closed:
+        // snapshots report "closed" and database queries still work.
+        ProcessServiceRequests();
+
         if (!isOpen) return;
 
         if (Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.KeypadEnter))
@@ -1033,56 +1119,90 @@ public class Dialogue_Engine : MonoBehaviour
         }
     }
 
-    // ─── AdvanceSection (Unchanged) ───────────────────────────────────────────
+    // ─── AdvanceSection ──────────────────────────────────────────────────────
+    // EventTokens (@EMIT statements) execute IMMEDIATELY when traversal
+    // reaches them — they consume no input, so the loop keeps walking until
+    // it hits something that waits for the user (a line, a choice, a section)
+    // or runs out of the section.
     void AdvanceSection()
     {
-        if (currentSection == null || currentSection.Children == null || currentIndex >= currentSection.Children.Count)
+        while (true)
         {
-            if (sectionStack.Count > 0) sectionStack.Pop();
-
-            if (sectionStack.Count > 0)
+            if (currentSection == null || currentSection.Children == null || currentIndex >= currentSection.Children.Count)
             {
-                var parent = sectionStack.Peek();
-                currentSection = parent.section;
-                currentIndex   = parent.index;
+                if (sectionStack.Count > 0) sectionStack.Pop();
+
+                if (sectionStack.Count > 0)
+                {
+                    var parent = sectionStack.Peek();
+                    currentSection = parent.section;
+                    currentIndex   = parent.index;
+                }
+                else
+                {
+                    CloseUI();
+                }
+                return;
             }
-            else
+
+            var element = currentSection.Children[currentIndex];
+
+            if (element is SectionToken childSection)
             {
-                CloseUI();
+                if (sectionStack.Count > 0)
+                {
+                    sectionStack.Pop();
+                    sectionStack.Push((currentSection, currentIndex + 1));
+                }
+                sectionStack.Push((childSection, 0));
+                currentSection = childSection;
+                currentIndex   = 0;
+                return;
             }
-            return;
-        }
 
-        var element = currentSection.Children[currentIndex];
-
-        if (element is SectionToken childSection)
-        {
-            if (sectionStack.Count > 0)
+            if (element is EventToken et)
             {
-                sectionStack.Pop();
-                sectionStack.Push((currentSection, currentIndex + 1));
+                EmitEvent(et);
+                currentIndex++;
+                continue;    // no input needed — keep walking
             }
-            sectionStack.Push((childSection, 0));
-            currentSection = childSection;
-            currentIndex   = 0;
-            return;
-        }
 
-        if (element is CharacterToken ct)
-        {
-            ShowCharacter(ct);
+            if (element is CharacterToken ct)
+            {
+                ShowCharacter(ct);
+                currentIndex++;
+                return;
+            }
+
+            if (element is ChoiceToken choice)
+            {
+                ShowChoices(choice);
+                currentIndex++;
+                return;
+            }
+
             currentIndex++;
-            return;
         }
+    }
 
-        if (element is ChoiceToken choice)
-        {
-            ShowChoices(choice);
-            currentIndex++;
-            return;
-        }
+    // ─── Emit (@EMIT) ────────────────────────────────────────────────────────
+    /// <summary>
+    /// Fires an EventToken: records the event in the internal database
+    /// (timestamp + text name -> event emitted + status EventEmitted) and
+    /// raises the public OnEmit event.
+    /// </summary>
+    void EmitEvent(EventToken et)
+    {
+        if (et == null || string.IsNullOrEmpty(et.EventName)) return;
 
-        currentIndex++;
+        ioStatus = DialogueStatusCode.EventEmitted;
+        lastEmittedEvent = et.EventName;
+        lastEmittedAt = DialogueDatabase.FormatTs(DialogueDatabase.Now());
+
+        DialogueDatabase.Record(currentDslName, et.EventName, DialogueStatusCode.EventEmitted);
+
+        Debug.Log($"Dialogue_Engine: @EMIT \"{et.EventName}\"");
+        OnEmit?.Invoke(et.EventName);
     }
 
     // ─── ShowCharacter ─────────────────────────────────────────────────────────
@@ -1098,6 +1218,10 @@ public class Dialogue_Engine : MonoBehaviour
 
         // Push to history
         history.Add(new DialogueHistoryEntry { speaker = ct.Speaker, text = currentFullText });
+
+        // Database: the text is now waiting for IO (Enter / Space).
+        ioStatus = DialogueStatusCode.WaitingForInput;
+        DialogueDatabase.Record(currentDslName, "", DialogueStatusCode.WaitingForInput);
 
         if (enableTypewriter && !string.IsNullOrEmpty(currentFullText))
             typewriterCoroutine = StartCoroutine(TypeText(currentFullText));
@@ -1126,6 +1250,14 @@ public class Dialogue_Engine : MonoBehaviour
 
         if (choice.Children == null) return;
 
+        // A choice reached = any @EMIT inside the CHOICE block fires now
+        // ("I have reached this choice point").
+        foreach (var child in choice.Children)
+        {
+            if (child is EventToken et)
+                EmitEvent(et);
+        }
+
         foreach (var child in choice.Children)
         {
             if (child is OptionToken option)
@@ -1143,6 +1275,11 @@ public class Dialogue_Engine : MonoBehaviour
         }
 
         HighlightChoice(0);
+
+        // Database: the text is now taking in a choice.
+        ioStatus = DialogueStatusCode.TakingChoice;
+        DialogueDatabase.Record(currentDslName, "", DialogueStatusCode.TakingChoice);
+
         Debug.Log($"Dialogue_Engine: Showing {choice.Children.Count} choices.");
     }
 
@@ -1151,11 +1288,9 @@ public class Dialogue_Engine : MonoBehaviour
     {
         Debug.Log($"Dialogue_Engine: Option selected \"{option.OptionText}\" -> {option.TargetSectionID}");
 
-        if (!string.IsNullOrEmpty(option.EmitText))
-        {
-            Debug.Log($"Dialogue_Engine: @EMIT \"{option.EmitText}\"");
-            OnEmit?.Invoke(option.EmitText);
-        }
+        // "I have taken this choice" — the option's @EMIT fires now.
+        if (option.Emit != null)
+            EmitEvent(option.Emit);
 
         if (choiceContainer != null) choiceContainer.style.display = DisplayStyle.None;
 
@@ -1169,6 +1304,415 @@ public class Dialogue_Engine : MonoBehaviour
             AdvanceSection();
         }
         else CloseUI();
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // DIALOGUE SERVICE — server side
+    //
+    // This engine IS the server. Every Update it (1) drains the request inbox
+    // and (2) polls the blocking waits — the blocking wait "keeps requesting
+    // live snapshots" of its own state every frame, and the repeat is
+    // CONDITIONAL: it stops when the answer is in, when the timeout passes,
+    // or when the dialogue closes. Responses are delivered back to the client
+    // that asked.
+    // ══════════════════════════════════════════════════════════════════════════
+
+    void ProcessServiceRequests()
+    {
+        // ── 1) one-shot requests: snapshot / query / non-blocking wait ──────
+        while (DialogueService.TryDequeueRequest(out ServiceRequest req))
+        {
+            req.RegisteredAt = DialogueDatabase.Now();
+            req.HistoryCountAtRegistration = history.Count;
+
+            string response = null;
+
+            if (req.Type == "snapshot")
+            {
+                response = BuildSnapshotMessage(req);
+            }
+            else if (req.Type == "query")
+            {
+                response = ExecuteQuery(req);
+            }
+            else if (req.Type == "wait")
+            {
+                if (!req.Blocking)
+                {
+                    // non-blocking: one check per request — 200 when it got
+                    // what it wanted, 204 when it did not (the client calls
+                    // this again next frame, in its loop).
+                    EventRow evMatch   = FindEventMatch(req);
+                    int msgMatch       = (evMatch == null) ? FindMessageMatch(req) : -1;
+                    response = (evMatch != null || msgMatch >= 0)
+                        ? BuildWaitAnswer(req, evMatch, msgMatch)
+                        : ServiceMessages.Fail(req, "204", "not yet");
+                }
+                else
+                {
+                    // blocking: the server polls every frame until answered.
+                    activeWaits.Add(new ActiveWait
+                    {
+                        Request = req,
+                        Deadline = Time.unscaledTime + Mathf.Max(0.05f, req.Timeout)
+                    });
+                }
+            }
+            else
+            {
+                response = ServiceMessages.Fail(req, "400", "unknown request type");
+            }
+
+            if (response != null)
+                DialogueService.Deliver(req.ClientId, response);
+        }
+
+        // ── 2) blocking waits: poll until the answer, timeout, or close ─────
+        for (int i = activeWaits.Count - 1; i >= 0; i--)
+        {
+            var w = activeWaits[i];
+
+            EventRow evMatch  = FindEventMatch(w.Request);
+            int msgMatch      = (evMatch == null) ? FindMessageMatch(w.Request) : -1;
+
+            string response = null;
+
+            if (evMatch != null || msgMatch >= 0)
+                response = BuildWaitAnswer(w.Request, evMatch, msgMatch);
+            else if (!isOpen)
+                response = ServiceMessages.Fail(w.Request, "503", "dialogue closed");
+            else if (Time.unscaledTime >= w.Deadline)
+                response = ServiceMessages.Fail(w.Request, "408", "timeout");
+
+            if (response != null)
+            {
+                DialogueService.Deliver(w.Request.ClientId, response);
+                activeWaits.RemoveAt(i);
+            }
+        }
+    }
+
+    // The event row that satisfies a wait (emitted AT/AFTER the request was
+    // registered — so a stale event from minutes ago never matches).
+    EventRow FindEventMatch(ServiceRequest req)
+    {
+        if (string.IsNullOrEmpty(req.Event)) return null;
+
+        var rows = DialogueDatabase.GetSince(req.RegisteredAt);
+        for (int i = 0; i < rows.Count; i++)
+        {
+            if (rows[i].EmittedEvent == req.Event)
+                return rows[i];
+        }
+
+        return null;
+    }
+
+    // The history index of a line that satisfies a message wait (shown
+    // AT/AFTER the request was registered).
+    int FindMessageMatch(ServiceRequest req)
+    {
+        if (string.IsNullOrEmpty(req.Text)) return -1;
+
+        for (int i = req.HistoryCountAtRegistration; i < history.Count; i++)
+        {
+            if (history[i].text != null &&
+                history[i].text.IndexOf(req.Text, StringComparison.OrdinalIgnoreCase) != -1)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    // The 200 answer to a satisfied wait.
+    string BuildWaitAnswer(ServiceRequest req, EventRow eventMatch, int messageMatch)
+    {
+        if (eventMatch != null)
+        {
+            string attrs =
+                $" client=\"{XmlUtil.Escape(req.ClientId)}\"" +
+                $" event=\"{XmlUtil.Escape(eventMatch.EmittedEvent)}\"" +
+                $" matched=\"true\"" +
+                $" at=\"{XmlUtil.Escape(eventMatch.Timestamp)}\"" +
+                $" text=\"{XmlUtil.Escape(eventMatch.TextName)}\"";
+
+            string body =
+                $"<emitted event=\"{XmlUtil.Escape(eventMatch.EmittedEvent)}\" " +
+                $"at=\"{XmlUtil.Escape(eventMatch.Timestamp)}\" " +
+                $"text=\"{XmlUtil.Escape(eventMatch.TextName)}\" " +
+                $"status=\"{XmlUtil.Escape(eventMatch.StatusCode)}\" />";
+
+            return ServiceMessages.Response("wait", "200", attrs, body);
+        }
+
+        var entry = history[messageMatch];
+        string attrs2 =
+            $" client=\"{XmlUtil.Escape(req.ClientId)}\"" +
+            $" text=\"{XmlUtil.Escape(req.Text)}\"" +
+            $" matched=\"true\"";
+
+        string body2 =
+            $"<message speaker=\"{XmlUtil.Escape(entry.speaker)}\">" +
+            XmlUtil.Escape(entry.text) + "</message>";
+
+        return ServiceMessages.Response("wait", "200", attrs2, body2);
+    }
+
+    // ── Live snapshot ("send me a live snapshot of what you are doing now") ──
+    string BuildSnapshotMessage(ServiceRequest req)
+    {
+        var sb = new StringBuilder();
+
+        string ioState = IoStateText();
+        string sectionName = currentSection != null ? currentSection.SectionID : "closed";
+        int childCount = (currentSection != null && currentSection.Children != null)
+            ? currentSection.Children.Count : 0;
+
+        bool atChoice = isOpen && choiceContainer != null &&
+                        choiceContainer.style.display == DisplayStyle.Flex;
+
+        // ── human-readable summary (what a monitoring tool would print) ──────
+        var summary = new StringBuilder();
+
+        if (!isOpen)
+        {
+            summary.AppendLine("dialogue closed — IO status idle");
+        }
+        else
+        {
+            if (atChoice)
+            {
+                summary.AppendLine(
+                    $"we are at choice.. IO status {ioState} — " +
+                    "listening to keyboard Up/Down + Enter press, or a click, to pick an option");
+            }
+            else
+            {
+                summary.AppendLine(
+                    $"we are at dialogue section \"{sectionName}\" index {currentIndex}/{childCount} " +
+                    $"IO status {ioState}");
+                if (ioState == "waiting_for_input")
+                    summary.AppendLine("Transition IO status listened to keyboard enter or space pressed");
+            }
+            if (!string.IsNullOrEmpty(lastEmittedEvent))
+                summary.AppendLine($"Emitted Event {lastEmittedEvent} (at {lastEmittedAt})");
+        }
+
+        // ── structured snapshot ──────────────────────────────────────────────
+        sb.Append("<response type=\"snapshot\" status=\"200\" client=\"")
+          .Append(XmlUtil.Escape(req.ClientId))
+          .Append("\" dialogue_open=\"").Append(isOpen ? "true" : "false")
+          .Append("\" io=\"").Append(XmlUtil.Escape(ioState))
+          .Append("\" dsl=\"").Append(XmlUtil.Escape(currentDslName))
+          .Append("\" section=\"").Append(XmlUtil.Escape(sectionName))
+          .Append("\" index=\"").Append(currentIndex.ToString(CultureInfo.InvariantCulture))
+          .Append("\" children=\"").Append(childCount.ToString(CultureInfo.InvariantCulture))
+          .Append("\">");
+
+        sb.Append("<summary>").Append(XmlUtil.Escape(summary.ToString().TrimEnd())).Append("</summary>");
+
+        if (isOpen)
+        {
+            // where the user currently is inside the text
+            string speaker = history.Count > 0 ? history[history.Count - 1].speaker : "";
+            string lastText = history.Count > 0 ? history[history.Count - 1].text : "";
+
+            sb.Append("<dialogue speaker=\"").Append(XmlUtil.Escape(speaker))
+              .Append("\" text=\"").Append(XmlUtil.Escape(lastText))
+              .Append("\" visible=\"").Append(XmlUtil.Escape(shownText))
+              .Append("\" typing=\"").Append(isTyping ? "true" : "false")
+              .Append("\" />");
+
+            sb.Append("<io state=\"").Append(XmlUtil.Escape(ioState))
+              .Append("\" hint=\"").Append(XmlUtil.Escape(IoHintText()))
+              .Append("\" />");
+
+            if (atChoice)
+            {
+                sb.Append("<choice options=\"")
+                  .Append(choiceOptions.Count.ToString(CultureInfo.InvariantCulture))
+                  .Append("\" selected=\"")
+                  .Append(choiceHighlight.ToString(CultureInfo.InvariantCulture))
+                  .Append("\" />");
+            }
+
+            if (!string.IsNullOrEmpty(lastEmittedEvent))
+            {
+                sb.Append("<emitted event=\"").Append(XmlUtil.Escape(lastEmittedEvent))
+                  .Append("\" at=\"").Append(XmlUtil.Escape(lastEmittedAt))
+                  .Append("\" />");
+            }
+
+            // the most recent rows of this text from the internal database
+            var rows = DialogueDatabase.GetEvents(currentDslName);
+            int start = rows.Count > 5 ? rows.Count - 5 : 0;
+            sb.Append("<recent>");
+            for (int i = start; i < rows.Count; i++)
+            {
+                var r = rows[i];
+                sb.Append("<row at=\"").Append(r.Timestamp)
+                  .Append("\" text=\"").Append(XmlUtil.Escape(r.TextName))
+                  .Append("\" event=\"").Append(XmlUtil.Escape(r.EmittedEvent))
+                  .Append("\" status=\"").Append(XmlUtil.Escape(r.StatusCode))
+                  .Append("\" />");
+            }
+            sb.Append("</recent>");
+        }
+
+        sb.Append("</response>");
+        return sb.ToString();
+    }
+
+    string IoStateText()
+    {
+        if (!isOpen) return "idle";
+
+        switch (ioStatus)
+        {
+            case DialogueStatusCode.WaitingForInput: return "waiting_for_input";
+            case DialogueStatusCode.TakingChoice:    return "taking_choice";
+            case DialogueStatusCode.EventEmitted:    return "event_emitted";
+            default:                                 return "idle";
+        }
+    }
+
+    string IoHintText()
+    {
+        if (!isOpen) return "no live dialogue";
+
+        switch (ioStatus)
+        {
+            case DialogueStatusCode.WaitingForInput:
+                return "listening to keyboard Enter or Space press to advance";
+            case DialogueStatusCode.TakingChoice:
+                return "listening to keyboard Up/Down + Enter press, or a click, to pick an option";
+            case DialogueStatusCode.EventEmitted:
+                return "event emitted";
+            default:
+                return "idle";
+        }
+    }
+
+    // ── Simple queries executed against the internal database ────────────────
+    string ExecuteQuery(ServiceRequest req)
+    {
+        string command = (req.Command ?? "").ToLowerInvariant();
+
+        switch (command)
+        {
+            case "events":
+            {
+                var rows = DialogueDatabase.GetEvents(req.Text, req.Event);
+                var sb = new StringBuilder();
+                sb.Append("<response type=\"query\" command=\"events\" status=\"200\" count=\"")
+                  .Append(rows.Count.ToString(CultureInfo.InvariantCulture)).Append("\">");
+                foreach (var r in rows)
+                {
+                    sb.Append("<row at=\"").Append(r.Timestamp)
+                      .Append("\" text=\"").Append(XmlUtil.Escape(r.TextName))
+                      .Append("\" event=\"").Append(XmlUtil.Escape(r.EmittedEvent))
+                      .Append("\" status=\"").Append(XmlUtil.Escape(r.StatusCode))
+                      .Append("\" />");
+                }
+                sb.Append("</response>");
+                return sb.ToString();
+            }
+
+            case "status":
+            {
+                string text = string.IsNullOrEmpty(req.Text) ? currentDslName : req.Text;
+                var row = DialogueDatabase.GetLatest(text);
+                bool live = text == currentDslName;
+
+                var sb = new StringBuilder();
+                sb.Append("<response type=\"query\" command=\"status\" status=\"200\" text=\"")
+                  .Append(XmlUtil.Escape(text ?? ""))
+                  .Append("\" live=\"").Append(live ? "true" : "false")
+                  .Append("\" live_state=\"").Append(live ? IoStateText() : "n/a")
+                  .Append("\" last_recorded=\"").Append(row != null ? XmlUtil.Escape(row.StatusCode) : "none")
+                  .Append("\" at=\"").Append(row != null ? row.Timestamp : "n/a")
+                  .Append("\" />");
+                return sb.ToString();
+            }
+
+            case "dsl":
+            {
+                var dsls = DialogueDatabase.GetDsls();
+                var sb = new StringBuilder();
+                sb.Append("<response type=\"query\" command=\"dsl\" status=\"200\" count=\"")
+                  .Append(dsls.Count.ToString(CultureInfo.InvariantCulture)).Append("\">");
+                foreach (var d in dsls)
+                {
+                    sb.Append("<dsl name=\"").Append(XmlUtil.Escape(d.TextName))
+                      .Append("\" plays=\"").Append(d.PlayCount.ToString(CultureInfo.InvariantCulture))
+                      .Append("\" first_at=\"").Append(d.FirstSeenAt)
+                      .Append("\" last_status=\"").Append(XmlUtil.Escape(d.LastStatus))
+                      .Append("\" />");
+                }
+                sb.Append("</response>");
+                return sb.ToString();
+            }
+
+            case "texts":
+            {
+                var rows = DialogueDatabase.GetEvents(req.Text, null);
+                var sb = new StringBuilder();
+                sb.Append("<response type=\"query\" command=\"texts\" status=\"200\" count=\"")
+                  .Append(rows.Count.ToString(CultureInfo.InvariantCulture)).Append("\">");
+                foreach (var r in rows)
+                {
+                    sb.Append("<row at=\"").Append(r.Timestamp)
+                      .Append("\" text=\"").Append(XmlUtil.Escape(r.TextName))
+                      .Append("\" event=\"").Append(XmlUtil.Escape(r.EmittedEvent))
+                      .Append("\" status=\"").Append(XmlUtil.Escape(r.StatusCode))
+                      .Append("\" />");
+                }
+                sb.Append("</response>");
+                return sb.ToString();
+            }
+
+            case "position":
+            {
+                int childCount = (currentSection != null && currentSection.Children != null)
+                    ? currentSection.Children.Count : 0;
+                float progress = childCount > 0 ? (float)currentIndex / (float)childCount : 0f;
+                string speaker = isOpen && history.Count > 0 ? history[history.Count - 1].speaker : "";
+                string lastText = isOpen && history.Count > 0 ? history[history.Count - 1].text : "";
+
+                var sb = new StringBuilder();
+                sb.Append("<response type=\"query\" command=\"position\" status=\"200\" open=\"")
+                  .Append(isOpen ? "true" : "false")
+                  .Append("\" section=\"").Append(XmlUtil.Escape(currentSection != null ? currentSection.SectionID : "none"))
+                  .Append("\" index=\"").Append(currentIndex.ToString(CultureInfo.InvariantCulture))
+                  .Append("\" of=\"").Append(childCount.ToString(CultureInfo.InvariantCulture))
+                  .Append("\" progress=\"").Append(progress.ToString("0.##", CultureInfo.InvariantCulture))
+                  .Append("\" speaker=\"").Append(XmlUtil.Escape(speaker))
+                  .Append("\" text=\"").Append(XmlUtil.Escape(lastText))
+                  .Append("\" io=\"").Append(IoStateText())
+                  .Append("\" />");
+                return sb.ToString();
+            }
+
+            case "history":
+            {
+                int start = history.Count > 10 ? history.Count - 10 : 0;
+                var sb = new StringBuilder();
+                sb.Append("<response type=\"query\" command=\"history\" status=\"200\" count=\"")
+                  .Append((history.Count - start).ToString(CultureInfo.InvariantCulture)).Append("\">");
+                for (int i = start; i < history.Count; i++)
+                {
+                    sb.Append("<line speaker=\"").Append(XmlUtil.Escape(history[i].speaker))
+                      .Append("\">").Append(XmlUtil.Escape(history[i].text)).Append("</line>");
+                }
+                sb.Append("</response>");
+                return sb.ToString();
+            }
+
+            default:
+                return ServiceMessages.Fail(req, "400", "unknown query command");
+        }
     }
 
     // ─── Typewriter ────────────────────────────────────────────────────────────
@@ -1435,6 +1979,20 @@ public class Dialogue_Engine : MonoBehaviour
         isTyping       = false;
         isOpen         = false;
         isSuccess      = true;
+
+        // Database: the text is back to idle (dialogue closed).
+        ioStatus = DialogueStatusCode.Idle;
+        DialogueDatabase.Record(currentDslName, "", DialogueStatusCode.Idle);
+
+        // A closed dialogue cannot answer blocking waits any more.
+        for (int i = activeWaits.Count - 1; i >= 0; i--)
+        {
+            var w = activeWaits[i];
+            DialogueService.Deliver(
+                w.Request.ClientId,
+                ServiceMessages.Fail(w.Request, "503", "dialogue closed"));
+            activeWaits.RemoveAt(i);
+        }
         graph          = null;
         currentSection = null;
         currentIndex   = 0;

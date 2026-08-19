@@ -82,21 +82,58 @@ public class OptionToken : SyntaxToken
 {
     public string OptionText { get; }
     public string TargetSectionID { get; }
-    public string EmitText { get; }
     public int OptionIndex { get; }
+
+    /// <summary>
+    /// The @EMIT attached to this option (fires when the option is chosen),
+    /// or null when the option emits nothing.
+    /// </summary>
+    public EventToken Emit { get; }
+
+    /// <summary>Convenience: the emitted event name ("" when there is no emit).</summary>
+    public string EmitText { get { return Emit != null ? Emit.EventName : ""; } }
 
     public OptionToken(
         string text,
         string targetSectionID,
-        string emitText,
+        EventToken emit,
         int optionIndex)
     {
         OptionText = text;
         TargetSectionID = targetSectionID;
-        EmitText = emitText;
+        Emit = emit;
         OptionIndex = optionIndex;
 
         Children = null;
+    }
+}
+
+/// <summary>
+/// An @EMIT statement.
+///
+/// A LEAF token — it has no children. Its only attribute is the string of the
+/// event that gets emitted when the engine reaches it.
+///
+/// It can appear:
+///   - as a standalone statement anywhere inside a SECTION:
+///         @EMIT "player_entered_town";
+///     (fires when traversal reaches that point in the text)
+///   - inside a CHOICE block (fires when the choice is reached/shown)
+///   - as the trailing segment of an OPTION line (fires when the option
+///     is chosen, right before the GOTO)
+///
+/// The event name is a plain string; when it matches a declared var, the
+/// var's value is used instead (same resolution as everywhere else).
+/// </summary>
+public class EventToken : SyntaxToken
+{
+    public string EventName { get; }
+
+    public EventToken(string eventName)
+    {
+        EventName = eventName;
+
+        Children = null;   // leaf token — an emit has no children
     }
 }
 
@@ -195,6 +232,12 @@ public class DialogueGraph
                 PrintNodeContents(
                     ch,
                     indent + "  ");
+            }
+
+            else if (child is EventToken et)
+            {
+                Console.WriteLine(
+                    $"{indent}[Emit] \"{et.EventName}\"");
             }
 
             else if (child is OptionToken ot)
@@ -644,6 +687,10 @@ public static class Compiler_S
 
                 || trimmed.StartsWith(
                     "@ENTRY",
+                    StringComparison.OrdinalIgnoreCase)
+
+                || trimmed.StartsWith(
+                    "@EMIT",
                     StringComparison.OrdinalIgnoreCase);
 
             if (standalone)
@@ -935,6 +982,31 @@ public static class Compiler_S
                 continue;
             }
 
+            // ── @EMIT — allowed as a standalone statement anywhere ─────────
+            // Outside a CHOICE block it belongs to the current SECTION and
+            // fires when traversal reaches it; inside a CHOICE block it
+            // belongs to the choice and fires when the choice is reached.
+            if (line.StartsWith("@EMIT", StringComparison.OrdinalIgnoreCase))
+            {
+                EventToken et = ParseEmit(line);
+
+                if (et == null)
+                    return false;
+
+                if (inChoice)
+                {
+                    currentChoice.AddChild(et);
+                    Console.WriteLine($"  [Emit] \"{et.EventName}\" in Choice #{currentChoice.ChoiceIndex} of Section \"{currentSection.SectionID}\"");
+                }
+                else
+                {
+                    currentSection.AddChild(et);
+                    Console.WriteLine($"  [Emit] \"{et.EventName}\" in Section \"{currentSection.SectionID}\"");
+                }
+
+                continue;
+            }
+
             if (line.StartsWith("["))
             {
                 if (inChoice)
@@ -1190,6 +1262,52 @@ public static class Compiler_S
     }
 
     // ══════════════════════════════════════════════════════════════════════════
+    // EMIT PARSER
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Parses an @EMIT statement into an EventToken.
+    ///
+    /// Accepted forms (the trailing ';' is optional):
+    ///   @EMIT event_name;
+    ///   @EMIT "event name";
+    ///   @EMIT some_var;        (resolved through the var table)
+    ///
+    /// The event is always a STRING on the resulting EventToken.
+    /// </summary>
+    static EventToken ParseEmit(string line)
+    {
+        string body = line.Trim();
+
+        if (body.EndsWith(";"))
+            body = body.Substring(0, body.Length - 1).TrimEnd();
+
+        if (!body.StartsWith("@EMIT", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine($"[Error] Malformed @EMIT: \"{line}\"");
+            return null;
+        }
+
+        string name = body.Substring(5).Trim();
+
+        if (string.IsNullOrEmpty(name))
+        {
+            Console.WriteLine("[Error] @EMIT must be followed by an event name.");
+            return null;
+        }
+
+        string eventName = Resolve(name);
+
+        if (string.IsNullOrEmpty(eventName))
+        {
+            Console.WriteLine("[Error] @EMIT event name resolves to nothing.");
+            return null;
+        }
+
+        return new EventToken(eventName);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
     // CHARACTER PARSER
     // ══════════════════════════════════════════════════════════════════════════
 
@@ -1300,7 +1418,7 @@ public static class Compiler_S
 
         string optionText = "";
         string targetSectionID = "";
-        string emitText = null;
+        EventToken emitToken = null;
 
         foreach (string rawSeg in segments)
         {
@@ -1337,7 +1455,10 @@ public static class Compiler_S
             }
             else if (seg.StartsWith("@EMIT", StringComparison.OrdinalIgnoreCase))
             {
-                emitText = Resolve(seg.Substring(5).Trim());
+                emitToken = ParseEmit(seg);
+
+                if (emitToken == null)
+                    return null;
             }
             else
             {
@@ -1349,7 +1470,7 @@ public static class Compiler_S
         return new OptionToken(
             ResolveMultiline(optionText),
             targetSectionID,
-            emitText,
+            emitToken,
             index);
     }
 

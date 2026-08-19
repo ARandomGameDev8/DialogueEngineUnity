@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Compile-check harness for the Unity-independent core of the dialogue
+    system. It compiles the real core files against minimal UnityEngine
+    stubs and runs semantic tests on the compiler, the internal database,
+    and the service-client bus. Run with:
+
+      dotnet run --project Tools/CompileCheck
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>CompileCheck</AssemblyName>
+    <RootNamespace>CompileCheck</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../DIALOGUE_SYSTEM_CORE/Compiler_S.cs" Link="Compiler_S.cs" />
+    <Compile Include="../../DIALOGUE_SYSTEM_CORE/Dialogue_Database.cs" Link="Dialogue_Database.cs" />
+    <Compile Include="../../DIALOGUE_SYSTEM_CORE/Dialogue_Service.cs" Link="Dialogue_Service.cs" />
+    <Compile Include="../../DIALOGUE_SYSTEM_CORE/File_S.cs" Link="File_S.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../DIALOGUE_SYSTEM_CORE/SampleScripts/emit_demo.txt"
+          Link="emit_demo.txt"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

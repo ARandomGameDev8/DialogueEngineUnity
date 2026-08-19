@@ -1,0 +1,50 @@
+START
+
+// Demo script for the @EMIT / Service-Client architecture.
+//
+//   - standalone @EMIT statements inside a section (fire when traversal
+//     reaches them)
+//   - @EMIT inside a CHOICE block (fires when the choice is reached)
+//   - @EMIT as the last segment of an OPTION (fires when the option is
+//     chosen, right before the GOTO)
+//   - var-resolved event names (the event is always a string)
+//
+// Play it with:  Dialogue_Engine.Play("<abs path>/emit_demo.txt");
+
+var purchase_event = "purchase_complete"
+
+SECTION meet
+
+[Aria]: "Well met, traveller. You have come a long way."
+
+@EMIT "player_met_aria";
+
+SECTION shop
+
+[Merchant]: "Buy something, or leave. Your call."
+
+CHOICE:
+@EMIT "shop_choice_offered";
+OPTION_0: "Buy a lantern"; goto buy; @EMIT lantern_bought;
+OPTION_1: "Leave"; goto leave;
+;
+
+END_SECTION
+
+END_SECTION
+
+SECTION buy
+
+[Merchant]: "A fine lantern. You will not get lost now."
+
+@EMIT purchase_event;
+
+END_SECTION
+
+SECTION leave
+
+[Aria]: "Then I walk on alone."
+
+END_SECTION
+
+END
