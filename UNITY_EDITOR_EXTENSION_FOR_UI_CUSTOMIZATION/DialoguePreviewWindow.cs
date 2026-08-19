@@ -132,8 +132,15 @@ public class DialoguePreviewWindow : EditorWindow
             boxH = canvas.height * Mathf.Clamp01(target.panelHeightValue / 100f) + 40f;
         else
             boxH = Mathf.Min(target.panelHeightValue, canvas.height * 0.9f);
-        float padH    = Mathf.Max(boxH, 90f);
-        Rect  boxRect = new Rect(canvas.x + 16, canvas.y + canvas.height - padH - 12, canvas.width - 32, padH);
+        float padH = Mathf.Max(boxH, 90f);
+        float availableW = canvas.width - 32f;
+        float configuredW = target.panelWidthMode == PanelSizeMode.Percent
+            ? availableW * Mathf.Clamp01(target.panelWidthValue / 100f)
+            : Mathf.Min(target.panelWidthValue, availableW);
+        float boxW = target.portraitPlacement == PortraitPlacement.CharacterPanel
+            ? configuredW : availableW;
+        Rect boxRect = new Rect(canvas.center.x - boxW * 0.5f,
+            canvas.y + canvas.height - padH - 12, boxW, padH);
 
         // Background
         if (target.backgroundMode == BackgroundMode.Image && target.backgroundImage.sprite != null)
@@ -158,7 +165,8 @@ public class DialoguePreviewWindow : EditorWindow
         float ps = Mathf.Min(target.portraitSize, boxRect.height - target.padding.top - target.padding.bottom);
         bool dual = target.showPortrait && target.portraitMode == PortraitMode.Dual;
 
-        if (target.showPortrait && target.portraitMode != PortraitMode.None)
+        if (target.showPortrait && target.portraitMode != PortraitMode.None &&
+            target.portraitPlacement != PortraitPlacement.CharacterPanel)
         {
             // Left portrait (active)
             Rect leftRect = DrawPortrait(innerX, boxRect.y + (boxRect.height - ps) * 0.5f, ps, ps, target.portraitShape, true);
@@ -289,33 +297,57 @@ public class DialoguePreviewWindow : EditorWindow
     {
         if (target.portraitPlacement != PortraitPlacement.CharacterPanel) return;
 
-        float pw = Mathf.Min(target.characterPanelWidth, 130f);
-        float ph = pw + 46f;
+        float sideSpace = right
+            ? canvas.xMax - 8f - boxRect.xMax
+            : boxRect.x - (canvas.x + 8f);
+        float pw = target.characterPanelWidthMode == CharacterPanelSizeMode.Custom
+            ? Mathf.Min(target.characterPanelWidth, sideSpace)
+            : target.characterPanelWidthMode == CharacterPanelSizeMode.Content
+                ? Mathf.Min(130f, sideSpace) : sideSpace;
+        if (pw < 12f) return;
+
+        float ph = target.characterPanelHeightMode == CharacterPanelSizeMode.Custom
+            ? Mathf.Min(target.characterPanelHeight, canvas.height - 16f)
+            : target.characterPanelHeightMode == CharacterPanelSizeMode.Content
+                ? Mathf.Min(pw + 46f, canvas.height - 16f)
+                : (canvas.height - 16f) * 0.62f;
         Rect panel = right
-            ? new Rect(boxRect.xMax + 10, boxRect.yMax - ph - 24, pw, ph)
-            : new Rect(boxRect.x - pw - 10, boxRect.yMax - ph - 24, pw, ph);
+            ? new Rect(boxRect.xMax, canvas.yMax - 8f - ph, pw, ph)
+            : new Rect(boxRect.x - pw, canvas.yMax - 8f - ph, pw, ph);
 
         EditorGUI.DrawRect(panel, target.characterPanelBg);
         DrawBorderRect(panel, target.characterPanelBorderWidth, target.characterPanelBorderColour);
 
-        // Image sub-panel (with silhouette placeholder)
-        Rect img = new Rect(panel.x + 8, panel.y + 8, panel.width - 16, panel.width - 16);
-        EditorGUI.DrawRect(img, target.characterImagePanelBg);
-        if (target.characterImagePanelBorderWidth > 0f)
-            DrawBorderRect(img, target.characterImagePanelBorderWidth, target.characterImagePanelBorderColour);
-        DrawCircleFilled(new Rect(img.x + 10, img.y + 10, img.width - 20, img.height - 20), new Color(0.16f, 0.16f, 0.18f, 1f));
+        float inset = Mathf.Min(8f, panel.width * 0.08f);
+        Rect content = new Rect(panel.x + inset, panel.y + inset,
+            panel.width - inset * 2f, panel.height - inset * 2f);
+        float nameH = Mathf.Min(30f, content.height * 0.22f);
+        bool imageFirst = target.characterPanelOrder == CharacterPanelOrder.ImageTop ||
+                          target.characterPanelOrder == CharacterPanelOrder.ImageLeft;
+        Rect img = imageFirst
+            ? new Rect(content.x, content.y, content.width, content.height - nameH - 4f)
+            : new Rect(content.x, content.y + nameH + 4f, content.width, content.height - nameH - 4f);
+        Rect nm = imageFirst
+            ? new Rect(content.x, img.yMax + 4f, content.width, nameH)
+            : new Rect(content.x, content.y, content.width, nameH);
 
-        // Name sub-panel
-        Rect nm = new Rect(panel.x + 8, img.yMax + 6, panel.width - 16, 24);
+        EditorGUI.DrawRect(img, target.characterImagePanelBg);
+        if (target.characterImagePanelShowBorder && target.characterImagePanelBorderWidth > 0f)
+            DrawBorderRect(img, target.characterImagePanelBorderWidth, target.characterImagePanelBorderColour);
+        DrawCircleFilled(new Rect(img.x + 10, img.y + 10, Mathf.Max(0, img.width - 20), Mathf.Max(0, img.height - 20)),
+            new Color(0.16f, 0.16f, 0.18f, 1f));
+
         EditorGUI.DrawRect(nm, target.characterNamePanelBg);
         if (target.characterNamePanelBorderWidth > 0f)
             DrawBorderRect(nm, target.characterNamePanelBorderWidth, target.characterNamePanelBorderColour);
-        string tag = right ? "INACTIVE" : "ACTIVE";
+        string tag = right ? previewSpeakerB : previewSpeakerA;
         if (target.nameUppercase) tag = tag.ToUpper();
         GUI.Label(nm, tag, new GUIStyle(EditorStyles.miniLabel)
         {
             alignment = TextAnchor.MiddleCenter,
-            normal    = { textColor = right ? new Color(target.nameColour.r, target.nameColour.g, target.nameColour.b, 0.35f) : target.nameColour }
+            normal = { textColor = right
+                ? new Color(target.nameColour.r, target.nameColour.g, target.nameColour.b, 0.35f)
+                : target.nameColour }
         });
     }
 

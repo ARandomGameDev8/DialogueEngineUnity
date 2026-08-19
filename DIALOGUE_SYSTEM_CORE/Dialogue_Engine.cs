@@ -13,6 +13,8 @@ using UnityEditor;
 public enum PortraitMode         { None, Single, Dual }      // Single = uni mode, Dual = duel mode
 public enum PortraitPlacement    { Inside, OnBorder, Outside, CharacterPanel }
 public enum CharacterPanelOrder  { ImageTop, NameTop, ImageLeft, NameLeft }
+public enum CharacterPanelSizeMode { Default, Custom, Content }
+public enum CharacterImagePanelShape { Rectangle, Rounded, Circle }
 public enum PortraitShape        { Circle, Square, Rectangle, Rounded }
 public enum ToolbarSlideDirection { Top, Bottom, Left, Right }
 public enum PanelSizeMode        { Percent, Pixels }
@@ -155,7 +157,10 @@ public class DialoguePresetDTO
     public bool  characterPanelShowImagePanel = true;
     public bool  characterPanelShowNamePanel  = true;
     public int   characterPanelOrder;
-    public float characterPanelWidth = 160f;
+    public int   characterPanelWidthMode;
+    public float characterPanelWidth = 240f;
+    public int   characterPanelHeightMode;
+    public float characterPanelHeight = 420f;
     public Color characterPanelBg;
     public Color characterPanelBorderColour;
     public float characterPanelBorderWidth = 1f;
@@ -163,6 +168,9 @@ public class DialoguePresetDTO
     public int   charPanelPadL = 12, charPanelPadR = 12, charPanelPadT = 12, charPanelPadB = 12;
     public float characterPanelSpacing = 8f;
     public Color characterImagePanelBg;
+    public int   characterImagePanelShape;
+    public bool  characterImagePanelTransparentWithImage = true;
+    public bool  characterImagePanelShowBorder = true;
     public Color characterImagePanelBorderColour;
     public float characterImagePanelBorderWidth;
     public float characterImagePanelRadius = 8f;
@@ -303,7 +311,12 @@ public class Dialogue_Engine : MonoBehaviour
     public bool characterPanelShowNamePanel  = true;
     [Tooltip("Default layout: image panel on top, name panel below.")]
     public CharacterPanelOrder characterPanelOrder = CharacterPanelOrder.ImageTop;
-    [Range(80f, 600f)] public float characterPanelWidth = 160f;
+    [Tooltip("Default shares all screen width left by the main panel. Custom uses pixels. Content fits the panel's children.")]
+    public CharacterPanelSizeMode characterPanelWidthMode = CharacterPanelSizeMode.Default;
+    [Range(80f, 800f)] public float characterPanelWidth = 240f;
+    [Tooltip("Default is a tall visual-novel figure panel. Custom uses pixels. Content fits the image and name.")]
+    public CharacterPanelSizeMode characterPanelHeightMode = CharacterPanelSizeMode.Default;
+    [Range(100f, 1000f)] public float characterPanelHeight = 420f;
     public Color characterPanelBg = new Color(0.07f, 0.07f, 0.08f, 0.9f);
     public Color characterPanelBorderColour = new Color(0.55f, 0.55f, 0.6f, 1f);
     [Range(0f, 8f)]  public float characterPanelBorderWidth = 1f;
@@ -316,7 +329,11 @@ public class Dialogue_Engine : MonoBehaviour
     [Range(0f, 32f)] public float characterPanelSpacing = 8f;
 
     [Header("Character Panel — Image Panel")]
+    public CharacterImagePanelShape characterImagePanelShape = CharacterImagePanelShape.Rectangle;
+    [Tooltip("Use a transparent image-panel background while a portrait is loaded; the custom background is used for an empty panel.")]
+    public bool characterImagePanelTransparentWithImage = true;
     public Color characterImagePanelBg = new Color(0.10f, 0.10f, 0.12f, 1f);
+    public bool characterImagePanelShowBorder = true;
     public Color characterImagePanelBorderColour = new Color(0.45f, 0.45f, 0.5f, 1f);
     [Range(0f, 8f)]  public float characterImagePanelBorderWidth = 0f;
     [Range(0f, 32f)] public float characterImagePanelRadius = 8f;
@@ -396,6 +413,9 @@ public class Dialogue_Engine : MonoBehaviour
     VisualElement portraitCharLeft, portraitCharRight;
     VisualElement overlayCharLeft, overlayCharRight;
     VisualElement nameCharLeft, nameCharRight;
+    VisualElement charLeftFigure, charRightFigure;
+    VisualElement charLeftImagePanel, charRightImagePanel;
+    VisualElement charLeftNamePanel, charRightNamePanel;
 
     ScrollView    textScroll;
     Label         dialogueTextLabel;
@@ -620,6 +640,12 @@ public class Dialogue_Engine : MonoBehaviour
         overlayCharRight  = docRoot.Q("PortraitBorderOverlayCharRight");
         nameCharLeft      = docRoot.Q("NameCharLeft");
         nameCharRight     = docRoot.Q("NameCharRight");
+        charLeftFigure    = docRoot.Q("CharacterFigurePanelLeft");
+        charRightFigure   = docRoot.Q("CharacterFigurePanelRight");
+        charLeftImagePanel  = docRoot.Q("CharacterImagePanelLeft");
+        charRightImagePanel = docRoot.Q("CharacterImagePanelRight");
+        charLeftNamePanel   = docRoot.Q("CharacterNamePanelLeft");
+        charRightNamePanel  = docRoot.Q("CharacterNamePanelRight");
 
         // Toolbar / history / settings
         toolbarPanel        = docRoot.Q("ToolbarPanel");
@@ -774,7 +800,10 @@ public class Dialogue_Engine : MonoBehaviour
         characterPanelShowImagePanel = d.characterPanelShowImagePanel;
         characterPanelShowNamePanel  = d.characterPanelShowNamePanel;
         characterPanelOrder = (CharacterPanelOrder)d.characterPanelOrder;
+        characterPanelWidthMode = (CharacterPanelSizeMode)d.characterPanelWidthMode;
         characterPanelWidth = d.characterPanelWidth;
+        characterPanelHeightMode = (CharacterPanelSizeMode)d.characterPanelHeightMode;
+        characterPanelHeight = d.characterPanelHeight;
         characterPanelBg = d.characterPanelBg;
         characterPanelBorderColour = d.characterPanelBorderColour;
         characterPanelBorderWidth = d.characterPanelBorderWidth;
@@ -782,6 +811,9 @@ public class Dialogue_Engine : MonoBehaviour
         characterPanelPadding = new RectOffset(d.charPanelPadL, d.charPanelPadR, d.charPanelPadT, d.charPanelPadB);
         characterPanelSpacing = d.characterPanelSpacing;
         characterImagePanelBg = d.characterImagePanelBg;
+        characterImagePanelShape = (CharacterImagePanelShape)d.characterImagePanelShape;
+        characterImagePanelTransparentWithImage = d.characterImagePanelTransparentWithImage;
+        characterImagePanelShowBorder = d.characterImagePanelShowBorder;
         characterImagePanelBorderColour = d.characterImagePanelBorderColour;
         characterImagePanelBorderWidth = d.characterImagePanelBorderWidth;
         characterImagePanelRadius = d.characterImagePanelRadius;
@@ -874,7 +906,10 @@ public class Dialogue_Engine : MonoBehaviour
         d.characterPanelShowImagePanel = characterPanelShowImagePanel;
         d.characterPanelShowNamePanel  = characterPanelShowNamePanel;
         d.characterPanelOrder = (int)characterPanelOrder;
+        d.characterPanelWidthMode = (int)characterPanelWidthMode;
         d.characterPanelWidth = characterPanelWidth;
+        d.characterPanelHeightMode = (int)characterPanelHeightMode;
+        d.characterPanelHeight = characterPanelHeight;
         d.characterPanelBg = characterPanelBg;
         d.characterPanelBorderColour = characterPanelBorderColour;
         d.characterPanelBorderWidth = characterPanelBorderWidth;
@@ -884,6 +919,9 @@ public class Dialogue_Engine : MonoBehaviour
         d.charPanelPadT = characterPanelPadding.top; d.charPanelPadB = characterPanelPadding.bottom;
         d.characterPanelSpacing = characterPanelSpacing;
         d.characterImagePanelBg = characterImagePanelBg;
+        d.characterImagePanelShape = (int)characterImagePanelShape;
+        d.characterImagePanelTransparentWithImage = characterImagePanelTransparentWithImage;
+        d.characterImagePanelShowBorder = characterImagePanelShowBorder;
         d.characterImagePanelBorderColour = characterImagePanelBorderColour;
         d.characterImagePanelBorderWidth = characterImagePanelBorderWidth;
         d.characterImagePanelRadius = characterImagePanelRadius;
@@ -1385,6 +1423,9 @@ public class Dialogue_Engine : MonoBehaviour
     void ApplySlotSizeFromTexture(SlotRefs slot, Texture tex)
     {
         if (tex == null) return;
+        // Character-panel portraits fill their dedicated image section; the
+        // root panel's own Default/Custom/Content modes control its dimensions.
+        if (portraitPlacement == PortraitPlacement.CharacterPanel) return;
         float w = portraitSize, h = portraitSize;
         if (portraitShape == PortraitShape.Rectangle) { w = portraitSize * 1.3f; h = portraitSize; }
         if (dynamicPortraitSize)
@@ -1576,8 +1617,15 @@ public class Dialogue_Engine : MonoBehaviour
         if (outsideRightWrapper != null) outsideRightWrapper.style.display = portraitPlacement == PortraitPlacement.Outside  && rightOn ? DisplayStyle.Flex : DisplayStyle.None;
         if (borderLeftWrapper   != null) borderLeftWrapper.style.display   = portraitPlacement == PortraitPlacement.OnBorder && leftOn  ? DisplayStyle.Flex : DisplayStyle.None;
         if (borderRightWrapper  != null) borderRightWrapper.style.display  = portraitPlacement == PortraitPlacement.OnBorder && rightOn ? DisplayStyle.Flex : DisplayStyle.None;
-        if (charLeftWrapper     != null) charLeftWrapper.style.display     = portraitPlacement == PortraitPlacement.CharacterPanel && leftOn  ? DisplayStyle.Flex : DisplayStyle.None;
-        if (charRightWrapper    != null) charRightWrapper.style.display    = portraitPlacement == PortraitPlacement.CharacterPanel && rightOn ? DisplayStyle.Flex : DisplayStyle.None;
+        // Character panels are stable root columns around the main panel. In
+        // Dual mode reserve both roots immediately, even before speaker two
+        // arrives, so the main panel never jumps sideways or changes width.
+        if (charLeftWrapper != null)
+            charLeftWrapper.style.display = portraitPlacement == PortraitPlacement.CharacterPanel && leftOn
+                ? DisplayStyle.Flex : DisplayStyle.None;
+        if (charRightWrapper != null)
+            charRightWrapper.style.display = portraitPlacement == PortraitPlacement.CharacterPanel && dual
+                ? DisplayStyle.Flex : DisplayStyle.None;
     }
 
     void HideAllPortraitWrappers()
@@ -1610,6 +1658,7 @@ public class Dialogue_Engine : MonoBehaviour
         if (slot.portrait == null) return;
 
         bool hasImage = false;
+        bool hasSourceImage = false; // excludes generated/default placeholders
 
         if (!string.IsNullOrEmpty(ct.ImageSource))
         {
@@ -1622,6 +1671,7 @@ public class Dialogue_Engine : MonoBehaviour
                     {
                         slot.portrait.style.backgroundImage = new StyleBackground(entry.sprite);
                         hasImage = true;
+                        hasSourceImage = true;
                         ApplyPortraitFillMode(slot.portrait);
                         if (dynamicPortraitSize) ApplySlotSizeFromTexture(slot, entry.sprite.texture);
                     }
@@ -1629,6 +1679,7 @@ public class Dialogue_Engine : MonoBehaviour
                     {
                         LoadPortraitFromPath(slot, entry.path);
                         hasImage = slot.portrait.style.backgroundImage.value.sprite != null;
+                        hasSourceImage = hasImage;
                     }
                 }
             }
@@ -1636,6 +1687,7 @@ public class Dialogue_Engine : MonoBehaviour
             {
                 LoadPortraitFromPath(slot, ct.ImageSource);
                 hasImage = slot.portrait.style.backgroundImage.value.sprite != null;
+                hasSourceImage = hasImage;
             }
         }
 
@@ -1663,6 +1715,25 @@ public class Dialogue_Engine : MonoBehaviour
         }
 
         bool hasBorderImage = HasTiledImage(portraitBorderImage);
+
+        // Character image sections use the custom colour only when there is no
+        // user-provided image. A real portrait normally gets a transparent
+        // panel so its own silhouette/shape is not boxed by an extra backdrop.
+        if (portraitPlacement == PortraitPlacement.CharacterPanel)
+        {
+            VisualElement imagePanel = slot.wrapper == charRightWrapper
+                ? charRightImagePanel : charLeftImagePanel;
+            if (imagePanel != null)
+            {
+                bool transparent = hasSourceImage && characterImagePanelTransparentWithImage;
+                imagePanel.style.backgroundColor = new StyleColor(transparent ? Color.clear : characterImagePanelBg);
+                float imageBorder = characterImagePanelShowBorder ? characterImagePanelBorderWidth : 0f;
+                imagePanel.style.borderLeftWidth = imageBorder;
+                imagePanel.style.borderRightWidth = imageBorder;
+                imagePanel.style.borderTopWidth = imageBorder;
+                imagePanel.style.borderBottomWidth = imageBorder;
+            }
+        }
 
         // Image element: visible only with a portrait image (or a forced empty box)
         slot.portrait.style.display = (hasImage || showPortraitWhenEmpty) ? DisplayStyle.Flex : DisplayStyle.None;
@@ -2565,7 +2636,7 @@ public class Dialogue_Engine : MonoBehaviour
     }
 
     // ── Portrait host snippet (host → portrait + border-image overlay) ─────
-    static string SlotXml(Dialogue_Engine e, string hostName, string frameName, string portraitName, string overlayName)
+    static string SlotXml(Dialogue_Engine e, string hostName, string frameName, string portraitName, string overlayName, bool fillContainer = false)
     {
         float portraitW = e.portraitShape == PortraitShape.Rectangle ? e.portraitSize * 1.3f : e.portraitSize;
         float portraitH = e.portraitSize;
@@ -2583,9 +2654,13 @@ public class Dialogue_Engine : MonoBehaviour
         // The Frame owns the border (colour OR border image — never both), so
         // greying out the inactive slot (image + name opacity) never filters
         // the border down.
+        string hostSize = fillContainer ? "width: 100%; height: 100%; flex-grow: 1;" : "";
+        string frameSize = fillContainer
+            ? $"width: 100%; height: 100%; min-height: {portraitH:0.#}px; flex-grow: 1;"
+            : $"width: {portraitW:0.#}px; height: {portraitH:0.#}px; flex-shrink: 0;";
         return $@"
-            <ui:VisualElement name=""{hostName}"" style=""flex-direction: row; align-items: center; justify-content: center;"">
-                <ui:VisualElement name=""{frameName}"" style=""width: {portraitW:0.#}px; height: {portraitH:0.#}px; flex-shrink: 0; overflow: hidden; border-width: {pBorderW:0.#}px; border-color: {(pBorderIsImage ? "rgba(0,0,0,0)" : pBorderC)}; border-top-left-radius: {portraitRadius:0.#}px; border-top-right-radius: {portraitRadius:0.#}px; border-bottom-left-radius: {portraitRadius:0.#}px; border-bottom-right-radius: {portraitRadius:0.#}px;"">
+            <ui:VisualElement name=""{hostName}"" style=""flex-direction: row; align-items: center; justify-content: center; {hostSize}"">
+                <ui:VisualElement name=""{frameName}"" style=""{frameSize} overflow: hidden; border-width: {pBorderW:0.#}px; border-color: {(pBorderIsImage ? "rgba(0,0,0,0)" : pBorderC)}; border-top-left-radius: {portraitRadius:0.#}px; border-top-right-radius: {portraitRadius:0.#}px; border-bottom-left-radius: {portraitRadius:0.#}px; border-bottom-right-radius: {portraitRadius:0.#}px;"">
                     <ui:VisualElement name=""{portraitName}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; background-size: contain; background-repeat: no-repeat; background-position: center; border-top-left-radius: {portraitRadius:0.#}px; border-top-right-radius: {portraitRadius:0.#}px; border-bottom-left-radius: {portraitRadius:0.#}px; border-bottom-right-radius: {portraitRadius:0.#}px;"" />
                     <ui:VisualElement name=""{overlayName}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; border-top-left-radius: {portraitRadius:0.#}px; border-top-right-radius: {portraitRadius:0.#}px; border-bottom-left-radius: {portraitRadius:0.#}px; border-bottom-right-radius: {portraitRadius:0.#}px; overflow: hidden; picking-mode: Ignore; display: none;"" />
                 </ui:VisualElement>
@@ -2616,7 +2691,6 @@ public class Dialogue_Engine : MonoBehaviour
     static string CharacterPanelXml(Dialogue_Engine e, bool right)
     {
         string side = right ? "Right" : "Left";
-
         bool horizontal = e.characterPanelOrder == CharacterPanelOrder.ImageLeft ||
                           e.characterPanelOrder == CharacterPanelOrder.NameLeft;
         bool imageFirst = e.characterPanelOrder == CharacterPanelOrder.ImageTop ||
@@ -2628,7 +2702,21 @@ public class Dialogue_Engine : MonoBehaviour
         string imageGap = imageFirst ? "" : gap;
         string nameGap  = imageFirst ? gap : "";
 
-        string panelW = horizontal ? "" : $"width: {e.characterPanelWidth:0.#}px;";
+        // The wrapper is a true sibling root of the main panel. In Default mode
+        // every visible character root takes an equal share of the width left
+        // after DialogueBox. It never overlays or becomes a child of the box.
+        string wrapperWidth = e.characterPanelWidthMode == CharacterPanelSizeMode.Default
+            ? "flex-grow: 1; flex-basis: 0; min-width: 0;"
+            : e.characterPanelWidthMode == CharacterPanelSizeMode.Custom
+                ? $"width: {e.characterPanelWidth:0.#}px; flex-shrink: 0;"
+                : "flex-shrink: 0;";
+        string figureWidth = e.characterPanelWidthMode == CharacterPanelSizeMode.Content ? "" : "width: 100%;";
+        string figureHeight = e.characterPanelHeightMode == CharacterPanelSizeMode.Default
+            ? "height: 62%; min-height: 240px;"
+            : e.characterPanelHeightMode == CharacterPanelSizeMode.Custom
+                ? $"height: {e.characterPanelHeight:0.#}px;"
+                : "";
+
         string pad = e.characterPanelPadding != null
             ? $"padding-top: {e.characterPanelPadding.top}px; padding-bottom: {e.characterPanelPadding.bottom}px; padding-left: {e.characterPanelPadding.left}px; padding-right: {e.characterPanelPadding.right}px;"
             : "padding: 12px;";
@@ -2638,20 +2726,34 @@ public class Dialogue_Engine : MonoBehaviour
         string namePad = e.characterNamePanelPadding != null
             ? $"padding-top: {e.characterNamePanelPadding.top}px; padding-bottom: {e.characterNamePanelPadding.bottom}px; padding-left: {e.characterNamePanelPadding.left}px; padding-right: {e.characterNamePanelPadding.right}px;"
             : "padding: 6px 8px;";
+        float imageBorderWidth = e.characterImagePanelShowBorder ? e.characterImagePanelBorderWidth : 0f;
+        float imageRadius = e.characterImagePanelShape == CharacterImagePanelShape.Circle
+            ? e.portraitSize * 0.5f
+            : e.characterImagePanelShape == CharacterImagePanelShape.Rounded
+                ? e.characterImagePanelRadius : 0f;
+
+        string imageSizing;
+        if (e.characterImagePanelShape == CharacterImagePanelShape.Circle)
+            imageSizing = $"width: {e.portraitSize:0.#}px; height: {e.portraitSize:0.#}px; flex-shrink: 0; align-self: center;";
+        else
+            imageSizing = horizontal
+                ? "height: 100%; flex-grow: 1; min-width: 0;"
+                : $"width: 100%; flex-grow: 1; min-height: {e.portraitSize:0.#}px;";
+        string nameSizing = horizontal ? "height: 100%; flex-shrink: 0;" : "width: 100%; flex-shrink: 0;";
 
         string imagePanel = $@"
-            <ui:VisualElement name=""CharacterImagePanel{side}"" style=""{(e.characterPanelShowImagePanel ? "" : "display: none; ")}background-color: {Rgba(e.characterImagePanelBg)}; border-color: {RgbaOpaque(e.characterImagePanelBorderColour)}; border-width: {e.characterImagePanelBorderWidth:0.#}px; border-top-left-radius: {e.characterImagePanelRadius:0.#}px; border-top-right-radius: {e.characterImagePanelRadius:0.#}px; border-bottom-left-radius: {e.characterImagePanelRadius:0.#}px; border-bottom-right-radius: {e.characterImagePanelRadius:0.#}px; {imgPad} align-items: center; justify-content: center; {imageGap}"">
-                {SlotXml(e, $"PortraitHostChar{side}", $"PortraitFrameChar{side}", $"PortraitChar{side}", $"PortraitBorderOverlayChar{side}")}
+            <ui:VisualElement name=""CharacterImagePanel{side}"" style=""{(e.characterPanelShowImagePanel ? "" : "display: none; ")}background-color: {Rgba(e.characterImagePanelBg)}; border-color: {RgbaOpaque(e.characterImagePanelBorderColour)}; border-width: {imageBorderWidth:0.#}px; border-top-left-radius: {imageRadius:0.#}px; border-top-right-radius: {imageRadius:0.#}px; border-bottom-left-radius: {imageRadius:0.#}px; border-bottom-right-radius: {imageRadius:0.#}px; overflow: hidden; {imgPad} {imageSizing} align-items: center; justify-content: center; {imageGap}"">
+                {SlotXml(e, $"PortraitHostChar{side}", $"PortraitFrameChar{side}", $"PortraitChar{side}", $"PortraitBorderOverlayChar{side}", true)}
             </ui:VisualElement>";
 
         string namePanel = $@"
-            <ui:VisualElement name=""CharacterNamePanel{side}"" style=""{(e.characterPanelShowNamePanel ? "" : "display: none; ")}background-color: {Rgba(e.characterNamePanelBg)}; border-color: {RgbaOpaque(e.characterNamePanelBorderColour)}; border-width: {e.characterNamePanelBorderWidth:0.#}px; border-top-left-radius: {e.characterNamePanelRadius:0.#}px; border-top-right-radius: {e.characterNamePanelRadius:0.#}px; border-bottom-left-radius: {e.characterNamePanelRadius:0.#}px; border-bottom-right-radius: {e.characterNamePanelRadius:0.#}px; {namePad} align-items: center; justify-content: center; {nameGap}"">
+            <ui:VisualElement name=""CharacterNamePanel{side}"" style=""{(e.characterPanelShowNamePanel ? "" : "display: none; ")}background-color: {Rgba(e.characterNamePanelBg)}; border-color: {RgbaOpaque(e.characterNamePanelBorderColour)}; border-width: {e.characterNamePanelBorderWidth:0.#}px; border-top-left-radius: {e.characterNamePanelRadius:0.#}px; border-top-right-radius: {e.characterNamePanelRadius:0.#}px; border-bottom-left-radius: {e.characterNamePanelRadius:0.#}px; border-bottom-right-radius: {e.characterNamePanelRadius:0.#}px; {namePad} {nameSizing} align-items: center; justify-content: center; {nameGap}"">
                 <ui:VisualElement name=""NameChar{side}"" />
             </ui:VisualElement>";
 
         return $@"
-        <ui:VisualElement name=""CharacterPanel{side}Wrapper"" style=""align-self: center; align-items: center; justify-content: center; margin-left: 12px; margin-right: 12px; display: none;"">
-            <ui:VisualElement name=""CharacterFigurePanel{side}"" style=""{panelW} flex-direction: {(horizontal ? "row" : "column")}; align-items: center; justify-content: center; background-color: {Rgba(e.characterPanelBg)}; border-color: {RgbaOpaque(e.characterPanelBorderColour)}; border-width: {e.characterPanelBorderWidth:0.#}px; border-top-left-radius: {e.characterPanelRadius:0.#}px; border-top-right-radius: {e.characterPanelRadius:0.#}px; border-bottom-left-radius: {e.characterPanelRadius:0.#}px; border-bottom-right-radius: {e.characterPanelRadius:0.#}px; {pad}"">
+        <ui:VisualElement name=""CharacterPanel{side}Wrapper"" style=""{wrapperWidth} height: 100%; align-self: stretch; align-items: stretch; justify-content: flex-end; display: none;"">
+            <ui:VisualElement name=""CharacterFigurePanel{side}"" style=""{figureWidth} {figureHeight} flex-direction: {(horizontal ? "row" : "column")}; align-items: stretch; justify-content: flex-start; background-color: {Rgba(e.characterPanelBg)}; border-color: {RgbaOpaque(e.characterPanelBorderColour)}; border-width: {e.characterPanelBorderWidth:0.#}px; border-top-left-radius: {e.characterPanelRadius:0.#}px; border-top-right-radius: {e.characterPanelRadius:0.#}px; border-bottom-left-radius: {e.characterPanelRadius:0.#}px; border-bottom-right-radius: {e.characterPanelRadius:0.#}px; overflow: hidden; {pad}"">
                 {(imageFirst ? imagePanel + "\n" + namePanel : namePanel + "\n" + imagePanel)}
             </ui:VisualElement>
         </ui:VisualElement>";
@@ -2774,7 +2876,7 @@ public class Dialogue_Engine : MonoBehaviour
 {charLeft}
 
             <!-- Main Dialogue Box -->
-            <ui:VisualElement name=""DialogueBox"" style=""flex-direction: row; width: {panelW}; height: {panelH}; overflow: hidden; background-color: {(bgIsImage ? "rgba(0,0,0,0)" : Rgba(e.backgroundColour))}; border-color: {(borderIsImage ? "rgba(0,0,0,0)" : RgbaOpaque(e.borderColour))}; border-width: {e.borderWidth:0.#}px; border-top-left-radius: {e.borderRadiusTL:0.#}px; border-top-right-radius: {e.borderRadiusTR:0.#}px; border-bottom-left-radius: {e.borderRadiusBL:0.#}px; border-bottom-right-radius: {e.borderRadiusBR:0.#}px; padding-top: {e.padding.top}px; padding-bottom: {e.padding.bottom}px; padding-left: {e.padding.left}px; padding-right: {e.padding.right}px; {boxHAlign}"">
+            <ui:VisualElement name=""DialogueBox"" style=""flex-direction: row; flex-shrink: 0; width: {panelW}; height: {panelH}; overflow: hidden; background-color: {(bgIsImage ? "rgba(0,0,0,0)" : Rgba(e.backgroundColour))}; border-color: {(borderIsImage ? "rgba(0,0,0,0)" : RgbaOpaque(e.borderColour))}; border-width: {e.borderWidth:0.#}px; border-top-left-radius: {e.borderRadiusTL:0.#}px; border-top-right-radius: {e.borderRadiusTR:0.#}px; border-bottom-left-radius: {e.borderRadiusBL:0.#}px; border-bottom-right-radius: {e.borderRadiusBR:0.#}px; padding-top: {e.padding.top}px; padding-bottom: {e.padding.bottom}px; padding-left: {e.padding.left}px; padding-right: {e.padding.right}px; {boxHAlign}"">
 
                 <ui:VisualElement name=""BackgroundLayer"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; overflow: hidden; border-top-left-radius: {boxMaxRadius:0.#}px; border-top-right-radius: {boxMaxRadius:0.#}px; border-bottom-left-radius: {boxMaxRadius:0.#}px; border-bottom-right-radius: {boxMaxRadius:0.#}px; picking-mode: Ignore; {(bgIsImage ? "" : "display: none;")}"" />
 
@@ -2795,11 +2897,11 @@ public class Dialogue_Engine : MonoBehaviour
 
             </ui:VisualElement>
 
-            <!-- Outside Right Portrait -->
-{outsideRight}
-
             <!-- Character Figure Panel (right) -->
 {charRight}
+
+            <!-- Outside Right Portrait -->
+{outsideRight}
 
         </ui:VisualElement>
 

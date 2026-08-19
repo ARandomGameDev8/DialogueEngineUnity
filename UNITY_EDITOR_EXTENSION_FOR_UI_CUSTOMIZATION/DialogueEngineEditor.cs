@@ -284,9 +284,20 @@ public class DialogueEngineEditor : Editor
             e.characterPanelShowImagePanel = EditorGUILayout.Toggle("Show Image Panel", e.characterPanelShowImagePanel);
             e.characterPanelShowNamePanel  = EditorGUILayout.Toggle("Show Name Panel",  e.characterPanelShowNamePanel);
             e.characterPanelOrder = (CharacterPanelOrder)EditorGUILayout.EnumPopup("Panel Order", e.characterPanelOrder);
-            if (e.characterPanelOrder == CharacterPanelOrder.ImageTop || e.characterPanelOrder == CharacterPanelOrder.NameTop)
-                e.characterPanelWidth = EditorGUILayout.Slider("Panel Width (px)", e.characterPanelWidth, 80f, 600f);
-            e.characterPanelSpacing = EditorGUILayout.Slider("Panel Spacing (px)", e.characterPanelSpacing, 0f, 32f);
+
+            EditorGUILayout.Space(3);
+            EditorGUILayout.LabelField("Root Container Size", EditorStyles.miniBoldLabel);
+            e.characterPanelWidthMode = (CharacterPanelSizeMode)EditorGUILayout.EnumPopup("Width Mode", e.characterPanelWidthMode);
+            if (e.characterPanelWidthMode == CharacterPanelSizeMode.Custom)
+                e.characterPanelWidth = EditorGUILayout.Slider("Custom Width (px)", e.characterPanelWidth, 80f, 800f);
+            e.characterPanelHeightMode = (CharacterPanelSizeMode)EditorGUILayout.EnumPopup("Height Mode", e.characterPanelHeightMode);
+            if (e.characterPanelHeightMode == CharacterPanelSizeMode.Custom)
+                e.characterPanelHeight = EditorGUILayout.Slider("Custom Height (px)", e.characterPanelHeight, 100f, 1000f);
+            EditorGUILayout.HelpBox(
+                "Default width shares the screen space left over by the main panel. " +
+                "Default height gives a tall VN-style panel. Content fits the image/name; Custom uses pixels.",
+                MessageType.None);
+            e.characterPanelSpacing = EditorGUILayout.Slider("Section Spacing (px)", e.characterPanelSpacing, 0f, 32f);
 
             EditorGUILayout.Space(4);
             EditorGUILayout.LabelField("Outer Panel", EditorStyles.miniBoldLabel);
@@ -298,10 +309,22 @@ public class DialogueEngineEditor : Editor
 
             EditorGUILayout.Space(4);
             EditorGUILayout.LabelField("Image Panel", EditorStyles.miniBoldLabel);
-            e.characterImagePanelBg = EditorGUILayout.ColorField("Background", e.characterImagePanelBg);
-            e.characterImagePanelBorderColour = EditorGUILayout.ColorField(new GUIContent("Border Colour"), e.characterImagePanelBorderColour, true, false, false);
-            e.characterImagePanelBorderWidth  = EditorGUILayout.Slider("Border Width",  e.characterImagePanelBorderWidth, 0f, 8f);
-            e.characterImagePanelRadius       = EditorGUILayout.Slider("Radius",        e.characterImagePanelRadius, 0f, 32f);
+            e.characterImagePanelShape = (CharacterImagePanelShape)EditorGUILayout.EnumPopup("Shape Preset", e.characterImagePanelShape);
+            e.characterImagePanelTransparentWithImage = EditorGUILayout.Toggle("Transparent With Image", e.characterImagePanelTransparentWithImage);
+            e.characterImagePanelBg = EditorGUILayout.ColorField("Empty Background", e.characterImagePanelBg);
+            EditorGUILayout.HelpBox(
+                "The image section fills the upper/lower part of the Character Panel. Its background is normally transparent when an image exists; Empty Background is used when no image exists.",
+                MessageType.None);
+            e.characterImagePanelShowBorder = EditorGUILayout.Toggle("Enable Border", e.characterImagePanelShowBorder);
+            if (e.characterImagePanelShowBorder)
+            {
+                e.characterImagePanelBorderColour = EditorGUILayout.ColorField(new GUIContent("Border Colour"), e.characterImagePanelBorderColour, true, false, false);
+                e.characterImagePanelBorderWidth  = EditorGUILayout.Slider("Border Width",  e.characterImagePanelBorderWidth, 0f, 8f);
+            }
+            if (e.characterImagePanelShape == CharacterImagePanelShape.Rounded)
+                e.characterImagePanelRadius = EditorGUILayout.Slider("Corner Radius", e.characterImagePanelRadius, 0f, 256f);
+            if (e.characterImagePanelShape == CharacterImagePanelShape.Circle)
+                EditorGUILayout.HelpBox("Circle diameter uses Portrait Size.", MessageType.None);
             DrawRectOffset("Padding (L R T B)", ref e.characterImagePanelPadding);
 
             EditorGUILayout.Space(4);
