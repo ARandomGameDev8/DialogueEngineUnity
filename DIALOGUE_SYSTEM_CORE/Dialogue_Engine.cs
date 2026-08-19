@@ -308,7 +308,11 @@ public class Dialogue_Engine : MonoBehaviour
     public Color characterPanelBorderColour = new Color(0.55f, 0.55f, 0.6f, 1f);
     [Range(0f, 8f)]  public float characterPanelBorderWidth = 1f;
     [Range(0f, 32f)] public float characterPanelRadius = 10f;
-    public RectOffset characterPanelPadding = new RectOffset(12, 12, 12, 12);
+    // NOTE: RectOffset derives from UnityEngine.Object, so it must NOT be
+    // constructed in a field initializer (UnityException: set_left is not
+    // allowed from a MonoBehaviour constructor). Defaults are created in
+    // Awake instead.
+    public RectOffset characterPanelPadding;
     [Range(0f, 32f)] public float characterPanelSpacing = 8f;
 
     [Header("Character Panel — Image Panel")]
@@ -316,14 +320,14 @@ public class Dialogue_Engine : MonoBehaviour
     public Color characterImagePanelBorderColour = new Color(0.45f, 0.45f, 0.5f, 1f);
     [Range(0f, 8f)]  public float characterImagePanelBorderWidth = 0f;
     [Range(0f, 32f)] public float characterImagePanelRadius = 8f;
-    public RectOffset characterImagePanelPadding = new RectOffset(8, 8, 8, 8);
+    public RectOffset characterImagePanelPadding;
 
     [Header("Character Panel — Name Panel")]
     public Color characterNamePanelBg = new Color(0.05f, 0.05f, 0.06f, 0.9f);
     public Color characterNamePanelBorderColour = new Color(0.45f, 0.45f, 0.5f, 1f);
     [Range(0f, 8f)]  public float characterNamePanelBorderWidth = 0f;
     [Range(0f, 32f)] public float characterNamePanelRadius = 8f;
-    public RectOffset characterNamePanelPadding = new RectOffset(8, 8, 6, 6);
+    public RectOffset characterNamePanelPadding;
 
     [Header("Default Portrait Placeholder")]
     [Tooltip("When no portrait image is loaded, show a shaded unidentified-character silhouette (or your own sprite / file).")]
@@ -499,6 +503,9 @@ public class Dialogue_Engine : MonoBehaviour
     void Awake()
     {
         if (padding == null) padding = new RectOffset(28, 28, 20, 20);
+        if (characterPanelPadding      == null) characterPanelPadding      = new RectOffset(12, 12, 12, 12);
+        if (characterImagePanelPadding == null) characterImagePanelPadding = new RectOffset(8, 8, 8, 8);
+        if (characterNamePanelPadding  == null) characterNamePanelPadding  = new RectOffset(8, 8, 6, 6);
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
 
