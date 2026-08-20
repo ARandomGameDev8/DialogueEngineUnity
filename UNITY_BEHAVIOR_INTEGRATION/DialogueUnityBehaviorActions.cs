@@ -5,8 +5,21 @@ using UnityEngine;
 using Action = Unity.Behavior.Action;
 
 // Native Unity Behavior wrappers. These nodes appear under Add > Action > Dialogue.
-// They call Dialogue_Engine and its request service directly, so this single
-// integration file does not require DialogueBehaviorTreeNodes.cs.
+// They intentionally delegate to the framework-neutral nodes/service so code and
+// visual graphs share exactly the same runtime semantics and database.
+
+static class DialogueUnityBehaviorStatus
+{
+    public static Node.Status Map(DialogueBTStatus status)
+    {
+        switch (status)
+        {
+            case DialogueBTStatus.Success: return Node.Status.Success;
+            case DialogueBTStatus.Failure: return Node.Status.Failure;
+            default: return Node.Status.Running;
+        }
+    }
+}
 
 [Serializable, GeneratePropertyBag]
 [NodeDescription(
@@ -20,50 +33,30 @@ public partial class UnityBehaviorPlayDialogueAction : Action
     [SerializeReference] public BlackboardVariable<bool> Interruptible = new BlackboardVariable<bool>(false);
     [SerializeReference] public BlackboardVariable<bool> SaveState = new BlackboardVariable<bool>(false);
 
-    [NonSerialized] long checkpoint;
-    [NonSerialized] string normalizedPath;
-    [NonSerialized] bool started;
+    [NonSerialized] DialoguePlayActionNode node;
 
     protected override Status OnStart()
     {
-        Dialogue_Engine engine = Dialogue_Engine.Instance;
-        normalizedPath = DslPath != null ? DslPath.Value : "";
-        if (engine == null || string.IsNullOrWhiteSpace(normalizedPath))
-            return Status.Failure;
-
-        checkpoint = engine.RuntimeDatabase != null
-            ? engine.RuntimeDatabase.LatestSequence : 0;
-        bool canInterrupt = Interruptible != null && Interruptible.Value;
-        started = Dialogue_Engine.Play(normalizedPath, canInterrupt,
-            canInterrupt && SaveState != null && SaveState.Value);
-        return started ? EvaluatePlayback(engine) : Status.Failure;
+        node = new DialoguePlayActionNode
+        {
+            DslPath = DslPath != null ? DslPath.Value : "",
+            Interruptible = Interruptible != null && Interruptible.Value,
+            SaveState = Interruptible != null && Interruptible.Value &&
+                        SaveState != null && SaveState.Value
+        };
+        return DialogueUnityBehaviorStatus.Map(node.Tick());
     }
 
     protected override Status OnUpdate()
     {
-        return started && Dialogue_Engine.Instance != null
-            ? EvaluatePlayback(Dialogue_Engine.Instance) : Status.Failure;
-    }
-
-    Status EvaluatePlayback(Dialogue_Engine engine)
-    {
-        var rows = engine.RuntimeDatabase.QueryEvents(
-            normalizedPath.Replace('\\', '/'), null, checkpoint);
-        foreach (DialogueEventRecord row in rows)
-        {
-            if (row.Status == DialogueRuntimeStatus.Completed)
-                return Status.Success;
-            if (row.Status == DialogueRuntimeStatus.Interrupted &&
-                row.Detail != null && row.Detail.IndexOf("discarded",
-                    StringComparison.OrdinalIgnoreCase) >= 0)
-                return Status.Failure;
-        }
-        return Status.Running;
+        return node == null ? Status.Failure
+            : DialogueUnityBehaviorStatus.Map(node.Tick());
     }
 
     protected override void OnEnd()
     {
-        started = false;
+        if (node != null) node.ResetNode();
+        node = null;
     }
 }
 
@@ -83,18 +76,16 @@ public partial class UnityBehaviorHasDialogueEventAction : Action
 
     protected override Status OnStart()
     {
-        DialogueResponse response = Dialogue_Engine.SendRequest(new DialogueRequest
+        var node = new DialogueHasEventActionNode
         {
-            Type = DialogueRequestType.HasEvent,
-            DialoguePath = DslPath != null ? DslPath.Value : "",
+            DslPath = DslPath != null ? DslPath.Value : "",
             EventName = EventName != null ? EventName.Value : "",
             SinceSequence = SinceSequence != null ? SinceSequence.Value : 0
-        });
-        bool matched = response != null && response.Matched;
-        if (Result != null) Result.Value = matched;
-        if (MatchCount != null) MatchCount.Value = response != null && response.Events != null
-            ? response.Events.Count : 0;
-        return matched ? Status.Success : Status.Failure;
+        };
+        DialogueBTStatus status = node.Tick();
+        if (Result != null) Result.Value = node.Result;
+        if (MatchCount != null) MatchCount.Value = node.Matches != null ? node.Matches.Count : 0;
+        return DialogueUnityBehaviorStatus.Map(status);
     }
 }
 
@@ -118,8 +109,9 @@ public partial class UnityBehaviorGetDialogueSnapshotAction : Action
 
     protected override Status OnStart()
     {
-        DialogueResponse response = Dialogue_Engine.SendRequest(DialogueRequest.Snapshot());
-        DialogueLiveSnapshot snapshot = response != null ? response.Snapshot : null;
+        var node = new DialogueLiveSnapshotActionNode();
+        DialogueBTStatus result = node.Tick();
+        DialogueLiveSnapshot snapshot = node.Snapshot;
         if (snapshot != null)
         {
             if (DialoguePath != null) DialoguePath.Value = snapshot.DialoguePath;
@@ -131,8 +123,8 @@ public partial class UnityBehaviorGetDialogueSnapshotAction : Action
             if (IsPlaying != null) IsPlaying.Value = snapshot.IsPlaying;
             if (LatestSequence != null) LatestSequence.Value = (int)Math.Min(int.MaxValue, snapshot.LatestSequence);
         }
-        if (Message != null) Message.Value = response != null ? response.Message : "";
-        return response != null && response.IsSuccess ? Status.Success : Status.Failure;
+        if (Message != null) Message.Value = node.Message ?? "";
+        return DialogueUnityBehaviorStatus.Map(result);
     }
 }
 
@@ -151,54 +143,42 @@ public partial class UnityBehaviorWaitForDialogueEventAction : Action
     [SerializeReference] public BlackboardVariable<string> MatchedTimestamp = new BlackboardVariable<string>("");
     [SerializeReference] public BlackboardVariable<int> MatchedSequence = new BlackboardVariable<int>(0);
 
-    [NonSerialized] float startedAt;
-    [NonSerialized] bool waiting;
+    [NonSerialized] DialogueWaitForEventActionNode node;
 
     protected override Status OnStart()
     {
-        waiting = true;
-        startedAt = Time.realtimeSinceStartup;
-        return TickRequest();
+        node = new DialogueWaitForEventActionNode
+        {
+            DslPath = DslPath != null ? DslPath.Value : "",
+            EventName = EventName != null ? EventName.Value : "",
+            SinceSequence = SinceSequence != null ? SinceSequence.Value : 0,
+            TimeoutSeconds = TimeoutSeconds != null ? TimeoutSeconds.Value : 10f
+        };
+        return TickNode();
     }
 
     protected override Status OnUpdate()
     {
-        return TickRequest();
+        return TickNode();
     }
 
-    Status TickRequest()
+    Status TickNode()
     {
-        if (!waiting) return Status.Failure;
-        DialogueResponse response = Dialogue_Engine.SendRequest(new DialogueRequest
+        if (node == null) return Status.Failure;
+        DialogueBTStatus status = node.Tick();
+        if (node.Match != null)
         {
-            Type = DialogueRequestType.HasEvent,
-            DialoguePath = DslPath != null ? DslPath.Value : "",
-            EventName = EventName != null ? EventName.Value : "",
-            SinceSequence = SinceSequence != null ? SinceSequence.Value : 0
-        });
-        if (response != null && response.Matched)
-        {
-            DialogueEventRecord match = response.Events != null && response.Events.Count > 0
-                ? response.Events[0] : null;
-            if (match != null)
-            {
-                if (MatchedTimestamp != null) MatchedTimestamp.Value = match.Timestamp;
-                if (MatchedSequence != null) MatchedSequence.Value =
-                    (int)Math.Min(int.MaxValue, match.Sequence);
-            }
-            return Status.Success;
+            if (MatchedTimestamp != null) MatchedTimestamp.Value = node.Match.Timestamp;
+            if (MatchedSequence != null) MatchedSequence.Value =
+                (int)Math.Min(int.MaxValue, node.Match.Sequence);
         }
-
-        float timeout = TimeoutSeconds != null ? TimeoutSeconds.Value : 10f;
-        if (timeout > 0f && Time.realtimeSinceStartup - startedAt >= timeout)
-            return Status.Failure;
-        return Status.Running;
+        return DialogueUnityBehaviorStatus.Map(status);
     }
 
     protected override void OnEnd()
     {
-        waiting = false;
-        startedAt = 0f;
+        if (node != null) node.ResetNode();
+        node = null;
     }
 }
 
@@ -247,17 +227,16 @@ public partial class UnityBehaviorGetDialogueDslAction : Action
 
     protected override Status OnStart()
     {
-        DialogueResponse response = Dialogue_Engine.SendRequest(new DialogueRequest
+        var node = new DialogueGetDslActionNode
         {
-            Type = DialogueRequestType.GetDialogue,
-            DialoguePath = DslPath != null ? DslPath.Value : ""
-        });
-        DialogueScriptRecord dialogue = response != null ? response.Dialogue : null;
-        bool found = dialogue != null;
+            DslPath = DslPath != null ? DslPath.Value : ""
+        };
+        DialogueBTStatus status = node.Tick();
+        bool found = node.Dialogue != null;
         if (Found != null) Found.Value = found;
-        if (DialogueId != null) DialogueId.Value = found ? dialogue.DialogueId : "";
-        if (PlayCount != null) PlayCount.Value = found ? dialogue.PlayCount : 0;
-        return found ? Status.Success : Status.Failure;
+        if (DialogueId != null) DialogueId.Value = found ? node.Dialogue.DialogueId : "";
+        if (PlayCount != null) PlayCount.Value = found ? node.Dialogue.PlayCount : 0;
+        return DialogueUnityBehaviorStatus.Map(status);
     }
 }
 
