@@ -67,6 +67,7 @@ On Start
   -> Play Dialogue DSL (entered_room.txt)
 ```
 
-All native actions delegate to the same framework-neutral nodes and internal
-service used by C# code. Code-driven and visually-authored dialogue therefore
-share the same database, interruption stack, event history, and snapshots.
+The native actions call `Dialogue_Engine` and `DialogueService` directly. They do
+not require the optional framework-neutral `DialogueBehaviorTreeNodes.cs` file.
+Code-driven and visually-authored dialogue still share the same database,
+interruption stack, event history, and snapshots.
