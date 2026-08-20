@@ -154,6 +154,7 @@ public class DialoguePresetDTO
     public int textHAnchor = 0;  // Left
 
     // Character figure panel
+    public int   characterPanelDataVersion;
     public bool  characterPanelShowImagePanel = true;
     public bool  characterPanelShowNamePanel  = true;
     public int   characterPanelOrder;
@@ -335,6 +336,8 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     public Color inactiveTintColour = new Color(0.5f, 0.5f, 0.5f, 1f);
 
     // ─── Character Figure Panel ───────────────────────────────────────────────
+    const int CHARACTER_PANEL_DATA_VERSION = 2;
+    [HideInInspector] [SerializeField] int characterPanelDataVersion;
     [Header("Character Panel (figure panel)")]
     [Tooltip("The figure panel sits OUTSIDE the main panel ([figure panel] [main panel]). It is segmented into an image panel and a name panel, both fully customizable.")]
     public bool characterPanelShowImagePanel = true;
@@ -584,6 +587,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         // Intentionally memory-only. A fresh database is created for every Play
         // Mode lifetime and disappears with this engine/scene.
         RuntimeDatabase = new DialogueRuntimeDatabase();
+        EnsureCharacterPanelDefaults();
         if (padding == null) padding = new RectOffset(28, 28, 20, 20);
         if (characterPanelPadding      == null) characterPanelPadding      = new RectOffset(12, 12, 12, 12);
         if (characterImagePanelPadding == null) characterImagePanelPadding = new RectOffset(8, 8, 8, 8);
@@ -757,9 +761,30 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         Debug.Log($"Dialogue_Engine: Awake done. box={box != null}");
     }
 
+    void EnsureCharacterPanelDefaults()
+    {
+        if (characterPanelDataVersion >= CHARACTER_PANEL_DATA_VERSION) return;
+
+        // Migration for Character Panels serialized before the explicit Name
+        // partition existed. New bool fields deserialize as false on existing
+        // scene components, which made the panel transparent even though its
+        // text remained visible.
+        characterPanelShowNamePanel = true;
+        characterNamePanelShowBackground = true;
+        if (characterNamePanelBg.a <= 0.01f)
+            characterNamePanelBg = new Color(0.05f, 0.05f, 0.06f, 0.96f);
+        characterNamePanelHeightMode = CharacterPanelSizeMode.Default;
+        characterNamePanelHeight = 24f;
+        characterNamePanelShowBorder = true;
+        if (characterNamePanelBorderWidth <= 0f)
+            characterNamePanelBorderWidth = 1f;
+        characterPanelDataVersion = CHARACTER_PANEL_DATA_VERSION;
+    }
+
     #if UNITY_EDITOR
     void OnValidate()
     {
+        EnsureCharacterPanelDefaults();
         // Border colours are full-opacity by design: translucent borders read
         // as "greyed out" on dark panels. Heal any legacy serialized alpha
         // (old defaults were 0.12 / 0.18) so picked colours show exactly.
@@ -862,6 +887,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         showToolbar = d.showToolbar; showSettingsButton = d.showSettingsButton;
         toolbarSlideDirection = (ToolbarSlideDirection)d.toolbarSlideDirection;
 
+        characterPanelDataVersion = d.characterPanelDataVersion;
         characterPanelShowImagePanel = d.characterPanelShowImagePanel;
         characterPanelShowNamePanel  = d.characterPanelShowNamePanel;
         characterPanelOrder = (CharacterPanelOrder)d.characterPanelOrder;
@@ -899,6 +925,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             d.characterNameBorderAnimSpeed, d.characterNameBorderLoop, d.characterNameBorderTileScale,
             d.characterNameBorderTintEnabled, d.characterNameBorderTintColour);
         characterNamePanelPadding = new RectOffset(d.charNamePadL, d.charNamePadR, d.charNamePadT, d.charNamePadB);
+        EnsureCharacterPanelDefaults();
 
         useDefaultPortraitPlaceholder = d.useDefaultPortraitPlaceholder;
         defaultPortraitPath = d.defaultPortraitPath;
@@ -979,6 +1006,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         d.showToolbar = showToolbar; d.showSettingsButton = showSettingsButton;
         d.toolbarSlideDirection = (int)toolbarSlideDirection;
 
+        d.characterPanelDataVersion = CHARACTER_PANEL_DATA_VERSION;
         d.characterPanelShowImagePanel = characterPanelShowImagePanel;
         d.characterPanelShowNamePanel  = characterPanelShowNamePanel;
         d.characterPanelOrder = (int)characterPanelOrder;
@@ -3286,6 +3314,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
 
     public static string GenerateUxml(Dialogue_Engine e)
     {
+        e.EnsureCharacterPanelDefaults();
         if (e.padding == null) e.padding = new RectOffset(28, 28, 20, 20);
 
         string panelW = Dim(e.panelWidthMode, e.panelWidthValue);
