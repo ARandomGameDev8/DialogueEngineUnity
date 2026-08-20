@@ -334,7 +334,11 @@ public class DialoguePreviewWindow : EditorWindow
         float inset = Mathf.Min(8f, panel.width * 0.08f);
         Rect content = new Rect(panel.x + inset, panel.y + inset,
             panel.width - inset * 2f, panel.height - inset * 2f);
-        float nameH = Mathf.Min(30f, content.height * 0.22f);
+        float nameH = target.characterNamePanelHeightMode == CharacterPanelSizeMode.Custom
+            ? Mathf.Min(target.characterNamePanelHeight, content.height * 0.8f)
+            : target.characterNamePanelHeightMode == CharacterPanelSizeMode.Content
+                ? Mathf.Min(36f, content.height * 0.22f)
+                : content.height * 0.24f;
         bool imageFirst = target.characterPanelOrder == CharacterPanelOrder.ImageTop ||
                           target.characterPanelOrder == CharacterPanelOrder.ImageLeft;
         Rect img = imageFirst
@@ -344,13 +348,11 @@ public class DialoguePreviewWindow : EditorWindow
             ? new Rect(content.x, img.yMax + 4f, content.width, nameH)
             : new Rect(content.x, content.y, content.width, nameH);
 
-        EditorGUI.DrawRect(img, target.characterImagePanelBg);
-        if (target.characterImagePanelShowBorder && target.characterImagePanelBorderWidth > 0f)
-            DrawBorderRect(img, target.characterImagePanelBorderWidth, target.characterImagePanelBorderColour);
-        DrawCircleFilled(new Rect(img.x + 10, img.y + 10, Mathf.Max(0, img.width - 20), Mathf.Max(0, img.height - 20)),
-            new Color(0.16f, 0.16f, 0.18f, 1f));
+        // No sample portrait is loaded in the sketch, so the image partition
+        // intentionally paints nothing. It still reserves its layout region.
 
-        EditorGUI.DrawRect(nm, target.characterNamePanelBg);
+        if (target.characterNamePanelShowBackground)
+            EditorGUI.DrawRect(nm, target.characterNamePanelBg);
         if (target.characterNamePanelShowBorder && target.characterNamePanelBorderWidth > 0f)
             DrawBorderRect(nm, target.characterNamePanelBorderWidth, target.characterNamePanelBorderColour);
         string tag = right ? previewSpeakerB : previewSpeakerA;

@@ -316,10 +316,8 @@ public class DialogueEngineEditor : Editor
             EditorGUILayout.Space(4);
             EditorGUILayout.LabelField("Image Panel", EditorStyles.miniBoldLabel);
             e.characterImagePanelShape = (CharacterImagePanelShape)EditorGUILayout.EnumPopup("Shape Preset", e.characterImagePanelShape);
-            e.characterImagePanelTransparentWithImage = EditorGUILayout.Toggle("Transparent With Image", e.characterImagePanelTransparentWithImage);
-            e.characterImagePanelBg = EditorGUILayout.ColorField("Empty Background", e.characterImagePanelBg);
             EditorGUILayout.HelpBox(
-                "The image section fills the upper/lower part of the Character Panel. Its background is normally transparent when an image exists; Empty Background is used when no image exists.",
+                "This partition reserves the upper/lower image region but stays completely invisible until a real portrait loads. Its background is always transparent; its optional border appears with the image.",
                 MessageType.None);
             e.characterImagePanelShowBorder = EditorGUILayout.Toggle("Enable Border", e.characterImagePanelShowBorder);
             if (e.characterImagePanelShowBorder)
@@ -338,7 +336,15 @@ public class DialogueEngineEditor : Editor
             if (e.characterNamePanelBorderImage == null)
                 e.characterNamePanelBorderImage = new TiledImageSettings();
             e.characterNamePanelShape = (CharacterImagePanelShape)EditorGUILayout.EnumPopup("Shape Preset", e.characterNamePanelShape);
-            e.characterNamePanelBg = EditorGUILayout.ColorField("Background", e.characterNamePanelBg);
+            e.characterNamePanelHeightMode = (CharacterPanelSizeMode)EditorGUILayout.EnumPopup("Height Mode", e.characterNamePanelHeightMode);
+            if (e.characterNamePanelHeightMode == CharacterPanelSizeMode.Custom)
+                e.characterNamePanelHeight = EditorGUILayout.Slider("Custom Height (px)", e.characterNamePanelHeight, 32f, 300f);
+            e.characterNamePanelShowBackground = EditorGUILayout.Toggle("Show Background", e.characterNamePanelShowBackground);
+            if (e.characterNamePanelShowBackground)
+                e.characterNamePanelBg = EditorGUILayout.ColorField("Background", e.characterNamePanelBg);
+            EditorGUILayout.HelpBox(
+                "Default reserves a visible lower partition (24% of the Character Panel). Content hugs the text; Custom uses pixels.",
+                MessageType.None);
             e.characterNamePanelShowBorder = EditorGUILayout.Toggle("Enable Border", e.characterNamePanelShowBorder);
             if (e.characterNamePanelShowBorder)
             {
