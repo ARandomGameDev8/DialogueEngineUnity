@@ -12,6 +12,8 @@ public enum DialogueRuntimeStatus
     ChoiceSelected,
     EventEmitted,
     Transitioning,
+    Interrupted,
+    Resumed,
     Completed
 }
 

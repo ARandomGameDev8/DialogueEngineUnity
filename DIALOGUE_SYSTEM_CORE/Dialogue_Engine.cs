@@ -521,6 +521,37 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
 
     bool        isOpen    = false;
     public bool isSuccess = false;
+    bool currentDialogueInterruptible;
+    bool currentDialogueSaveState;
+    CharacterToken currentCharacterToken;
+    ChoiceToken currentChoiceToken;
+    CharacterToken[] slotTokens = new CharacterToken[2];
+
+    sealed class DialoguePlaybackState
+    {
+        public DialogueGraph graph;
+        public SectionToken currentSection;
+        public int currentIndex;
+        public List<(SectionToken section, int index)> traversal;
+        public string dialogueId, dialoguePath, textName, serviceText;
+        public string fullText, shownText, lastEvent, detail;
+        public DialogueRuntimeStatus status;
+        public List<DialogueHistoryEntry> history;
+        public List<UnresolvedPortrait> portraits;
+        public string lastLoadedScript;
+        public string[] slotOwners;
+        public CharacterToken[] slotTokens;
+        public CharacterToken currentCharacter;
+        public ChoiceToken currentChoice;
+        public bool interruptible, saveState;
+    }
+
+    readonly Stack<DialoguePlaybackState> suspendedDialogues =
+        new Stack<DialoguePlaybackState>();
+
+    public bool IsPlaying { get { return isOpen; } }
+    public bool CurrentDialogueInterruptible { get { return currentDialogueInterruptible; } }
+    public int SuspendedDialogueCount { get { return suspendedDialogues.Count; } }
 
     // Typewriter
     Coroutine typewriterCoroutine;
@@ -1074,24 +1105,53 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     }
 
     // ─── Public API ────────────────────────────────────────────────────────────
-    public static void Play(string path)
+    public static bool Play(string path, bool interruptible = false, bool saveState = false)
     {
-        if (Instance == null) { Debug.LogError("Dialogue_Engine: No instance in scene."); return; }
-        Instance.Create(path);
+        if (Instance == null)
+        {
+            Debug.LogError("Dialogue_Engine: No instance in scene.");
+            return false;
+        }
+        return Instance.TryPlay(path, interruptible, saveState);
     }
 
+    // Legacy instance API. New code and BT nodes should use TryPlay/Play.
     public void Create(string path_input)
     {
+        TryPlay(path_input, false, false);
+    }
+
+    public bool TryPlay(string path_input, bool interruptible = false, bool saveState = false)
+    {
         if (string.IsNullOrEmpty(path_input))
-        { Debug.LogError("Dialogue_Engine: Path is null or empty."); return; }
+        { Debug.LogError("Dialogue_Engine: Path is null or empty."); return false; }
 
         var file = new File_S(path_input);
         if (file.get_reader() == null)
-        { Debug.LogError($"Dialogue_Engine: Could not open {path_input}"); return; }
+        { Debug.LogError($"Dialogue_Engine: Could not open {path_input}"); return false; }
 
-        graph = Compiler_S.Compile(file);
-        if (graph == null || graph.EntryNode == null)
-        { Debug.LogError("Dialogue_Engine: Compilation failed or empty graph."); return; }
+        DialogueGraph compiledGraph = Compiler_S.Compile(file);
+        if (compiledGraph == null || compiledGraph.EntryNode == null)
+        { Debug.LogError("Dialogue_Engine: Compilation failed or empty graph."); return false; }
+
+        if (isOpen)
+        {
+            if (!currentDialogueInterruptible)
+            {
+                Debug.LogWarning($"Dialogue_Engine: Cannot play \"{path_input}\" because \"{currentDialoguePath}\" is not interruptible.");
+                return false;
+            }
+
+            DialoguePlaybackState saved = currentDialogueSaveState ? CapturePlaybackState() : null;
+            SetRuntimeStatus(DialogueRuntimeStatus.Interrupted,
+                currentDialogueSaveState ? "Interrupted; state pushed for resume" : "Interrupted; state discarded");
+            if (saved != null) suspendedDialogues.Push(saved);
+            PrepareForReplacement();
+        }
+
+        graph = compiledGraph;
+        currentDialogueInterruptible = interruptible;
+        currentDialogueSaveState = interruptible && saveState;
 
         DialogueScriptRecord scriptRow = RuntimeDatabase.RegisterDialogue(path_input);
         currentDialogueId = scriptRow.DialogueId;
@@ -1129,6 +1189,10 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         history.Clear();
         slotOwner[0] = null;
         slotOwner[1] = null;
+        slotTokens[0] = null;
+        slotTokens[1] = null;
+        currentCharacterToken = null;
+        currentChoiceToken = null;
         toolbarVisible = false;
         ResetPortraitSlots();
         if (historyPanel != null) historyPanel.style.display = DisplayStyle.None;
@@ -1140,7 +1204,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         currentIndex   = 0;
         sectionStack.Push((currentSection, 0));
 
-        if (box == null) { Debug.LogError("Dialogue_Engine: box is null."); return; }
+        if (box == null) { Debug.LogError("Dialogue_Engine: box is null."); return false; }
         box.style.display = DisplayStyle.Flex;
         isOpen = true;
 
@@ -1154,6 +1218,126 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         StartHintPulse();
 
         AdvanceSection();
+        return true;
+    }
+
+    DialoguePlaybackState CapturePlaybackState()
+    {
+        var traversal = new List<(SectionToken section, int index)>();
+        var stackArray = sectionStack.ToArray(); // top -> bottom
+        for (int i = stackArray.Length - 1; i >= 0; i--)
+            traversal.Add(stackArray[i]);       // bottom -> top
+
+        return new DialoguePlaybackState
+        {
+            graph = graph,
+            currentSection = currentSection,
+            currentIndex = currentIndex,
+            traversal = traversal,
+            dialogueId = currentDialogueId,
+            dialoguePath = currentDialoguePath,
+            textName = currentTextName,
+            serviceText = currentServiceText,
+            fullText = currentFullText,
+            shownText = shownText,
+            lastEvent = lastEmittedEvent,
+            status = runtimeStatus,
+            detail = runtimeDetail,
+            history = new List<DialogueHistoryEntry>(history),
+            portraits = portraits.ConvertAll(p => new UnresolvedPortrait
+            {
+                key = p.key,
+                sprite = p.sprite,
+                path = p.path
+            }),
+            lastLoadedScript = lastLoadedScript,
+            slotOwners = new[] { slotOwner[0], slotOwner[1] },
+            slotTokens = new[] { slotTokens[0], slotTokens[1] },
+            currentCharacter = currentCharacterToken,
+            currentChoice = currentChoiceToken,
+            interruptible = currentDialogueInterruptible,
+            saveState = currentDialogueSaveState
+        };
+    }
+
+    void PrepareForReplacement()
+    {
+        if (typewriterCoroutine != null) StopCoroutine(typewriterCoroutine);
+        typewriterCoroutine = null;
+        StopCaretBlink();
+        StopHintPulse();
+        isTyping = false;
+        isOpen = false;
+        if (choiceContainer != null) choiceContainer.style.display = DisplayStyle.None;
+        ResetPortraitSlots();
+    }
+
+    void RestorePlaybackState(DialoguePlaybackState state)
+    {
+        if (state == null) return;
+
+        graph = state.graph;
+        currentSection = state.currentSection;
+        currentIndex = state.currentIndex;
+        sectionStack.Clear();
+        if (state.traversal != null)
+            foreach (var item in state.traversal) sectionStack.Push(item);
+
+        currentDialogueId = state.dialogueId;
+        currentDialoguePath = state.dialoguePath;
+        currentTextName = state.textName;
+        currentServiceText = state.serviceText;
+        currentFullText = state.fullText;
+        shownText = state.shownText;
+        lastEmittedEvent = state.lastEvent;
+        currentCharacterToken = state.currentCharacter;
+        currentChoiceToken = state.currentChoice;
+        currentDialogueInterruptible = state.interruptible;
+        currentDialogueSaveState = state.saveState;
+        history.Clear();
+        if (state.history != null) history.AddRange(state.history);
+        portraits.Clear();
+        if (state.portraits != null) portraits.AddRange(state.portraits);
+        lastLoadedScript = state.lastLoadedScript;
+
+        ResetPortraitSlots();
+        for (int i = 0; i < 2; i++)
+        {
+            slotOwner[i] = state.slotOwners != null ? state.slotOwners[i] : null;
+            slotTokens[i] = state.slotTokens != null ? state.slotTokens[i] : null;
+            if (slotTokens[i] != null)
+            {
+                SlotRefs slot = GetSlot(i == 1);
+                SetPortraitContent(slot, slotTokens[i]);
+                RenderName(slot.name, slotTokens[i].Speaker);
+                SetSlotOpacity(slot.portrait, slot.name,
+                    slotOwner[i] == currentTextName, i);
+            }
+        }
+        ShowPortraitWrappers();
+
+        isOpen = true;
+        isSuccess = false;
+        if (box != null) box.style.display = DisplayStyle.Flex;
+        if (document != null && document.rootVisualElement != null)
+            document.rootVisualElement.Focus();
+
+        // A choice is reconstructed as an interactive choice. A partially typed
+        // line resumes at line granularity, fully rendered and waiting for input.
+        SetRuntimeStatus(DialogueRuntimeStatus.Resumed, "Resumed interrupted dialogue");
+        if (currentChoiceToken != null && state.status == DialogueRuntimeStatus.TakingChoice)
+        {
+            ShowChoices(currentChoiceToken);
+        }
+        else
+        {
+            if (choiceContainer != null) choiceContainer.style.display = DisplayStyle.None;
+            RenderDialogueText(currentFullText ?? "");
+            isTyping = false;
+            runtimeStatus = DialogueRuntimeStatus.WaitingForInput;
+            runtimeDetail = "Resumed; waiting for Enter/Space";
+        }
+        StartHintPulse();
     }
 
     // ─── Dirty-list tracking ───────────────────────────────────────────────────
@@ -1455,6 +1639,8 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     // ─── ShowCharacter ─────────────────────────────────────────────────────────
     void ShowCharacter(CharacterToken ct)
     {
+        currentCharacterToken = ct;
+        currentChoiceToken = null;
         if (typewriterCoroutine != null) StopCoroutine(typewriterCoroutine);
 
         // Update portrait slots and speaker labels dynamically
@@ -1488,6 +1674,8 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     // ─── ShowChoices ───────────────────────────────────────────────────────────
     void ShowChoices(ChoiceToken choice)
     {
+        currentChoiceToken = choice;
+        currentCharacterToken = null;
         if (choiceContainer == null)
         { Debug.LogError("Dialogue_Engine: 'ChoiceContainer' not found in UXML."); return; }
 
@@ -1525,6 +1713,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     // ─── OnOptionSelected ─────────────────────────────────────────────────────
     void OnOptionSelected(OptionToken option)
     {
+        currentChoiceToken = null;
         Debug.Log($"Dialogue_Engine: Option selected \"{option.OptionText}\" -> {option.TargetSectionID}");
         currentTextName = "OPTION_" + option.OptionIndex;
         currentServiceText = option.OptionText;
@@ -1819,6 +2008,14 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         isOpen         = false;
         isSuccess      = true;
         SetRuntimeStatus(DialogueRuntimeStatus.Completed, "Dialogue completed");
+
+        if (suspendedDialogues.Count > 0)
+        {
+            if (choiceContainer != null) choiceContainer.style.display = DisplayStyle.None;
+            RestorePlaybackState(suspendedDialogues.Pop());
+            return;
+        }
+
         graph          = null;
         currentSection = null;
         currentIndex   = 0;
@@ -1905,6 +2102,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         {
             var s = GetSlot(false);
             slotOwner[0] = ct.Speaker;
+            slotTokens[0] = ct;
             SetPortraitContent(s, ct);
             RenderName(s.name, ct.Speaker);
             SetSlotOpacity(s.portrait, s.name, true, 0);
@@ -1929,6 +2127,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             else                           speakerSlot = 1;
 
             slotOwner[speakerSlot] = ct.Speaker;
+            slotTokens[speakerSlot] = ct;
             var slot = GetSlot(speakerSlot == 1);
             SetPortraitContent(slot, ct);
             RenderName(slot.name, ct.Speaker);
@@ -1987,6 +2186,8 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     {
         slotOwner[0] = null;
         slotOwner[1] = null;
+        slotTokens[0] = null;
+        slotTokens[1] = null;
         for (int i = 0; i < 2; i++)
         {
             var s = GetSlot(i == 1);
