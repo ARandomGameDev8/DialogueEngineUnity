@@ -70,10 +70,10 @@ public partial class UnityBehaviorPlayDialogueAction : Action
 [Serializable, GeneratePropertyBag]
 [NodeDescription(
     name: "Has Dialogue Event",
-    story: "Listen until [DslPath] resolves [EventName] after [SinceSequence] into [Result] and [MatchCount] then run True child 1 or False child 2",
+    story: "Check if [DslPath] emitted [EventName] after [SinceSequence] into [Result] and [MatchCount]",
     category: "Action/Dialogue/Query",
     id: "48be7ca1c38649d38f3b7b66fe345879")]
-public partial class UnityBehaviorHasDialogueEventAction : Composite
+public partial class UnityBehaviorHasDialogueEventAction : Action
 {
     [SerializeReference] public BlackboardVariable<string> DslPath = new BlackboardVariable<string>("");
     [SerializeReference] public BlackboardVariable<string> EventName = new BlackboardVariable<string>("");
@@ -81,29 +81,17 @@ public partial class UnityBehaviorHasDialogueEventAction : Composite
     [SerializeReference] public BlackboardVariable<bool> Result = new BlackboardVariable<bool>(false);
     [SerializeReference] public BlackboardVariable<int> MatchCount = new BlackboardVariable<int>(0);
 
-    [NonSerialized] Node selectedChild;
-
     protected override Status OnStart()
     {
-        selectedChild = null;
-        return EvaluateOrRunBranch();
+        return EvaluateEventOutcome();
     }
 
     protected override Status OnUpdate()
     {
-        if (selectedChild == null)
-            return EvaluateOrRunBranch();
-
-        switch (selectedChild.CurrentStatus)
-        {
-            case Status.Success: return Status.Success;
-            case Status.Failure:
-            case Status.Interrupted: return Status.Failure;
-            default: return Status.Waiting;
-        }
+        return EvaluateEventOutcome();
     }
 
-    Status EvaluateOrRunBranch()
+    Status EvaluateEventOutcome()
     {
         string path = DslPath != null ? DslPath.Value : "";
         var node = new DialogueHasEventActionNode
@@ -115,160 +103,24 @@ public partial class UnityBehaviorHasDialogueEventAction : Composite
         node.Tick();
         if (Result != null) Result.Value = node.Result;
         if (MatchCount != null) MatchCount.Value = node.Matches != null ? node.Matches.Count : 0;
+        if (node.Result) return Status.Success;
 
-        if (node.Result)
-            return StartOutcomeChild(true);
-
-        // This composite acts as an independent listener when placed under a
-        // Unity Behavior parallel branch. It remains Running without blocking
-        // sibling branches. FALSE resolves only when this specific DSL actually
-        // completes (or is explicitly interrupted and discarded), not merely
-        // because another saved/interruption DSL is currently in front of it.
-        Dialogue_Engine engine = Dialogue_Engine.Instance;
-        if (engine == null || engine.RuntimeDatabase == null)
-            return Status.Failure;
-
-        var statusRows = engine.RuntimeDatabase.QueryEvents(
-            NormalizePath(path), null,
-            SinceSequence != null ? SinceSequence.Value : 0);
-        foreach (DialogueEventRecord row in statusRows)
-        {
-            if (row.Status == DialogueRuntimeStatus.Completed)
-                return StartOutcomeChild(false);
-            if (row.Status == DialogueRuntimeStatus.Interrupted &&
-                row.Detail != null && row.Detail.IndexOf("discarded",
-                    StringComparison.OrdinalIgnoreCase) >= 0)
-                return StartOutcomeChild(false);
-        }
-        return Status.Running;
-    }
-
-    Status StartOutcomeChild(bool eventWasFound)
-    {
-        // Child ordering is explicit: first child is TRUE, second child is FALSE.
-        // Missing outcome children are allowed and count as a successful no-op.
-        int childIndex = eventWasFound ? 0 : 1;
-        if (Children == null || childIndex >= Children.Count || Children[childIndex] == null)
-            return Status.Success;
-
-        selectedChild = Children[childIndex];
-        Status childStatus = StartNode(selectedChild);
-        return childStatus == Status.Running || childStatus == Status.Waiting
-            ? Status.Waiting : childStatus;
-    }
-
-    protected override void OnEnd()
-    {
-        if (selectedChild != null &&
-            (selectedChild.CurrentStatus == Status.Running ||
-             selectedChild.CurrentStatus == Status.Waiting))
-            EndNode(selectedChild);
-        selectedChild = null;
+        // In a visual graph this node doubles as a non-blocking listener: while
+        // the requested DSL is still playing, keep returning Running and poll
+        // its database rows on later graph updates. If the DSL finishes without
+        // the event, finish successfully with Result=false so a following
+        // Branch node can evaluate the output.
+        DialogueResponse snapshotResponse = Dialogue_Engine.SendRequest(DialogueRequest.Snapshot());
+        DialogueLiveSnapshot snapshot = snapshotResponse != null ? snapshotResponse.Snapshot : null;
+        bool targetStillPlaying = snapshot != null && snapshot.IsPlaying &&
+            string.Equals(NormalizePath(snapshot.DialoguePath), NormalizePath(path),
+                StringComparison.OrdinalIgnoreCase);
+        return targetStillPlaying ? Status.Running : Status.Success;
     }
 
     static string NormalizePath(string path)
     {
         return string.IsNullOrEmpty(path) ? "" : path.Replace('\\', '/');
-    }
-}
-
-[Serializable, GeneratePropertyBag]
-[NodeDescription(
-    name: "Dialogue Event TRUE Block",
-    story: "TRUE event branch",
-    category: "Flow/Dialogue",
-    id: "a9e3d9cdb32f47909f19726b41a17da1")]
-public partial class UnityBehaviorDialogueEventTrueBlock : Composite
-{
-    [NonSerialized] int childIndex;
-
-    protected override Status OnStart()
-    {
-        childIndex = 0;
-        return StartCurrentChild();
-    }
-
-    protected override Status OnUpdate()
-    {
-        if (Children == null || childIndex >= Children.Count) return Status.Success;
-        Status status = Children[childIndex].CurrentStatus;
-        if (status == Status.Success) { childIndex++; return StartCurrentChild(); }
-        if (status == Status.Failure || status == Status.Interrupted) return Status.Failure;
-        return Status.Waiting;
-    }
-
-    Status StartCurrentChild()
-    {
-        while (Children != null && childIndex < Children.Count)
-        {
-            Node child = Children[childIndex];
-            if (child == null) { childIndex++; continue; }
-            Status status = StartNode(child);
-            if (status == Status.Success) { childIndex++; continue; }
-            if (status == Status.Running || status == Status.Waiting) return Status.Waiting;
-            return Status.Failure;
-        }
-        return Status.Success;
-    }
-
-    protected override void OnEnd()
-    {
-        if (Children != null && childIndex < Children.Count)
-        {
-            Node child = Children[childIndex];
-            if (child != null && (child.CurrentStatus == Status.Running || child.CurrentStatus == Status.Waiting))
-                EndNode(child);
-        }
-    }
-}
-
-[Serializable, GeneratePropertyBag]
-[NodeDescription(
-    name: "Dialogue Event FALSE Block",
-    story: "FALSE event branch",
-    category: "Flow/Dialogue",
-    id: "4eb0bd92d35a499e84b3407161c9ea84")]
-public partial class UnityBehaviorDialogueEventFalseBlock : Composite
-{
-    [NonSerialized] int childIndex;
-
-    protected override Status OnStart()
-    {
-        childIndex = 0;
-        return StartCurrentChild();
-    }
-
-    protected override Status OnUpdate()
-    {
-        if (Children == null || childIndex >= Children.Count) return Status.Success;
-        Status status = Children[childIndex].CurrentStatus;
-        if (status == Status.Success) { childIndex++; return StartCurrentChild(); }
-        if (status == Status.Failure || status == Status.Interrupted) return Status.Failure;
-        return Status.Waiting;
-    }
-
-    Status StartCurrentChild()
-    {
-        while (Children != null && childIndex < Children.Count)
-        {
-            Node child = Children[childIndex];
-            if (child == null) { childIndex++; continue; }
-            Status status = StartNode(child);
-            if (status == Status.Success) { childIndex++; continue; }
-            if (status == Status.Running || status == Status.Waiting) return Status.Waiting;
-            return Status.Failure;
-        }
-        return Status.Success;
-    }
-
-    protected override void OnEnd()
-    {
-        if (Children != null && childIndex < Children.Count)
-        {
-            Node child = Children[childIndex];
-            if (child != null && (child.CurrentStatus == Status.Running || child.CurrentStatus == Status.Waiting))
-                EndNode(child);
-        }
     }
 }
 

@@ -32,18 +32,11 @@ Returns Failure when the Play request is rejected.
 Inputs: DSL Path, Event Name, Since Sequence.
 Outputs: Result and Match Count.
 
-This is now a branching Composite listener rather than a leaf-only action. Attach
-`Dialogue Event TRUE Block` as its first child and `Dialogue Event FALSE Block`
-as its second child. While unresolved it returns Running, so only its own branch
-waits; sibling branches under a Parallel node continue normally.
-
-- Event found: writes Result=true and starts child 1 (TRUE).
-- Target DSL completed or was discarded without the event: writes Result=false
-  and starts child 2 (FALSE).
-- Still unresolved: returns Running and continues checking database history.
-
-Each TRUE/FALSE block is itself a sequence container and may contain multiple
-actions. A missing outcome child is treated as a successful no-op.
+If the event already exists, the action immediately writes Result=true and
+returns Success. If the target DSL is currently playing and has not emitted it
+yet, the action returns Running and keeps polling on graph updates. If that DSL
+finishes without the event, it writes Result=false and returns Success so a
+following Branch node can evaluate the result.
 
 ### Get Dialogue Live Snapshot
 
@@ -71,26 +64,23 @@ fields and writes Matched, Response Code, and Response Message.
 
 ## Example graphs
 
-Use the Has Dialogue Event composite as a listener branch in parallel with other
-main-thread graph logic:
+To branch when a dialogue either emits an event or finishes without it, use a
+plain Sequence. A parallel node is unnecessary because the Dialogue Engine keeps
+playing independently while Has Dialogue Event returns Running:
 
 ```text
 On Start
   -> Sequence
-      -> Play Dialogue DSL (A, Interruptible=true, SaveState=true)
-      -> Run In Parallel Until Any Completes
-          -> Has Dialogue Event (A, asked_about_crew)
-              -> Dialogue Event TRUE Block       // child 1
-                  -> Play Dialogue DSL B2
-              -> Dialogue Event FALSE Block      // child 2
-                  -> Play Dialogue DSL B1
-          -> [other main graph logic]
+      -> Play Dialogue DSL (intro.txt, Interruptible=true, SaveState=true)
+      -> Has Dialogue Event (intro.txt, asked_about_crew -> Result)
+      -> Branch On Result
+          False -> Play fallback.txt
+          True  -> Play crew_response.txt
 ```
 
-The listener is "blocking" only in Behavior Tree terms: its own branch remains
-Running. It never blocks Unity's main thread, the Dialogue Engine, or sibling
-branches in the Parallel node. Do not place an ordinary Branch node beside the
-listener; the listener now owns and starts its TRUE/FALSE child itself.
+Do not place the Branch beside Has Dialogue Event under `Run In Parallel Until
+Any Completes`: the Branch evaluates immediately, before the listener has an
+outcome, and causes that parallel group to complete early.
 
 For an event that must occur (with timeout failure), use:
 
