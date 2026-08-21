@@ -18,10 +18,12 @@ DialogueBTStatus status = node.Tick();
 ```
 
 - The first tick calls `Dialogue_Engine.Play`.
-- The node returns `Running` while its DSL is active or suspended.
-- It returns `Success` when that DSL completes.
-- It returns `Failure` if playback is rejected or its state is interrupted and
-  discarded.
+- With `Interruptible = false`, the node returns `Running` until its DSL ends,
+  then `Success`.
+- With `Interruptible = true`, the node returns `Success` immediately after the
+  DSL is successfully compiled and started. The engine keeps playing it in the
+  background, so following BT actions can monitor or interrupt it.
+- It returns `Failure` when the Play request is rejected.
 
 `Interruptible = false` means every later Play request is rejected until this
 DSL completes.

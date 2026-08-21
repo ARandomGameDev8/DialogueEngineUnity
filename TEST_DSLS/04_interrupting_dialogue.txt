@@ -1,0 +1,13 @@
+START
+@ENTRY INTERRUPTION
+
+// Start this while 03_interruptible_primary.txt is still active.
+SECTION INTERRUPTION
+@EMIT "interruption_started";
+[SYSTEM]: "The primary dialogue has been interrupted by this short dialogue.";
+@EMIT "interruption_midpoint";
+[SYSTEM]: "Finish this dialogue. The saved primary dialogue should resume afterward.";
+@EMIT "interruption_finished";
+END_SECTION
+
+END

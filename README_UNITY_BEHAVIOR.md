@@ -22,8 +22,10 @@ Inputs:
 - `Interruptible`
 - `Save State` (only applied when Interruptible is true)
 
-Returns Running until the selected play completes, Success on completion, and
-Failure if playback is rejected or the play is interrupted and discarded.
+With `Interruptible` disabled, returns Running until the selected play completes.
+With `Interruptible` enabled, returns Success immediately after playback starts,
+allowing the visual graph to advance to monitoring or interruption actions.
+Returns Failure when the Play request is rejected.
 
 ### Has Dialogue Event
 

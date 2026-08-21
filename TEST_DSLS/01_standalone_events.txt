@@ -1,0 +1,13 @@
+START
+@ENTRY EVENT_TEST
+
+// Tests standalone @EMIT before, between, and after dialogue lines.
+SECTION EVENT_TEST
+@EMIT "standalone_test_started";
+[NARRATOR]: "Standalone event test started. Advance once to emit the checkpoint event.";
+@EMIT "standalone_checkpoint_reached";
+[NARRATOR]: "The checkpoint event has now been recorded in the internal database.";
+@EMIT "standalone_test_finished";
+END_SECTION
+
+END

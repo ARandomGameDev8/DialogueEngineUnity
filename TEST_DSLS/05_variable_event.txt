@@ -1,0 +1,13 @@
+START
+var begin_event = "variable_event_started";
+var finish_event = "variable_event_finished";
+@ENTRY VARIABLE_EVENT_TEST
+
+// Tests resolving event names from DSL variables.
+SECTION VARIABLE_EVENT_TEST
+@EMIT begin_event;
+[NARRATOR]: "This event name came from a variable instead of a string literal.";
+@EMIT finish_event;
+END_SECTION
+
+END

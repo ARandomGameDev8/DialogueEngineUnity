@@ -1,0 +1,25 @@
+START
+@ENTRY CHOICE_TEST
+
+// Tests inline OPTION emissions and standalone emissions in target sections.
+SECTION CHOICE_TEST
+[NARRATOR]: "Choose a route. Each option emits a different event.";
+CHOICE:
+OPTION_0: "Take the forest route"; goto FOREST; @EMIT "choice_forest_selected";
+OPTION_1: "Take the city route"; goto CITY; @EMIT "choice_city_selected";
+;
+END_SECTION
+
+SECTION FOREST
+@EMIT "forest_section_entered";
+[GUIDE]: "You selected the forest. The trees conceal the road ahead.";
+@EMIT "choice_test_finished";
+END_SECTION
+
+SECTION CITY
+@EMIT "city_section_entered";
+[GUIDE]: "You selected the city. Lanterns illuminate the road ahead.";
+@EMIT "choice_test_finished";
+END_SECTION
+
+END

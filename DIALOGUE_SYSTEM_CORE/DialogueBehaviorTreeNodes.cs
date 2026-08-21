@@ -43,6 +43,13 @@ public sealed class DialoguePlayActionNode : DialogueBTActionNode
                     Interruptible && SaveState))
                 return DialogueBTStatus.Failure;
             started = true;
+
+            // In an interruptible flow, starting the DSL is the action's job.
+            // Return Success immediately so the BT can advance to branches that
+            // may monitor events or start another DSL. The engine continues the
+            // dialogue independently and enforces SaveState interruption rules.
+            if (Interruptible)
+                return DialogueBTStatus.Success;
         }
 
         List<DialogueEventRecord> rows = engine.RuntimeDatabase.QueryEvents(

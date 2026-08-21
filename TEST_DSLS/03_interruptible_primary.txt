@@ -1,0 +1,15 @@
+START
+@ENTRY PRIMARY
+
+// Play this with Interruptible=true and SaveState=true.
+SECTION PRIMARY
+@EMIT "primary_started";
+[NARRATOR]: "This is the primary dialogue. It can be interrupted after this line appears.";
+@EMIT "primary_first_checkpoint";
+[NARRATOR]: "If Save State worked, this line or the next position should resume after the interruption finishes.";
+@EMIT "primary_resumed_checkpoint";
+[NARRATOR]: "The primary dialogue reached its final line.";
+@EMIT "primary_finished";
+END_SECTION
+
+END
