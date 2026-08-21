@@ -37,14 +37,21 @@ public partial class UnityBehaviorPlayDialogueAction : Action
 
     protected override Status OnStart()
     {
+        bool canInterrupt = Interruptible != null && Interruptible.Value;
         node = new DialoguePlayActionNode
         {
             DslPath = DslPath != null ? DslPath.Value : "",
-            Interruptible = Interruptible != null && Interruptible.Value,
-            SaveState = Interruptible != null && Interruptible.Value &&
-                        SaveState != null && SaveState.Value
+            Interruptible = canInterrupt,
+            SaveState = canInterrupt && SaveState != null && SaveState.Value
         };
-        return DialogueUnityBehaviorStatus.Map(node.Tick());
+        DialogueBTStatus result = node.Tick();
+        if (result == DialogueBTStatus.Failure) return Status.Failure;
+
+        // An interruptible Play node owns only the launch operation. Once the
+        // DSL compiled and Dialogue_Engine accepted it, the visual graph must
+        // advance while dialogue playback continues independently.
+        return canInterrupt ? Status.Success
+            : DialogueUnityBehaviorStatus.Map(result);
     }
 
     protected override Status OnUpdate()
@@ -76,16 +83,44 @@ public partial class UnityBehaviorHasDialogueEventAction : Action
 
     protected override Status OnStart()
     {
+        return EvaluateEventOutcome();
+    }
+
+    protected override Status OnUpdate()
+    {
+        return EvaluateEventOutcome();
+    }
+
+    Status EvaluateEventOutcome()
+    {
+        string path = DslPath != null ? DslPath.Value : "";
         var node = new DialogueHasEventActionNode
         {
-            DslPath = DslPath != null ? DslPath.Value : "",
+            DslPath = path,
             EventName = EventName != null ? EventName.Value : "",
             SinceSequence = SinceSequence != null ? SinceSequence.Value : 0
         };
-        DialogueBTStatus status = node.Tick();
+        node.Tick();
         if (Result != null) Result.Value = node.Result;
         if (MatchCount != null) MatchCount.Value = node.Matches != null ? node.Matches.Count : 0;
-        return DialogueUnityBehaviorStatus.Map(status);
+        if (node.Result) return Status.Success;
+
+        // In a visual graph this node doubles as a non-blocking listener: while
+        // the requested DSL is still playing, keep returning Running and poll
+        // its database rows on later graph updates. If the DSL finishes without
+        // the event, finish successfully with Result=false so a following
+        // Branch node can evaluate the output.
+        DialogueResponse snapshotResponse = Dialogue_Engine.SendRequest(DialogueRequest.Snapshot());
+        DialogueLiveSnapshot snapshot = snapshotResponse != null ? snapshotResponse.Snapshot : null;
+        bool targetStillPlaying = snapshot != null && snapshot.IsPlaying &&
+            string.Equals(NormalizePath(snapshot.DialoguePath), NormalizePath(path),
+                StringComparison.OrdinalIgnoreCase);
+        return targetStillPlaying ? Status.Running : Status.Success;
+    }
+
+    static string NormalizePath(string path)
+    {
+        return string.IsNullOrEmpty(path) ? "" : path.Replace('\\', '/');
     }
 }
 
