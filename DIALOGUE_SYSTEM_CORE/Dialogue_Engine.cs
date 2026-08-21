@@ -1185,14 +1185,31 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
 
         isSuccess = false;
 
-        // Reset state
+        // Reset every transient value from the previous DSL. The play-session
+        // database remains intact, but active traversal/UI variables never leak
+        // into a newly started script. Saved interruptions were captured above
+        // and are restored only through RestorePlaybackState().
+        if (typewriterCoroutine != null) StopCoroutine(typewriterCoroutine);
+        typewriterCoroutine = null;
+        isTyping = false;
+        currentFullText = "";
+        shownText = "";
+        currentCharacterToken = null;
+        currentChoiceToken = null;
+        choiceButtons.Clear();
+        choiceOptions.Clear();
+        choiceHighlight = -1;
+        if (choiceContainer != null)
+        {
+            choiceContainer.Clear();
+            choiceContainer.style.display = DisplayStyle.None;
+        }
+        RenderDialogueText("");
         history.Clear();
         slotOwner[0] = null;
         slotOwner[1] = null;
         slotTokens[0] = null;
         slotTokens[1] = null;
-        currentCharacterToken = null;
-        currentChoiceToken = null;
         toolbarVisible = false;
         ResetPortraitSlots();
         if (historyPanel != null) historyPanel.style.display = DisplayStyle.None;
@@ -1566,6 +1583,14 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
 
         if (!isOpen) return;
 
+        // Choices are mouse-only. Space/Enter must never advance the section
+        // behind an unanswered choice or accidentally close the dialogue.
+        if (IsChoiceAwaitingSelection() &&
+            (Input.GetKeyDown(KeyCode.Space) ||
+             Input.GetKeyDown(KeyCode.Return) ||
+             Input.GetKeyDown(KeyCode.KeypadEnter)))
+            return;
+
         if (Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.KeypadEnter))
         {
             SetRuntimeStatus(DialogueRuntimeStatus.Transitioning,
@@ -1669,6 +1694,12 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         if (choiceContainer != null) choiceContainer.style.display = DisplayStyle.None;
 
         Debug.Log($"Dialogue_Engine: [{ct.Speaker}]: {currentFullText}");
+    }
+
+    bool IsChoiceAwaitingSelection()
+    {
+        return currentChoiceToken != null && choiceContainer != null &&
+               choiceContainer.style.display == DisplayStyle.Flex;
     }
 
     // ─── ShowChoices ───────────────────────────────────────────────────────────
@@ -2019,6 +2050,14 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         graph          = null;
         currentSection = null;
         currentIndex   = 0;
+        currentCharacterToken = null;
+        currentChoiceToken = null;
+        currentFullText = "";
+        currentServiceText = "";
+        currentTextName = "";
+        lastEmittedEvent = "";
+        currentDialogueInterruptible = false;
+        currentDialogueSaveState = false;
         sectionStack.Clear();
         choiceButtons.Clear();
         choiceOptions.Clear();
@@ -2031,7 +2070,14 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             if (historyPanel  != null) historyPanel.style.display  = DisplayStyle.None;
             if (settingsPanel != null) settingsPanel.style.display = DisplayStyle.None;
             if (toolbarPanel  != null) toolbarPanel.style.display  = DisplayStyle.None;
-            if (choiceContainer != null) choiceContainer.style.display = DisplayStyle.None;
+            if (choiceContainer != null)
+            {
+                choiceContainer.Clear();
+                choiceContainer.style.display = DisplayStyle.None;
+            }
+            history.Clear();
+            shownText = "";
+            RenderDialogueText("");
             if (box != null) box.style.display = DisplayStyle.None;
         };
         PlayCloseAnimation(finish);
@@ -2548,9 +2594,11 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                 evt.StopPropagation();
                 return;
             }
-            if (evt.keyCode == KeyCode.Return && choiceHighlight >= 0 && choiceHighlight < choiceOptions.Count)
+            if (evt.keyCode == KeyCode.Return ||
+                evt.keyCode == KeyCode.KeypadEnter ||
+                evt.keyCode == KeyCode.Space)
             {
-                OnOptionSelected(choiceOptions[choiceHighlight]);
+                // Option selection is intentionally click-only.
                 evt.StopPropagation();
                 return;
             }

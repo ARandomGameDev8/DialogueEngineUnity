@@ -46,6 +46,8 @@ choice_test_finished
 ```
 
 This verifies both inline OPTION `@EMIT` and standalone section `@EMIT`.
+While the choice is visible, press Space, Return, and Numpad Enter. All three
+must be ignored; only clicking an option may select it.
 
 ## Test 3 — variable events
 
