@@ -62,25 +62,38 @@ Queries the unique DSL table. Outputs Found, Dialogue ID, and Play Count.
 Generic visual wrapper around every `DialogueRequestType`. It exposes request
 fields and writes Matched, Response Code, and Response Message.
 
-## Example graphs
+## Parallel listener with arbitrary TRUE/FALSE subtrees
 
-To branch when a dialogue either emits an event or finishes without it, use a
-plain Sequence. A parallel node is unnecessary because the Dialogue Engine keeps
-playing independently while Has Dialogue Event returns Running:
+Unity Behavior 1.x does not expose a public API for third-party nodes to create
+the same two named output ports used by its built-in Conditional Branch. A
+custom Action/Composite therefore cannot safely add native `True` and `False`
+ports without relying on internal editor APIs.
+
+Use one Sequence as the listener thread under the Parallel node. Put Has Dialogue
+Event first and Unity's built-in Conditional Branch second. Because Sequence
+waits while Has Dialogue Event is Running, the Conditional Branch cannot evaluate
+too early. Its native True and False sections accept arbitrary actions,
+sequences, parallel nodes, conditions, flow nodes, and subgraphs.
 
 ```text
 On Start
   -> Sequence
-      -> Play Dialogue DSL (intro.txt, Interruptible=true, SaveState=true)
-      -> Has Dialogue Event (intro.txt, asked_about_crew -> Result)
-      -> Branch On Result
-          False -> Play fallback.txt
-          True  -> Play crew_response.txt
+      -> Play Dialogue DSL (A, Interruptible=true, SaveState=true)
+      -> Run In Parallel Until Any Completes
+          -> Sequence                         // listener thread
+              -> Has Dialogue Event
+                  DslPath = A
+                  EventName = asked_about_crew
+                  Result = result
+              -> Conditional Branch (result == true)
+                  True  -> [arbitrary TRUE subtree]
+                  False -> [arbitrary FALSE subtree]
+          -> [other main-thread graph logic]
 ```
 
-Do not place the Branch beside Has Dialogue Event under `Run In Parallel Until
-Any Completes`: the Branch evaluates immediately, before the listener has an
-outcome, and causes that parallel group to complete early.
+The listener Sequence is blocking only in BT terms. Sibling branches in the
+Parallel node continue running. The Dialogue Engine and Unity main thread are
+not blocked.
 
 For an event that must occur (with timeout failure), use:
 
