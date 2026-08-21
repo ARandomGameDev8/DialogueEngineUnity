@@ -1145,8 +1145,18 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             DialoguePlaybackState saved = currentDialogueSaveState ? CapturePlaybackState() : null;
             SetRuntimeStatus(DialogueRuntimeStatus.Interrupted,
                 currentDialogueSaveState ? "Interrupted; state pushed for resume" : "Interrupted; state discarded");
-            if (saved != null) suspendedDialogues.Push(saved);
+            if (saved != null)
+                suspendedDialogues.Push(saved);
+            else
+                // A non-saving interruption is a genuinely fresh branch. Do
+                // not leave older suspended UI/state underneath it to reappear.
+                suspendedDialogues.Clear();
             PrepareForReplacement();
+        }
+        else if (suspendedDialogues.Count > 0)
+        {
+            // Starting from an idle engine is always a brand-new playback chain.
+            suspendedDialogues.Clear();
         }
 
         graph = compiledGraph;
@@ -2276,8 +2286,12 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             }
             if (slot.portrait != null)
             {
-                slot.portrait.style.backgroundImage = new StyleBackground();
+                // StyleKeyword.None is a hard inline clear. A default
+                // StyleBackground can fall back to a previously resolved style
+                // during the same UI Toolkit panel lifetime.
+                slot.portrait.style.backgroundImage = new StyleBackground(StyleKeyword.None);
                 slot.portrait.style.unityBackgroundImageTintColor = new StyleColor(Color.white);
+                slot.portrait.style.backgroundSize = new BackgroundSize(BackgroundSizeType.Contain);
                 slot.portrait.style.opacity = 1f;
                 slot.portrait.style.display = DisplayStyle.None;
             }
@@ -2337,6 +2351,14 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     {
         if (slot.portrait == null) return;
 
+        // Every character token starts from an empty visual slot. This prevents
+        // a portrait from the previous token or previous DSL surviving when the
+        // new token has no image declaration.
+        slot.portrait.style.backgroundImage = new StyleBackground(StyleKeyword.None);
+        slot.portrait.style.display = DisplayStyle.None;
+        if (slot.frame != null) slot.frame.style.display = DisplayStyle.None;
+        if (slot.overlay != null) slot.overlay.style.display = DisplayStyle.None;
+
         bool hasImage = false;
         bool hasSourceImage = false; // excludes generated/default placeholders
 
@@ -2373,7 +2395,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
 
         if (!hasImage)
         {
-            slot.portrait.style.backgroundImage = new StyleBackground();
+            slot.portrait.style.backgroundImage = new StyleBackground(StyleKeyword.None);
             Sprite placeholder = null;
             // Character Panel image partitions intentionally remain completely
             // invisible until that character has a real image. Placeholder
