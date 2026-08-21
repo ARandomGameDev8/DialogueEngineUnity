@@ -1212,6 +1212,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         slotTokens[1] = null;
         toolbarVisible = false;
         ResetPortraitSlots();
+        ApplyRuntimeLayout();
         if (historyPanel != null) historyPanel.style.display = DisplayStyle.None;
         if (toolbarPanel != null) toolbarPanel.style.display = DisplayStyle.None;
 
@@ -2228,19 +2229,108 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         if (charRightWrapper    != null) charRightWrapper.style.display    = DisplayStyle.None;
     }
 
+    SlotRefs[] GetAllPortraitSlots()
+    {
+        return new[]
+        {
+            new SlotRefs { wrapper = insideLeftWrapper, host = insideLeftHost, frame = frameInsideLeft,
+                portrait = portraitInsideLeft, overlay = overlayInsideLeft, name = nameInsideLeft },
+            new SlotRefs { wrapper = insideRightWrapper, host = insideRightHost, frame = frameInsideRight,
+                portrait = portraitInsideRight, overlay = overlayInsideRight, name = nameInsideRight },
+            new SlotRefs { wrapper = outsideLeftWrapper, host = outsideLeftHost, frame = frameOutsideLeft,
+                portrait = portraitOutsideLeft, overlay = overlayOutsideLeft, name = nameOutsideLeft },
+            new SlotRefs { wrapper = outsideRightWrapper, host = outsideRightHost, frame = frameOutsideRight,
+                portrait = portraitOutsideRight, overlay = overlayOutsideRight, name = nameOutsideRight },
+            new SlotRefs { wrapper = borderLeftWrapper, host = borderLeftHost, frame = frameBorderLeft,
+                portrait = portraitBorderLeft, overlay = overlayBorderLeft, name = nameBorderLeft },
+            new SlotRefs { wrapper = borderRightWrapper, host = borderRightHost, frame = frameBorderRight,
+                portrait = portraitBorderRight, overlay = overlayBorderRight, name = nameBorderRight },
+            new SlotRefs { wrapper = charLeftWrapper, host = charLeftHost, frame = frameCharLeft,
+                portrait = portraitCharLeft, overlay = overlayCharLeft, name = nameCharLeft },
+            new SlotRefs { wrapper = charRightWrapper, host = charRightHost, frame = frameCharRight,
+                portrait = portraitCharRight, overlay = overlayCharRight, name = nameCharRight }
+        };
+    }
+
     void ResetPortraitSlots()
     {
         slotOwner[0] = null;
         slotOwner[1] = null;
         slotTokens[0] = null;
         slotTokens[1] = null;
-        for (int i = 0; i < 2; i++)
+        slotCur0 = 1f;
+        slotCur1 = 1f;
+        if (slotTween0 != null) { slotTween0.Pause(); slotTween0 = null; }
+        if (slotTween1 != null) { slotTween1.Pause(); slotTween1 = null; }
+
+        // Reset every placement, not only the currently selected placement.
+        // This is what makes each independent Play begin from inspector UI
+        // defaults even if the previous DSL used another portrait placement.
+        foreach (SlotRefs slot in GetAllPortraitSlots())
         {
-            var s = GetSlot(i == 1);
-            if (s.portrait != null) s.portrait.style.backgroundImage = new StyleBackground();
-            if (s.name     != null) s.name.Clear();
+            if (slot.wrapper != null) slot.wrapper.style.display = DisplayStyle.None;
+            if (slot.name != null)
+            {
+                slot.name.Clear();
+                slot.name.style.opacity = 1f;
+            }
+            if (slot.portrait != null)
+            {
+                slot.portrait.style.backgroundImage = new StyleBackground();
+                slot.portrait.style.unityBackgroundImageTintColor = new StyleColor(Color.white);
+                slot.portrait.style.opacity = 1f;
+                slot.portrait.style.display = DisplayStyle.None;
+            }
+            bool characterSlot = slot.wrapper == charLeftWrapper || slot.wrapper == charRightWrapper;
+            float defaultWidth = portraitShape == PortraitShape.Rectangle
+                ? portraitSize * 1.3f : portraitSize;
+            if (slot.frame != null)
+            {
+                if (characterSlot)
+                {
+                    slot.frame.style.width = Length.Percent(100);
+                    slot.frame.style.height = Length.Percent(100);
+                }
+                else
+                {
+                    slot.frame.style.width = defaultWidth;
+                    slot.frame.style.height = portraitSize;
+                }
+                slot.frame.style.display = DisplayStyle.None;
+                slot.frame.style.opacity = 1f;
+            }
+            if (slot.portrait != null && !characterSlot)
+            {
+                slot.portrait.style.width = defaultWidth;
+                slot.portrait.style.height = portraitSize;
+            }
+            if (slot.host != null)
+                slot.host.style.translate = new Translate(portraitOffsetX, portraitOffsetY, 0);
+            if (slot.overlay != null)
+            {
+                if (tilers.TryGetValue(slot.overlay, out TilerRuntime old) && old.sched != null)
+                    old.sched.Pause();
+                tilers.Remove(slot.overlay);
+                layerSizes.Remove(slot.overlay);
+                slot.overlay.Clear();
+                slot.overlay.style.display = DisplayStyle.None;
+            }
         }
+
+        // Character image partitions reserve layout space but have no paint of
+        // their own until SetPortraitContent loads a real image.
+        foreach (VisualElement imagePanel in new[] { charLeftImagePanel, charRightImagePanel })
+        {
+            if (imagePanel == null) continue;
+            imagePanel.style.backgroundColor = new StyleColor(Color.clear);
+            imagePanel.style.borderLeftWidth = 0f;
+            imagePanel.style.borderRightWidth = 0f;
+            imagePanel.style.borderTopWidth = 0f;
+            imagePanel.style.borderBottomWidth = 0f;
+        }
+
         HideAllPortraitWrappers();
+        ApplyCharacterPanelDecorations();
     }
 
     void SetPortraitContent(SlotRefs slot, CharacterToken ct)
