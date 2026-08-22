@@ -32,11 +32,16 @@ Returns Failure when the Play request is rejected.
 Inputs: DSL Path, Event Name, Since Sequence.
 Outputs: Result and Match Count.
 
-If the event already exists, the action immediately writes Result=true and
-returns Success. If the target DSL is currently playing and has not emitted it
-yet, the action returns Running and keeps polling on graph updates. If that DSL
-finishes without the event, it writes Result=false and returns Success so a
-following Branch node can evaluate the result.
+Exact execution contract:
+
+- Target DSL is still unresolved and event is absent: `Running`, `Result=false`.
+- Event emitted by the latest play of that DSL: `Success`, `Result=true`.
+- Latest play completed (or was discarded) without it: `Success`, `Result=false`.
+- Missing engine/database, empty inputs, or DSL never compiled/started: `Failure`,
+  `Result=false`.
+
+The action finds the latest playback-start record, so an old event from an earlier
+run of the same DSL cannot accidentally satisfy the current listener.
 
 ### Get Dialogue Live Snapshot
 
