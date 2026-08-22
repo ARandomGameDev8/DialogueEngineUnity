@@ -93,70 +93,29 @@ public partial class UnityBehaviorHasDialogueEventAction : Action
 
     Status EvaluateEventOutcome()
     {
-        if (Result != null) Result.Value = false;
-        if (MatchCount != null) MatchCount.Value = 0;
-
-        Dialogue_Engine engine = Dialogue_Engine.Instance;
-        if (engine == null)
-            return Fail("Dialogue_Engine is not present in the scene.");
-        if (engine.RuntimeDatabase == null)
-            return Fail("Dialogue runtime database is unavailable.");
-
-        string path = NormalizePath(DslPath != null ? DslPath.Value : "");
-        string eventName = EventName != null ? EventName.Value : "";
-        long requestedSince = SinceSequence != null ? SinceSequence.Value : 0;
-        if (string.IsNullOrWhiteSpace(path))
-            return Fail("DSL Path is empty.");
-        if (string.IsNullOrWhiteSpace(eventName))
-            return Fail("Event Name is empty.");
-        if (engine.RuntimeDatabase.FindDialogue(path) == null)
-            return Fail("The requested DSL has not compiled and started in this Play session: " + path);
-
-        // Locate the most recent play instance of this DSL. This prevents an
-        // event/completion from an older run of the same file from resolving the
-        // listener for the current run.
-        var lifecycleRows = engine.RuntimeDatabase.QueryEvents(path, null, 0);
-        long playStartSequence = -1;
-        foreach (DialogueEventRecord row in lifecycleRows)
+        string path = DslPath != null ? DslPath.Value : "";
+        var node = new DialogueHasEventActionNode
         {
-            if (row.Status == DialogueRuntimeStatus.Transitioning &&
-                string.Equals(row.Detail, "Dialogue started", StringComparison.Ordinal))
-                playStartSequence = row.Sequence;
-        }
-        if (playStartSequence < 0)
-            return Fail("No playback-start record exists for DSL: " + path);
+            DslPath = path,
+            EventName = EventName != null ? EventName.Value : "",
+            SinceSequence = SinceSequence != null ? SinceSequence.Value : 0
+        };
+        node.Tick();
+        if (Result != null) Result.Value = node.Result;
+        if (MatchCount != null) MatchCount.Value = node.Matches != null ? node.Matches.Count : 0;
+        if (node.Result) return Status.Success;
 
-        var matches = engine.RuntimeDatabase.QueryEvents(path, eventName,
-            Math.Max(requestedSince, playStartSequence - 1));
-        if (MatchCount != null) MatchCount.Value = matches.Count;
-        if (matches.Count > 0)
-        {
-            if (Result != null) Result.Value = true;
-            return Status.Success;
-        }
-
-        // No target event yet. The operation is still unresolved until this
-        // exact DSL play either completes or is explicitly discarded.
-        foreach (DialogueEventRecord row in lifecycleRows)
-        {
-            if (row.Sequence < playStartSequence) continue;
-            if (row.Status == DialogueRuntimeStatus.Completed)
-                return Status.Success; // valid result=false
-            if (row.Status == DialogueRuntimeStatus.Interrupted &&
-                row.Detail != null && row.Detail.IndexOf("discarded",
-                    StringComparison.OrdinalIgnoreCase) >= 0)
-                return Status.Success; // valid result=false
-        }
-
-        return Status.Running;
-    }
-
-    Status Fail(string reason)
-    {
-        if (Result != null) Result.Value = false;
-        if (MatchCount != null) MatchCount.Value = 0;
-        LogFailure(reason, true);
-        return Status.Failure;
+        // In a visual graph this node doubles as a non-blocking listener: while
+        // the requested DSL is still playing, keep returning Running and poll
+        // its database rows on later graph updates. If the DSL finishes without
+        // the event, finish successfully with Result=false so a following
+        // Branch node can evaluate the output.
+        DialogueResponse snapshotResponse = Dialogue_Engine.SendRequest(DialogueRequest.Snapshot());
+        DialogueLiveSnapshot snapshot = snapshotResponse != null ? snapshotResponse.Snapshot : null;
+        bool targetStillPlaying = snapshot != null && snapshot.IsPlaying &&
+            string.Equals(NormalizePath(snapshot.DialoguePath), NormalizePath(path),
+                StringComparison.OrdinalIgnoreCase);
+        return targetStillPlaying ? Status.Running : Status.Success;
     }
 
     static string NormalizePath(string path)

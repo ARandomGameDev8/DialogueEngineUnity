@@ -32,16 +32,11 @@ Returns Failure when the Play request is rejected.
 Inputs: DSL Path, Event Name, Since Sequence.
 Outputs: Result and Match Count.
 
-Exact execution contract:
-
-- Target DSL is still unresolved and event is absent: `Running`, `Result=false`.
-- Event emitted by the latest play of that DSL: `Success`, `Result=true`.
-- Latest play completed (or was discarded) without it: `Success`, `Result=false`.
-- Missing engine/database, empty inputs, or DSL never compiled/started: `Failure`,
-  `Result=false`.
-
-The action finds the latest playback-start record, so an old event from an earlier
-run of the same DSL cannot accidentally satisfy the current listener.
+If the event already exists, the action immediately writes Result=true and
+returns Success. If the target DSL is currently playing and has not emitted it
+yet, the action returns Running and keeps polling on graph updates. If that DSL
+finishes without the event, it writes Result=false and returns Success so a
+following Branch node can evaluate the result.
 
 ### Get Dialogue Live Snapshot
 
@@ -67,38 +62,25 @@ Queries the unique DSL table. Outputs Found, Dialogue ID, and Play Count.
 Generic visual wrapper around every `DialogueRequestType`. It exposes request
 fields and writes Matched, Response Code, and Response Message.
 
-## Parallel listener with arbitrary TRUE/FALSE subtrees
+## Example graphs
 
-Unity Behavior 1.x does not expose a public API for third-party nodes to create
-the same two named output ports used by its built-in Conditional Branch. A
-custom Action/Composite therefore cannot safely add native `True` and `False`
-ports without relying on internal editor APIs.
-
-Use one Sequence as the listener thread under the Parallel node. Put Has Dialogue
-Event first and Unity's built-in Conditional Branch second. Because Sequence
-waits while Has Dialogue Event is Running, the Conditional Branch cannot evaluate
-too early. Its native True and False sections accept arbitrary actions,
-sequences, parallel nodes, conditions, flow nodes, and subgraphs.
+To branch when a dialogue either emits an event or finishes without it, use a
+plain Sequence. A parallel node is unnecessary because the Dialogue Engine keeps
+playing independently while Has Dialogue Event returns Running:
 
 ```text
 On Start
   -> Sequence
-      -> Play Dialogue DSL (A, Interruptible=true, SaveState=true)
-      -> Run In Parallel Until Any Completes
-          -> Sequence                         // listener thread
-              -> Has Dialogue Event
-                  DslPath = A
-                  EventName = asked_about_crew
-                  Result = result
-              -> Conditional Branch (result == true)
-                  True  -> [arbitrary TRUE subtree]
-                  False -> [arbitrary FALSE subtree]
-          -> [other main-thread graph logic]
+      -> Play Dialogue DSL (intro.txt, Interruptible=true, SaveState=true)
+      -> Has Dialogue Event (intro.txt, asked_about_crew -> Result)
+      -> Branch On Result
+          False -> Play fallback.txt
+          True  -> Play crew_response.txt
 ```
 
-The listener Sequence is blocking only in BT terms. Sibling branches in the
-Parallel node continue running. The Dialogue Engine and Unity main thread are
-not blocked.
+Do not place the Branch beside Has Dialogue Event under `Run In Parallel Until
+Any Completes`: the Branch evaluates immediately, before the listener has an
+outcome, and causes that parallel group to complete early.
 
 For an event that must occur (with timeout failure), use:
 
