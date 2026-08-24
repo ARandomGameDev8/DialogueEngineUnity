@@ -8,6 +8,32 @@ using UnityEngine;
 /// </summary>
 public enum DialogueBTStatus { Running, Success, Failure }
 
+/// <summary>
+/// Positional match result for Listen For Dialogue Events. Target1 means the
+/// first event listed in TargetEvents, Target2 means the second, and so on.
+/// None means no target event was matched before DSL end-of-life.
+/// </summary>
+public enum DialogueTargetEventMatch
+{
+    None = 0,
+    Target1 = 1,
+    Target2 = 2,
+    Target3 = 3,
+    Target4 = 4,
+    Target5 = 5,
+    Target6 = 6,
+    Target7 = 7,
+    Target8 = 8,
+    Target9 = 9,
+    Target10 = 10,
+    Target11 = 11,
+    Target12 = 12,
+    Target13 = 13,
+    Target14 = 14,
+    Target15 = 15,
+    Target16 = 16
+}
+
 [Serializable]
 public abstract class DialogueBTActionNode
 {
@@ -17,6 +43,8 @@ public abstract class DialogueBTActionNode
 
 static class DialogueBTUtility
 {
+    public const int MaxTargetEventSlots = 16;
+
     public static string NormalizePath(string path)
     {
         return string.IsNullOrWhiteSpace(path)
@@ -24,11 +52,12 @@ static class DialogueBTUtility
             : path.Replace('\\', '/').Trim();
     }
 
-    public static HashSet<string> ParseEventNames(string raw)
+    public static List<string> ParseOrderedEventNames(string raw)
     {
-        var set = new HashSet<string>(StringComparer.Ordinal);
-        if (string.IsNullOrWhiteSpace(raw)) return set;
+        var ordered = new List<string>();
+        if (string.IsNullOrWhiteSpace(raw)) return ordered;
 
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         string[] parts = raw.Split(new[] { ',', ';', '|', '\n', '\r' },
             StringSplitOptions.RemoveEmptyEntries);
         for (int i = 0; i < parts.Length; i++)
@@ -36,9 +65,18 @@ static class DialogueBTUtility
             string value = parts[i].Trim();
             if (value.Length >= 2 && value[0] == '"' && value[value.Length - 1] == '"')
                 value = value.Substring(1, value.Length - 2).Trim();
-            if (!string.IsNullOrEmpty(value)) set.Add(value);
+            if (string.IsNullOrEmpty(value) || !seen.Add(value)) continue;
+            ordered.Add(value);
         }
-        return set;
+        return ordered;
+    }
+
+    public static DialogueTargetEventMatch ToTargetEventMatch(int zeroBasedIndex)
+    {
+        int enumValue = zeroBasedIndex + 1;
+        return enumValue >= 1 && enumValue <= MaxTargetEventSlots
+            ? (DialogueTargetEventMatch)enumValue
+            : DialogueTargetEventMatch.None;
     }
 
     public static List<DialogueEventRecord> GetAllRows(Dialogue_Engine engine,
@@ -241,9 +279,9 @@ public sealed class DialogueHasEventActionNode : DialogueBTActionNode
 /// <summary>
 /// Listener action for one DSL and many target events. It returns Running while
 /// that DSL is still alive and none of the targets have been emitted. It returns
-/// Success with MatchedEvent set to the FIRST emitted target event from the
+/// Success with MatchedEvent set to the FIRST emitted target slot from the
 /// latest play of that DSL. If the DSL ends without emitting any target event,
-/// it returns Success with MatchedEvent empty. Invalid input/service state
+/// it returns Success with MatchedEvent = None. Invalid input/service state
 /// returns Failure.
 /// </summary>
 [Serializable]
@@ -251,14 +289,14 @@ public sealed class DialogueListenForMultipleEventsActionNode : DialogueBTAction
 {
     [Tooltip("DSL path to inspect.")]
     public string DslPath;
-    [Tooltip("Target event names separated by comma, semicolon, pipe, or newline.")]
+    [Tooltip("Target event names separated by comma, semicolon, pipe, or newline. Max 16 unique targets.")]
     public string TargetEvents;
-    [NonSerialized] public string MatchedEvent;
+    [NonSerialized] public DialogueTargetEventMatch MatchedEvent;
     [NonSerialized] public long MatchedSequence;
 
     public override DialogueBTStatus Tick()
     {
-        MatchedEvent = "";
+        MatchedEvent = DialogueTargetEventMatch.None;
         MatchedSequence = 0;
 
         Dialogue_Engine engine = Dialogue_Engine.Instance;
@@ -266,8 +304,10 @@ public sealed class DialogueListenForMultipleEventsActionNode : DialogueBTAction
             string.IsNullOrWhiteSpace(DslPath))
             return DialogueBTStatus.Failure;
 
-        HashSet<string> targets = DialogueBTUtility.ParseEventNames(TargetEvents);
-        if (targets.Count == 0) return DialogueBTStatus.Failure;
+        List<string> targets = DialogueBTUtility.ParseOrderedEventNames(TargetEvents);
+        if (targets.Count == 0 ||
+            targets.Count > DialogueBTUtility.MaxTargetEventSlots)
+            return DialogueBTStatus.Failure;
 
         string normalizedPath = DialogueBTUtility.NormalizePath(DslPath);
         List<DialogueEventRecord> allRows =
@@ -281,10 +321,14 @@ public sealed class DialogueListenForMultipleEventsActionNode : DialogueBTAction
         {
             DialogueEventRecord row = latestRows[i];
             if (row == null || string.IsNullOrEmpty(row.EmittedEvent)) continue;
-            if (!targets.Contains(row.EmittedEvent)) continue;
-            MatchedEvent = row.EmittedEvent;
-            MatchedSequence = row.Sequence;
-            return DialogueBTStatus.Success;
+            for (int targetIndex = 0; targetIndex < targets.Count; targetIndex++)
+            {
+                if (!string.Equals(row.EmittedEvent, targets[targetIndex],
+                    StringComparison.Ordinal)) continue;
+                MatchedEvent = DialogueBTUtility.ToTargetEventMatch(targetIndex);
+                MatchedSequence = row.Sequence;
+                return DialogueBTStatus.Success;
+            }
         }
 
         DialogueEventRecord lastRow = DialogueBTUtility.GetLastRow(latestRows);

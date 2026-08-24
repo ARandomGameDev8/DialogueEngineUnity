@@ -135,7 +135,8 @@ public partial class UnityBehaviorListenForDialogueEventsAction : Action
 {
     [SerializeReference] public BlackboardVariable<string> DslPath = new BlackboardVariable<string>("");
     [SerializeReference] public BlackboardVariable<string> TargetEvents = new BlackboardVariable<string>("");
-    [SerializeReference] public BlackboardVariable<string> MatchedEvent = new BlackboardVariable<string>("");
+    [SerializeReference] public BlackboardVariable<DialogueTargetEventMatch> MatchedEvent =
+        new BlackboardVariable<DialogueTargetEventMatch>(DialogueTargetEventMatch.None);
     [SerializeReference] public BlackboardVariable<int> MatchedSequence = new BlackboardVariable<int>(0);
 
     protected override Status OnStart()
@@ -156,7 +157,7 @@ public partial class UnityBehaviorListenForDialogueEventsAction : Action
             TargetEvents = TargetEvents != null ? TargetEvents.Value : ""
         };
         DialogueBTStatus status = node.Tick();
-        if (MatchedEvent != null) MatchedEvent.Value = node.MatchedEvent ?? "";
+        if (MatchedEvent != null) MatchedEvent.Value = node.MatchedEvent;
         if (MatchedSequence != null)
             MatchedSequence.Value = (int)Math.Min(int.MaxValue, Math.Max(0L, node.MatchedSequence));
         return DialogueUnityBehaviorStatus.Map(status);

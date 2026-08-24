@@ -65,13 +65,15 @@ DialogueBTStatus status = node.Tick();
 ```
 
 - `TargetEvents` accepts comma, semicolon, pipe, or newline separators.
+- `MatchedEvent` is a positional enum: `Target1` means the first event in the
+  list, `Target2` means the second, and so on up to `Target16`.
 - While the DSL is still alive and none of the targets were emitted, the node
   returns `Running`.
 - If one of the target events is emitted, the node returns `Success` and writes
-  the FIRST matched event to `MatchedEvent` and its sequence to
+  the FIRST matched target slot to `MatchedEvent` and its sequence to
   `MatchedSequence`.
 - If the DSL reaches end-of-life without emitting any target event, the node
-  returns `Success` with `MatchedEvent = ""`.
+  returns `Success` with `MatchedEvent = None`.
 - Invalid input or missing runtime state returns `Failure`.
 
 ## Live Snapshot action

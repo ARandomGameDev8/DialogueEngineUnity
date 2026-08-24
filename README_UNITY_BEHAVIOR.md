@@ -41,15 +41,16 @@ following Branch node can evaluate the result.
 ### Listen For Dialogue Events
 
 Inputs: DSL Path and `TargetEvents`.
-Outputs: `MatchedEvent` and `MatchedSequence`.
+Outputs: `MatchedEvent` (enum) and `MatchedSequence`.
 
 `TargetEvents` is a single string containing many target names separated by
-comma, semicolon, pipe, or newlines. The action keeps listening to the latest
-play of that DSL:
+comma, semicolon, pipe, or newlines. `MatchedEvent` is a positional enum:
+`Target1` means the first event in the list, `Target2` means the second, and so
+on up to `Target16`. The action keeps listening to the latest play of that DSL:
 
 - Running while the DSL is still alive and none of the targets were emitted.
-- Success with `MatchedEvent` set to the FIRST matched target event.
-- Success with `MatchedEvent = ""` if the DSL ends without any target match.
+- Success with `MatchedEvent` set to the FIRST matched target slot enum.
+- Success with `MatchedEvent = None` if the DSL ends without any target match.
 - Failure on actual input/service/runtime errors.
 
 ### Get Dialogue Live Snapshot
@@ -111,10 +112,10 @@ On Start
            DslPath = intro.txt
            TargetEvents = asked_about_crew, skipped_topic, ended_conversation
            -> MatchedEvent
-      -> Branch / compare MatchedEvent
-           asked_about_crew  -> Play crew_response.txt
-           skipped_topic     -> Play alternate.txt
-           ""               -> Play timeout_or_default.txt
+      -> Switch / compare MatchedEvent
+           Target1 -> Play crew_response.txt
+           Target2 -> Play alternate.txt
+           None    -> Play timeout_or_default.txt
 ```
 
 All native actions delegate to the same framework-neutral nodes and internal
