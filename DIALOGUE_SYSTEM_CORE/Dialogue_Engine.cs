@@ -1564,7 +1564,11 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
 
     static string BuildEventsMessage(List<DialogueEventRecord> rows)
     {
-        var b = new System.Text.StringBuilder("<events>");
+        int rowCount = DialogueEventMetrics.CountRows(rows);
+        int emittedCount = DialogueEventMetrics.CountEmittedEvents(rows);
+        var b = new System.Text.StringBuilder("<events rows=\"")
+            .Append(rowCount).Append("\" emitted=\"")
+            .Append(emittedCount).Append("\">");
         if (rows != null)
         {
             foreach (DialogueEventRecord row in rows)

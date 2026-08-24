@@ -731,7 +731,8 @@ Action > Dialogue > Query > Get Dialogue Events
 | `DslPath` | Input | DSL filter |
 | `EventName` | Input | Optional event filter |
 | `SinceSequence` | Input | Sequence lower bound |
-| `EventCount` | Output | Number of rows |
+| `EventCount` | Output | Number of emitted events in the matching rows |
+| `HistoryRowCount` | Output | Total number of matching history rows |
 | `ResponseMessage` | Output | XML-like rows response |
 
 ### Status
@@ -741,7 +742,9 @@ Valid query, including zero rows -> Success
 Request/service error            -> Failure
 ```
 
-This is an immediate historical query.
+This is an immediate historical query. `EventCount` counts actual emitted
+`@EMIT` rows, while `HistoryRowCount` includes all matching status/history rows
+such as `TypingText`, `WaitingForInput`, `Transitioning`, and `Completed`.
 
 ---
 
@@ -970,6 +973,7 @@ Get Dialogue Events
   EventName = empty
   SinceSequence = 0
   -> EventCount
+  -> HistoryRowCount
   -> ResponseMessage
 ```
 

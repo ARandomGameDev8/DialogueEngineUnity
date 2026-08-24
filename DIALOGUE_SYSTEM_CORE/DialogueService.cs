@@ -232,6 +232,29 @@ public sealed class DialogueRuntimeDatabase
     }
 }
 
+public static class DialogueEventMetrics
+{
+    public static int CountRows(ICollection<DialogueEventRecord> rows)
+    {
+        return rows != null ? rows.Count : 0;
+    }
+
+    public static int CountEmittedEvents(IList<DialogueEventRecord> rows)
+    {
+        if (rows == null) return 0;
+        int count = 0;
+        for (int i = 0; i < rows.Count; i++)
+        {
+            DialogueEventRecord row = rows[i];
+            if (row == null) continue;
+            if (row.Status == DialogueRuntimeStatus.EventEmitted ||
+                !string.IsNullOrEmpty(row.EmittedEvent))
+                count++;
+        }
+        return count;
+    }
+}
+
 public static class DialogueMessage
 {
     public static string Escape(string value)

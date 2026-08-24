@@ -51,7 +51,8 @@ Success on a match and Failure on timeout. Unity's main thread is never blocked.
 ### Get Dialogue Events
 
 Queries status/event history by DSL, optional event name, and sequence checkpoint.
-Outputs event count and the service response message.
+Outputs emitted event count, underlying history row count, and the service
+response message.
 
 ### Get Dialogue DSL Record
 

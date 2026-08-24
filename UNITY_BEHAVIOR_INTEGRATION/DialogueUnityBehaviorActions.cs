@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Unity.Behavior;
 using Unity.Properties;
 using UnityEngine;
@@ -220,7 +221,7 @@ public partial class UnityBehaviorWaitForDialogueEventAction : Action
 [Serializable, GeneratePropertyBag]
 [NodeDescription(
     name: "Get Dialogue Events",
-    story: "Get events for [DslPath] named [EventName] after [SinceSequence] into [EventCount] [ResponseMessage]",
+    story: "Get events for [DslPath] named [EventName] after [SinceSequence] into [EventCount] emitted / [HistoryRowCount] rows [ResponseMessage]",
     category: "Action/Dialogue/Query",
     id: "bd741fa37f7b4b7496024736456284c4")]
 public partial class UnityBehaviorGetDialogueEventsAction : Action
@@ -229,6 +230,7 @@ public partial class UnityBehaviorGetDialogueEventsAction : Action
     [SerializeReference] public BlackboardVariable<string> EventName = new BlackboardVariable<string>("");
     [SerializeReference] public BlackboardVariable<int> SinceSequence = new BlackboardVariable<int>(0);
     [SerializeReference] public BlackboardVariable<int> EventCount = new BlackboardVariable<int>(0);
+    [SerializeReference] public BlackboardVariable<int> HistoryRowCount = new BlackboardVariable<int>(0);
     [SerializeReference] public BlackboardVariable<string> ResponseMessage = new BlackboardVariable<string>("");
 
     protected override Status OnStart()
@@ -240,8 +242,9 @@ public partial class UnityBehaviorGetDialogueEventsAction : Action
             EventName = EventName != null ? EventName.Value : "",
             SinceSequence = SinceSequence != null ? SinceSequence.Value : 0
         });
-        if (EventCount != null) EventCount.Value = response != null && response.Events != null
-            ? response.Events.Count : 0;
+        List<DialogueEventRecord> rows = response != null ? response.Events : null;
+        if (EventCount != null) EventCount.Value = DialogueEventMetrics.CountEmittedEvents(rows);
+        if (HistoryRowCount != null) HistoryRowCount.Value = DialogueEventMetrics.CountRows(rows);
         if (ResponseMessage != null) ResponseMessage.Value = response != null ? response.Message : "";
         return response != null && response.IsSuccess ? Status.Success : Status.Failure;
     }
