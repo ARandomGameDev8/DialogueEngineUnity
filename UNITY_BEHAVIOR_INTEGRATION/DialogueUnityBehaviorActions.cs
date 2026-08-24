@@ -128,15 +128,15 @@ public partial class UnityBehaviorHasDialogueEventAction : Action
 [Serializable, GeneratePropertyBag]
 [NodeDescription(
     name: "Listen For Dialogue Events",
-    story: "Listen on [DslPath] for [TargetEvents] into [MatchedEvent] [MatchedSequence]",
+    story: "Listen on [DslPath] using [TargetEventEnum] into [MatchedEvent] [MatchedEventName] [MatchedSequence]",
     category: "Action/Dialogue",
     id: "f9ef20f7f405432fa7237b2551eb1736")]
 public partial class UnityBehaviorListenForDialogueEventsAction : Action
 {
     [SerializeReference] public BlackboardVariable<string> DslPath = new BlackboardVariable<string>("");
-    [SerializeReference] public BlackboardVariable<string> TargetEvents = new BlackboardVariable<string>("");
-    [SerializeReference] public BlackboardVariable<DialogueTargetEventMatch> MatchedEvent =
-        new BlackboardVariable<DialogueTargetEventMatch>(DialogueTargetEventMatch.None);
+    [SerializeReference] public BlackboardVariable TargetEventEnum;
+    [SerializeReference] public BlackboardVariable MatchedEvent;
+    [SerializeReference] public BlackboardVariable<string> MatchedEventName = new BlackboardVariable<string>("");
     [SerializeReference] public BlackboardVariable<int> MatchedSequence = new BlackboardVariable<int>(0);
 
     protected override Status OnStart()
@@ -151,13 +151,36 @@ public partial class UnityBehaviorListenForDialogueEventsAction : Action
 
     Status Evaluate()
     {
+        Type enumType = TargetEventEnum != null ? TargetEventEnum.Type : null;
+        Type outputType = MatchedEvent != null ? MatchedEvent.Type : null;
+        if (enumType == null || !enumType.IsEnum ||
+            outputType == null || !outputType.IsEnum ||
+            enumType != outputType)
+            return Status.Failure;
+
+        List<string> targets = DialogueBTUtility.GetTargetEventNamesFromEnumType(enumType);
+        if (targets == null || targets.Count == 0) return Status.Failure;
+
+        object noMatchValue = DialogueBTUtility.GetNoMatchEnumValue(outputType);
+        if (MatchedEvent != null) MatchedEvent.ObjectValue = noMatchValue;
+        if (MatchedEventName != null) MatchedEventName.Value = "";
+        if (MatchedSequence != null) MatchedSequence.Value = 0;
+
         var node = new DialogueListenForMultipleEventsActionNode
         {
             DslPath = DslPath != null ? DslPath.Value : "",
-            TargetEvents = TargetEvents != null ? TargetEvents.Value : ""
+            TargetEvents = string.Join(", ", targets.ToArray())
         };
         DialogueBTStatus status = node.Tick();
-        if (MatchedEvent != null) MatchedEvent.Value = node.MatchedEvent;
+        if (!string.IsNullOrEmpty(node.MatchedEvent))
+        {
+            object matchedValue;
+            if (!DialogueBTUtility.TryGetEnumValueForEvent(outputType,
+                    node.MatchedEvent, out matchedValue))
+                return Status.Failure;
+            if (MatchedEvent != null) MatchedEvent.ObjectValue = matchedValue;
+            if (MatchedEventName != null) MatchedEventName.Value = node.MatchedEvent;
+        }
         if (MatchedSequence != null)
             MatchedSequence.Value = (int)Math.Min(int.MaxValue, Math.Max(0L, node.MatchedSequence));
         return DialogueUnityBehaviorStatus.Map(status);

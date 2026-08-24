@@ -40,18 +40,28 @@ following Branch node can evaluate the result.
 
 ### Listen For Dialogue Events
 
-Inputs: DSL Path and `TargetEvents`.
-Outputs: `MatchedEvent` (enum) and `MatchedSequence`.
+Inputs: DSL Path and `TargetEventEnum`.
+Outputs: `MatchedEvent`, `MatchedEventName`, and `MatchedSequence`.
 
-`TargetEvents` is a single string containing many target names separated by
-comma, semicolon, pipe, or newlines. `MatchedEvent` is a positional enum:
-`Target1` means the first event in the list, `Target2` means the second, and so
-on up to `Target16`. The action keeps listening to the latest play of that DSL:
+`TargetEventEnum` must be a Blackboard enum variable of your own enum type. The
+wrapper reads that enum type's member names as the target event set and writes
+back to `MatchedEvent` using the SAME enum type, so a Switch node can branch on
+your actual enum members.
 
-- Running while the DSL is still alive and none of the targets were emitted.
-- Success with `MatchedEvent` set to the FIRST matched target slot enum.
-- Success with `MatchedEvent = None` if the DSL ends without any target match.
-- Failure on actual input/service/runtime errors.
+Recommended pattern for your enum:
+
+- `None = 0` or `NoMatch = 0`
+- one member per target event, for example `AskedAboutCrew`
+- names that normalize to the event text, for example:
+  - DSL event `asked_about_crew`
+  - enum member `AskedAboutCrew`
+
+The action keeps listening to the latest play of that DSL:
+
+- Running while the DSL is still alive and none of the enum-defined targets were emitted.
+- Success with `MatchedEvent` set to the matched enum member and `MatchedEventName` set to the emitted event string.
+- Success with `MatchedEvent` left at `None`/`NoMatch` if the DSL ends without any target match.
+- Failure on actual input/service/runtime errors, or if the input/output enum variable types do not match.
 
 ### Get Dialogue Live Snapshot
 
@@ -110,12 +120,12 @@ On Start
       -> Play Dialogue DSL (intro.txt, Interruptible=true, SaveState=true)
       -> Listen For Dialogue Events
            DslPath = intro.txt
-           TargetEvents = asked_about_crew, skipped_topic, ended_conversation
+           TargetEventEnum = DialogueOutcome enum variable
            -> MatchedEvent
       -> Switch / compare MatchedEvent
-           Target1 -> Play crew_response.txt
-           Target2 -> Play alternate.txt
-           None    -> Play timeout_or_default.txt
+           AskedAboutCrew -> Play crew_response.txt
+           SkippedTopic   -> Play alternate.txt
+           None           -> Play timeout_or_default.txt
 ```
 
 All native actions delegate to the same framework-neutral nodes and internal
