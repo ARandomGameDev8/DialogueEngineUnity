@@ -52,6 +52,28 @@ var node = new DialogueHasEventActionNode
 DialogueBTStatus status = node.Tick();
 ```
 
+## Listen for multiple targeted events
+
+```csharp
+var node = new DialogueListenForMultipleEventsActionNode
+{
+    DslPath = "Assets/Dialogues/intro.txt",
+    TargetEvents = "asked_about_crew, insulted_captain, ended_conversation"
+};
+
+DialogueBTStatus status = node.Tick();
+```
+
+- `TargetEvents` accepts comma, semicolon, pipe, or newline separators.
+- While the DSL is still alive and none of the targets were emitted, the node
+  returns `Running`.
+- If one of the target events is emitted, the node returns `Success` and writes
+  the FIRST matched event to `MatchedEvent` and its sequence to
+  `MatchedSequence`.
+- If the DSL reaches end-of-life without emitting any target event, the node
+  returns `Success` with `MatchedEvent = ""`.
+- Invalid input or missing runtime state returns `Failure`.
+
 ## Live Snapshot action
 
 ```csharp
@@ -60,22 +82,22 @@ if (node.Tick() == DialogueBTStatus.Success)
     Debug.Log(node.Snapshot.SectionId);
 ```
 
-## Wait For Event action
+## Blocking live snapshot watcher
 
 ```csharp
-var node = new DialogueWaitForEventActionNode
+var node = new DialogueBlockingLiveSnapshotActionNode
 {
-    DslPath = "Assets/Dialogues/intro.txt",
-    EventName = "door_opened",
-    TimeoutSeconds = 20f
+    DslPath = "Assets/Dialogues/intro.txt"
 };
 
-// Call from the BT every update. Running does not block Unity's main thread.
 DialogueBTStatus status = node.Tick();
 ```
 
-It returns `Running` until the database contains the requested DSL/event pair,
-then `Success`. It returns `Failure` on timeout.
+- While the requested DSL is alive, the node returns `Running` and keeps
+  updating `Snapshot`.
+- When that DSL reaches end-of-life without input/service errors, it returns
+  `Success`.
+- Invalid input or missing runtime state returns `Failure`.
 
 ## Other request nodes
 

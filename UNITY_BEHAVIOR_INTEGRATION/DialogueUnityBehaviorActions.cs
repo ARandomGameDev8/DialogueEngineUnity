@@ -127,6 +127,44 @@ public partial class UnityBehaviorHasDialogueEventAction : Action
 
 [Serializable, GeneratePropertyBag]
 [NodeDescription(
+    name: "Listen For Dialogue Events",
+    story: "Listen on [DslPath] for [TargetEvents] into [MatchedEvent] [MatchedSequence]",
+    category: "Action/Dialogue",
+    id: "f9ef20f7f405432fa7237b2551eb1736")]
+public partial class UnityBehaviorListenForDialogueEventsAction : Action
+{
+    [SerializeReference] public BlackboardVariable<string> DslPath = new BlackboardVariable<string>("");
+    [SerializeReference] public BlackboardVariable<string> TargetEvents = new BlackboardVariable<string>("");
+    [SerializeReference] public BlackboardVariable<string> MatchedEvent = new BlackboardVariable<string>("");
+    [SerializeReference] public BlackboardVariable<int> MatchedSequence = new BlackboardVariable<int>(0);
+
+    protected override Status OnStart()
+    {
+        return Evaluate();
+    }
+
+    protected override Status OnUpdate()
+    {
+        return Evaluate();
+    }
+
+    Status Evaluate()
+    {
+        var node = new DialogueListenForMultipleEventsActionNode
+        {
+            DslPath = DslPath != null ? DslPath.Value : "",
+            TargetEvents = TargetEvents != null ? TargetEvents.Value : ""
+        };
+        DialogueBTStatus status = node.Tick();
+        if (MatchedEvent != null) MatchedEvent.Value = node.MatchedEvent ?? "";
+        if (MatchedSequence != null)
+            MatchedSequence.Value = (int)Math.Min(int.MaxValue, Math.Max(0L, node.MatchedSequence));
+        return DialogueUnityBehaviorStatus.Map(status);
+    }
+}
+
+[Serializable, GeneratePropertyBag]
+[NodeDescription(
     name: "Get Dialogue Live Snapshot",
     story: "Get dialogue snapshot into [DialoguePath] [Section] [TextName] [Text] [IOStatus] [LastEvent] [IsPlaying] [LatestSequence] [Message]",
     category: "Action/Dialogue/Query",
@@ -147,7 +185,12 @@ public partial class UnityBehaviorGetDialogueSnapshotAction : Action
     {
         var node = new DialogueLiveSnapshotActionNode();
         DialogueBTStatus result = node.Tick();
-        DialogueLiveSnapshot snapshot = node.Snapshot;
+        ApplySnapshot(node.Snapshot, node.Message);
+        return DialogueUnityBehaviorStatus.Map(result);
+    }
+
+    void ApplySnapshot(DialogueLiveSnapshot snapshot, string message)
+    {
         if (snapshot != null)
         {
             if (DialoguePath != null) DialoguePath.Value = snapshot.DialoguePath;
@@ -159,62 +202,64 @@ public partial class UnityBehaviorGetDialogueSnapshotAction : Action
             if (IsPlaying != null) IsPlaying.Value = snapshot.IsPlaying;
             if (LatestSequence != null) LatestSequence.Value = (int)Math.Min(int.MaxValue, snapshot.LatestSequence);
         }
-        if (Message != null) Message.Value = node.Message ?? "";
-        return DialogueUnityBehaviorStatus.Map(result);
+        if (Message != null) Message.Value = message ?? "";
     }
 }
 
 [Serializable, GeneratePropertyBag]
 [NodeDescription(
-    name: "Wait For Dialogue Event",
-    story: "Wait until [DslPath] emits [EventName] after [SinceSequence] timeout [TimeoutSeconds] into [MatchedTimestamp] [MatchedSequence]",
+    name: "Get Dialogue Live Snapshot Blocking",
+    story: "Watch [DslPath] snapshot into [DialoguePath] [Section] [TextName] [Text] [IOStatus] [LastEvent] [IsPlaying] [LatestSequence] [Message]",
     category: "Action/Dialogue",
-    id: "fc79a42933a248ac859e53dba0686f26")]
-public partial class UnityBehaviorWaitForDialogueEventAction : Action
+    id: "9a0d65d5a0b145a7ae25fe308d4b9711")]
+public partial class UnityBehaviorGetDialogueSnapshotBlockingAction : Action
 {
     [SerializeReference] public BlackboardVariable<string> DslPath = new BlackboardVariable<string>("");
-    [SerializeReference] public BlackboardVariable<string> EventName = new BlackboardVariable<string>("");
-    [SerializeReference] public BlackboardVariable<int> SinceSequence = new BlackboardVariable<int>(0);
-    [SerializeReference] public BlackboardVariable<float> TimeoutSeconds = new BlackboardVariable<float>(10f);
-    [SerializeReference] public BlackboardVariable<string> MatchedTimestamp = new BlackboardVariable<string>("");
-    [SerializeReference] public BlackboardVariable<int> MatchedSequence = new BlackboardVariable<int>(0);
-
-    [NonSerialized] DialogueWaitForEventActionNode node;
+    [SerializeReference] public BlackboardVariable<string> DialoguePath = new BlackboardVariable<string>("");
+    [SerializeReference] public BlackboardVariable<string> Section = new BlackboardVariable<string>("");
+    [SerializeReference] public BlackboardVariable<string> TextName = new BlackboardVariable<string>("");
+    [SerializeReference] public BlackboardVariable<string> Text = new BlackboardVariable<string>("");
+    [SerializeReference] public BlackboardVariable<string> IOStatus = new BlackboardVariable<string>("");
+    [SerializeReference] public BlackboardVariable<string> LastEvent = new BlackboardVariable<string>("");
+    [SerializeReference] public BlackboardVariable<bool> IsPlaying = new BlackboardVariable<bool>(false);
+    [SerializeReference] public BlackboardVariable<int> LatestSequence = new BlackboardVariable<int>(0);
+    [SerializeReference] public BlackboardVariable<string> Message = new BlackboardVariable<string>("");
 
     protected override Status OnStart()
     {
-        node = new DialogueWaitForEventActionNode
-        {
-            DslPath = DslPath != null ? DslPath.Value : "",
-            EventName = EventName != null ? EventName.Value : "",
-            SinceSequence = SinceSequence != null ? SinceSequence.Value : 0,
-            TimeoutSeconds = TimeoutSeconds != null ? TimeoutSeconds.Value : 10f
-        };
-        return TickNode();
+        return Evaluate();
     }
 
     protected override Status OnUpdate()
     {
-        return TickNode();
+        return Evaluate();
     }
 
-    Status TickNode()
+    Status Evaluate()
     {
-        if (node == null) return Status.Failure;
-        DialogueBTStatus status = node.Tick();
-        if (node.Match != null)
+        var node = new DialogueBlockingLiveSnapshotActionNode
         {
-            if (MatchedTimestamp != null) MatchedTimestamp.Value = node.Match.Timestamp;
-            if (MatchedSequence != null) MatchedSequence.Value =
-                (int)Math.Min(int.MaxValue, node.Match.Sequence);
-        }
+            DslPath = DslPath != null ? DslPath.Value : ""
+        };
+        DialogueBTStatus status = node.Tick();
+        ApplySnapshot(node.Snapshot, node.Message);
         return DialogueUnityBehaviorStatus.Map(status);
     }
 
-    protected override void OnEnd()
+    void ApplySnapshot(DialogueLiveSnapshot snapshot, string message)
     {
-        if (node != null) node.ResetNode();
-        node = null;
+        if (snapshot != null)
+        {
+            if (DialoguePath != null) DialoguePath.Value = snapshot.DialoguePath;
+            if (Section != null) Section.Value = snapshot.SectionId;
+            if (TextName != null) TextName.Value = snapshot.TextName;
+            if (Text != null) Text.Value = snapshot.Text;
+            if (IOStatus != null) IOStatus.Value = snapshot.Status.ToString();
+            if (LastEvent != null) LastEvent.Value = snapshot.LastEvent;
+            if (IsPlaying != null) IsPlaying.Value = snapshot.IsPlaying;
+            if (LatestSequence != null) LatestSequence.Value = (int)Math.Min(int.MaxValue, snapshot.LatestSequence);
+        }
+        if (Message != null) Message.Value = message ?? "";
     }
 }
 

@@ -1,5 +1,9 @@
 # Dialogue DSL test files
 
+> Note: older examples in this file may mention the removed `Wait For Dialogue
+> Event` action. The current Unity Behavior flow is `Has Dialogue Event` for a
+> single target event or `Listen For Dialogue Events` for multiple targets.
+
 Copy this folder into your Unity project's `Assets` directory, for example:
 
 ```text

@@ -38,15 +38,39 @@ yet, the action returns Running and keeps polling on graph updates. If that DSL
 finishes without the event, it writes Result=false and returns Success so a
 following Branch node can evaluate the result.
 
+### Listen For Dialogue Events
+
+Inputs: DSL Path and `TargetEvents`.
+Outputs: `MatchedEvent` and `MatchedSequence`.
+
+`TargetEvents` is a single string containing many target names separated by
+comma, semicolon, pipe, or newlines. The action keeps listening to the latest
+play of that DSL:
+
+- Running while the DSL is still alive and none of the targets were emitted.
+- Success with `MatchedEvent` set to the FIRST matched target event.
+- Success with `MatchedEvent = ""` if the DSL ends without any target match.
+- Failure on actual input/service/runtime errors.
+
 ### Get Dialogue Live Snapshot
 
-Outputs the current DSL path, section, text name, text, IO status, last event,
-playing flag, latest sequence, and XML-like service message to Blackboard fields.
+Outputs the current engine snapshot immediately: current DSL path, section, text
+name, text, IO status, last event, playing flag, latest sequence, and XML-like
+service message.
 
-### Wait For Dialogue Event
+### Get Dialogue Live Snapshot Blocking
 
-Returns Running until the specific DSL emits the requested event. Returns
-Success on a match and Failure on timeout. Unity's main thread is never blocked.
+Input: DSL Path.
+Outputs: Dialogue path, section, text name, text, IO status, last event,
+playing flag, latest sequence, and message.
+
+This action behaves like a blocking watcher in BT terms:
+
+- Running while the requested DSL is still alive.
+- Success when that DSL reaches end-of-life without actual errors.
+- Failure on actual input/service/runtime errors.
+
+While Running, it keeps updating the Blackboard snapshot fields.
 
 ### Get Dialogue Events
 
@@ -65,9 +89,7 @@ fields and writes Matched, Response Code, and Response Message.
 
 ## Example graphs
 
-To branch when a dialogue either emits an event or finishes without it, use a
-plain Sequence. A parallel node is unnecessary because the Dialogue Engine keeps
-playing independently while Has Dialogue Event returns Running:
+### Branch off one specific event
 
 ```text
 On Start
@@ -79,18 +101,20 @@ On Start
           True  -> Play crew_response.txt
 ```
 
-Do not place the Branch beside Has Dialogue Event under `Run In Parallel Until
-Any Completes`: the Branch evaluates immediately, before the listener has an
-outcome, and causes that parallel group to complete early.
-
-For an event that must occur (with timeout failure), use:
+### Branch off several possible targeted events
 
 ```text
 On Start
-  -> Play Dialogue DSL (intro.txt, Interruptible=true, SaveState=true)
-  -> Wait For Dialogue Event (intro.txt, door_opened)
-  -> [your Open Door action]
-  -> Play Dialogue DSL (entered_room.txt)
+  -> Sequence
+      -> Play Dialogue DSL (intro.txt, Interruptible=true, SaveState=true)
+      -> Listen For Dialogue Events
+           DslPath = intro.txt
+           TargetEvents = asked_about_crew, skipped_topic, ended_conversation
+           -> MatchedEvent
+      -> Branch / compare MatchedEvent
+           asked_about_crew  -> Play crew_response.txt
+           skipped_topic     -> Play alternate.txt
+           ""               -> Play timeout_or_default.txt
 ```
 
 All native actions delegate to the same framework-neutral nodes and internal

@@ -2,6 +2,12 @@
 
 Complete reference for the framework-neutral Behavior Tree nodes and their native Unity Behavior wrappers.
 
+> Update: the old `Wait For Dialogue Event` BT action was removed. Use
+> `Has Dialogue Event` for single-event listening, `Listen For Dialogue Events`
+> for multi-target listening, and `Get Dialogue Live Snapshot Blocking` for a
+> running watcher that ends on DSL end-of-life. Some older examples below may
+> still mention the removed wait node.
+
 ---
 
 ## 1. Overview
