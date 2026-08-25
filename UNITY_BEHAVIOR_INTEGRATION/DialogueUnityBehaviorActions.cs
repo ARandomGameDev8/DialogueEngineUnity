@@ -187,6 +187,88 @@ public partial class UnityBehaviorListenForDialogueEventsAction : Action
     }
 }
 
+// Legacy compatibility shim so older Behavior assets that still contain the old
+// removed wait node can deserialize and open. Hidden from the Add menu.
+[Serializable, GeneratePropertyBag]
+[NodeDescription(
+    name: "Wait For Dialogue Event (Legacy)",
+    story: "Wait until [DslPath] emits [EventName] after [SinceSequence] timeout [TimeoutSeconds] into [MatchedTimestamp] [MatchedSequence]",
+    category: "Action/Dialogue",
+    id: "fc79a42933a248ac859e53dba0686f26",
+    hideInSearch: true)]
+public partial class UnityBehaviorWaitForDialogueEventAction : Action
+{
+    [SerializeReference] public BlackboardVariable<string> DslPath = new BlackboardVariable<string>("");
+    [SerializeReference] public BlackboardVariable<string> EventName = new BlackboardVariable<string>("");
+    [SerializeReference] public BlackboardVariable<int> SinceSequence = new BlackboardVariable<int>(0);
+    [SerializeReference] public BlackboardVariable<float> TimeoutSeconds = new BlackboardVariable<float>(10f);
+    [SerializeReference] public BlackboardVariable<string> MatchedTimestamp = new BlackboardVariable<string>("");
+    [SerializeReference] public BlackboardVariable<int> MatchedSequence = new BlackboardVariable<int>(0);
+
+    [NonSerialized] bool waiting;
+    [NonSerialized] float startedAt;
+
+    protected override Status OnStart()
+    {
+        waiting = true;
+        startedAt = Time.realtimeSinceStartup;
+        return Evaluate();
+    }
+
+    protected override Status OnUpdate()
+    {
+        return Evaluate();
+    }
+
+    Status Evaluate()
+    {
+        string path = DslPath != null ? DslPath.Value : "";
+        string eventName = EventName != null ? EventName.Value : "";
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(eventName))
+            return Status.Failure;
+
+        DialogueResponse response = Dialogue_Engine.SendRequest(new DialogueRequest
+        {
+            Type = DialogueRequestType.HasEvent,
+            DialoguePath = path,
+            EventName = eventName,
+            SinceSequence = SinceSequence != null ? SinceSequence.Value : 0
+        });
+        List<DialogueEventRecord> matches = response != null ? response.Events : null;
+        if (matches != null && matches.Count > 0)
+        {
+            DialogueEventRecord match = matches[0];
+            if (MatchedTimestamp != null) MatchedTimestamp.Value = match.Timestamp;
+            if (MatchedSequence != null)
+                MatchedSequence.Value = (int)Math.Min(int.MaxValue, match.Sequence);
+            return Status.Success;
+        }
+
+        float timeout = TimeoutSeconds != null ? TimeoutSeconds.Value : 10f;
+        if (timeout > 0f && waiting &&
+            Time.realtimeSinceStartup - startedAt >= timeout)
+            return Status.Failure;
+
+        DialogueResponse snapshotResponse = Dialogue_Engine.SendRequest(DialogueRequest.Snapshot());
+        DialogueLiveSnapshot snapshot = snapshotResponse != null ? snapshotResponse.Snapshot : null;
+        bool targetStillPlaying = snapshot != null && snapshot.IsPlaying &&
+            string.Equals(NormalizePath(snapshot.DialoguePath), NormalizePath(path),
+                StringComparison.OrdinalIgnoreCase);
+        return targetStillPlaying ? Status.Running : Status.Failure;
+    }
+
+    protected override void OnEnd()
+    {
+        waiting = false;
+        startedAt = 0f;
+    }
+
+    static string NormalizePath(string path)
+    {
+        return string.IsNullOrEmpty(path) ? "" : path.Replace('\\', '/');
+    }
+}
+
 [Serializable, GeneratePropertyBag]
 [NodeDescription(
     name: "Get Dialogue Live Snapshot",

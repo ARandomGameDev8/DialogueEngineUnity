@@ -43,8 +43,7 @@ static class DialogueBTUtility
         if (string.IsNullOrWhiteSpace(raw)) return ordered;
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        string[] parts = raw.Split(new[] { ',', ';', '|', '
-', '' },
+        string[] parts = raw.Split(new[] { ',', ';', '|', '\n', '\r' },
             StringSplitOptions.RemoveEmptyEntries);
         for (int i = 0; i < parts.Length; i++)
         {
