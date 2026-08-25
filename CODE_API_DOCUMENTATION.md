@@ -308,12 +308,24 @@ Dialogue_Engine.UnsubscribeLiveSnapshots(subscriptionId);
 
 ### Live event subscriptions
 
+The simplest public API is closure-friendly: your callback can capture any
+fields or local variables from the surrounding script.
+
 ```csharp
-int subscriptionId = Dialogue_Engine.SubscribeLiveEvents(
-    eventName => Debug.Log(eventName),
-    clientId: "quest-bridge",
-    dialoguePathFilter: "Assets/Dialogues/quest_offer.txt",
-    eventNameFilter: "quest_accepted");
+int subscriptionId = Dialogue_Engine.Subscribe(
+    "quest_accepted",
+    () =>
+    {
+        questSystem.Accept(currentQuestId);
+        ui.ShowAccepted();
+    });
+```
+
+If you want the emitted event string too:
+
+```csharp
+int subscriptionId = Dialogue_Engine.Subscribe(
+    eventName => Debug.Log(eventName));
 ```
 
 Unsubscribe later:
@@ -322,18 +334,33 @@ Unsubscribe later:
 Dialogue_Engine.UnsubscribeLiveEvents(subscriptionId);
 ```
 
+Advanced filtering by client/path/event remains available through
+`SubscribeLiveEvents(...)`.
+
 ### Priority live event subscriptions
 
 ```csharp
-int subscriptionId = Dialogue_Engine.SubscribePriorityLiveEvents(
-    eventName =>
+int subscriptionId = Dialogue_Engine.Subscribe(
+    100,
+    "quest_accepted",
+    () =>
     {
-        if (eventName == "quest_accepted")
+        if (questSystem.CanClaim(currentQuestId))
             return DialoguePriorityDispatchResult.CullLowerPriorities;
         return DialoguePriorityDispatchResult.Continue;
-    },
-    priority: 100,
-    clientId: "quest-arbiter");
+    });
+```
+
+If you want the emitted event string inside the priority callback:
+
+```csharp
+int subscriptionId = Dialogue_Engine.Subscribe(
+    100,
+    eventName =>
+    {
+        Debug.Log(eventName);
+        return DialoguePriorityDispatchResult.Continue;
+    });
 ```
 
 If a priority callback returns `CullLowerPriorities`, all lower-priority live
@@ -344,6 +371,9 @@ Unsubscribe later:
 ```csharp
 Dialogue_Engine.UnsubscribePriorityLiveEvents(subscriptionId);
 ```
+
+Advanced filtering by client/path/event remains available through
+`SubscribePriorityLiveEvents(...)`.
 
 ### Client-wide cleanup
 
@@ -1264,8 +1294,8 @@ Do not rely on the volatile database after exiting Play Mode or unloading its en
 | Know whether startup worked | Play return value |
 | React immediately to `@EMIT` | `Dialogue_Engine.OnEmit` |
 | Monitor live snapshots continuously | `Dialogue_Engine.SubscribeLiveSnapshots` |
-| Monitor live emitted events continuously | `Dialogue_Engine.SubscribeLiveEvents` |
-| Prioritize live emitted-event consumers | `Dialogue_Engine.SubscribePriorityLiveEvents` |
+| Monitor live emitted events continuously | `Dialogue_Engine.Subscribe(...)` |
+| Prioritize live emitted-event consumers | `Dialogue_Engine.Subscribe(priority, ...)` |
 | Inspect current section/text/status once | `GetLiveSnapshot` or `LiveSnapshot` request |
 | Determine whether an event occurred earlier | `HasEvent` request |
 | Query one DSL and one event | Explicit `DialoguePath + EventName` request |

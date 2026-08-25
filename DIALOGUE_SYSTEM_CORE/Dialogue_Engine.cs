@@ -249,6 +249,38 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             : -1;
     }
 
+    // Friendly live-event overloads. Lambdas naturally capture any fields or
+    // locals from the caller, so gameplay code can pass "any arguments" by
+    // closure without expanding the engine API surface.
+    public static int Subscribe(Action callback)
+    {
+        return Subscribe("", callback);
+    }
+
+    public static int Subscribe(string targetEvent,
+        Action callback)
+    {
+        return Instance != null
+            ? Instance.RegisterLiveEventSubscription(
+                callback != null ? new Action<string>(_ => callback()) : null,
+                "", "", targetEvent)
+            : -1;
+    }
+
+    public static int Subscribe(Action<string> callback)
+    {
+        return Subscribe("", callback);
+    }
+
+    public static int Subscribe(string targetEvent,
+        Action<string> callback)
+    {
+        return Instance != null
+            ? Instance.RegisterLiveEventSubscription(callback, "", "",
+                targetEvent)
+            : -1;
+    }
+
     public static int SubscribePriorityLiveEvents(
         Func<string, DialoguePriorityDispatchResult> callback,
         int priority, string clientId = "", string dialoguePathFilter = "",
@@ -257,6 +289,40 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         return Instance != null
             ? Instance.RegisterPriorityLiveEventSubscription(callback, priority,
                 clientId, dialoguePathFilter, eventNameFilter)
+            : -1;
+    }
+
+    public static int Subscribe(int priority,
+        Func<DialoguePriorityDispatchResult> callback)
+    {
+        return Subscribe(priority, "", callback);
+    }
+
+    public static int Subscribe(int priority, string targetEvent,
+        Func<DialoguePriorityDispatchResult> callback)
+    {
+        return Instance != null
+            ? Instance.RegisterPriorityLiveEventSubscription(
+                callback != null
+                    ? new Func<string, DialoguePriorityDispatchResult>(
+                        _ => callback())
+                    : null,
+                priority, "", "", targetEvent)
+            : -1;
+    }
+
+    public static int Subscribe(int priority,
+        Func<string, DialoguePriorityDispatchResult> callback)
+    {
+        return Subscribe(priority, "", callback);
+    }
+
+    public static int Subscribe(int priority, string targetEvent,
+        Func<string, DialoguePriorityDispatchResult> callback)
+    {
+        return Instance != null
+            ? Instance.RegisterPriorityLiveEventSubscription(callback,
+                priority, "", "", targetEvent)
             : -1;
     }
 

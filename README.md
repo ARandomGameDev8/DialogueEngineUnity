@@ -121,35 +121,64 @@ live subscription for ongoing monitoring.
 
 ### Live event subscription
 
+The simplest API is intentionally closure-friendly, so the callback can capture
+any fields or local variables from your script.
+
 ```csharp
-int subscriptionId = Dialogue_Engine.SubscribeLiveEvents(
-    eventName => Debug.Log(eventName),
-    clientId: "quest-bridge",
-    dialoguePathFilter: "Assets/Dialogues/quest_offer.txt");
+int subscriptionId = Dialogue_Engine.Subscribe(
+    "quest_accepted",
+    () =>
+    {
+        questSystem.Accept(currentQuestId);
+        ui.ShowAccepted();
+    });
 
 // Later:
 Dialogue_Engine.UnsubscribeLiveEvents(subscriptionId);
 ```
 
+If you also want the emitted event string:
+
+```csharp
+int subscriptionId = Dialogue_Engine.Subscribe(
+    eventName => Debug.Log(eventName));
+```
+
+Advanced filtering (client/path/event) is still available through
+`SubscribeLiveEvents(...)`.
+
 ### Priority live event subscription
 
 ```csharp
-int subscriptionId = Dialogue_Engine.SubscribePriorityLiveEvents(
-    eventName =>
+int subscriptionId = Dialogue_Engine.Subscribe(
+    100,
+    "quest_accepted",
+    () =>
     {
-        if (eventName == "quest_accepted")
-            return DialoguePriorityDispatchResult.CullLowerPriorities;
-        return DialoguePriorityDispatchResult.Continue;
-    },
-    priority: 100,
-    clientId: "quest-arbiter");
+        questSystem.Accept(currentQuestId);
+        return DialoguePriorityDispatchResult.CullLowerPriorities;
+    });
 
 // Later:
 Dialogue_Engine.UnsubscribePriorityLiveEvents(subscriptionId);
 ```
 
+If you want the emitted event string inside the priority callback:
+
+```csharp
+int subscriptionId = Dialogue_Engine.Subscribe(
+    100,
+    eventName =>
+    {
+        Debug.Log(eventName);
+        return DialoguePriorityDispatchResult.Continue;
+    });
+```
+
 If a priority callback returns `CullLowerPriorities`, all lower-priority live
-subscribers are removed while same-priority ones remain.
+subscribers are removed while same-priority ones remain. Advanced
+client/path/event filtering remains available through
+`SubscribePriorityLiveEvents(...)`.
 
 ### Coroutine-blocking wait
 
