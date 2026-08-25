@@ -84,6 +84,9 @@ if (node.Tick() == DialogueBTStatus.Success)
     Debug.Log(node.Snapshot.SectionId);
 ```
 
+This remains a one-shot read. For continuous monitoring, prefer the dedicated
+live snapshot subscription API instead of a generic tight polling loop.
+
 ## Blocking live snapshot watcher
 
 ```csharp

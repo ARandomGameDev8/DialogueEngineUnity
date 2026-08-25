@@ -284,6 +284,76 @@ the engine performs these operations:
 
 Use the database query API when a listener may have missed the live emission.
 
+## 10A. Dedicated live subscription APIs
+
+For continuous monitoring, use the engine's dedicated subscription servers
+instead of repeatedly querying one-shot requests in loops.
+
+### Live snapshot subscriptions
+
+```csharp
+int subscriptionId = Dialogue_Engine.SubscribeLiveSnapshots(
+    snapshot => Debug.Log(snapshot.ToMessage()),
+    clientId: "debug-panel",
+    dialoguePathFilter: "",
+    onlyOnChange: true,
+    minIntervalSeconds: 0f);
+```
+
+Unsubscribe later:
+
+```csharp
+Dialogue_Engine.UnsubscribeLiveSnapshots(subscriptionId);
+```
+
+### Live event subscriptions
+
+```csharp
+int subscriptionId = Dialogue_Engine.SubscribeLiveEvents(
+    eventName => Debug.Log(eventName),
+    clientId: "quest-bridge",
+    dialoguePathFilter: "Assets/Dialogues/quest_offer.txt",
+    eventNameFilter: "quest_accepted");
+```
+
+Unsubscribe later:
+
+```csharp
+Dialogue_Engine.UnsubscribeLiveEvents(subscriptionId);
+```
+
+### Priority live event subscriptions
+
+```csharp
+int subscriptionId = Dialogue_Engine.SubscribePriorityLiveEvents(
+    eventName =>
+    {
+        if (eventName == "quest_accepted")
+            return DialoguePriorityDispatchResult.CullLowerPriorities;
+        return DialoguePriorityDispatchResult.Continue;
+    },
+    priority: 100,
+    clientId: "quest-arbiter");
+```
+
+If a priority callback returns `CullLowerPriorities`, all lower-priority live
+subscribers are deregistered while same-priority ones remain.
+
+Unsubscribe later:
+
+```csharp
+Dialogue_Engine.UnsubscribePriorityLiveEvents(subscriptionId);
+```
+
+### Client-wide cleanup
+
+```csharp
+Dialogue_Engine.UnsubscribeAllClientSubscriptions("quest-bridge");
+```
+
+The live subscription APIs are pushed by dedicated internal servers. They do not
+travel through the one-shot async request queue.
+
 ---
 
 # Part III — Service requests and responses
@@ -340,6 +410,7 @@ public sealed class DialogueRequest
 | Field | Purpose |
 |---|---|
 | `RequestId` | Correlates a response with its request; generated automatically |
+| `ClientId` | Optional coalescing key for async one-shot requests |
 | `Type` | Operation to execute |
 | `DialogueId` | Optional DSL table key/filter |
 | `DialoguePath` | Optional DSL path/filter |
@@ -433,15 +504,23 @@ This returns during the same method call. It does not wait across frames.
 ## 17. Update-queued asynchronous request
 
 ```csharp
+var request = DialogueRequest.Snapshot();
+request.ClientId = "debug-panel";
+
 Dialogue_Engine.Service.SendAsync(
-    DialogueRequest.Snapshot(),
+    request,
     response =>
     {
         Debug.Log(response.Message);
     });
 ```
 
-The request is queued. `Dialogue_Engine.Update()` processes the queue and invokes the callback on Unity's main thread.
+The async query server keeps only the latest pending one-shot request per
+`ClientId`. `Dialogue_Engine.Update()` resolves a bounded number of distinct
+clients each frame and invokes callbacks on Unity's main thread.
+
+If `ClientId` is empty, the request falls back to its own `RequestId`, which
+preserves one callback per call but disables request coalescing.
 
 This is asynchronous by scheduling, not by a worker thread.
 
@@ -483,6 +562,10 @@ Direct instance call:
 DialogueLiveSnapshot snapshot =
     Dialogue_Engine.Instance.GetLiveSnapshot();
 ```
+
+Warning: `GetLiveSnapshot()` and `LiveSnapshot` requests are one-shot reads.
+Do not build tight per-frame monitoring loops around them when live snapshot
+subscriptions are available.
 
 ## 20. Snapshot fields
 
@@ -597,6 +680,10 @@ else
 ```
 
 This checks database history. It does not only inspect the current token.
+
+Warning: `HasEvent` is a one-shot query, not a live event stream. For
+continuous monitoring, use the dedicated live event subscription APIs instead of
+spamming `HasEvent` inside loops.
 
 ### Unmatched behavior
 
@@ -1176,17 +1263,20 @@ Do not rely on the volatile database after exiting Play Mode or unloading its en
 | Start a DSL | `Dialogue_Engine.Play` |
 | Know whether startup worked | Play return value |
 | React immediately to `@EMIT` | `Dialogue_Engine.OnEmit` |
-| Inspect current section/text/status | `GetLiveSnapshot` or `LiveSnapshot` request |
+| Monitor live snapshots continuously | `Dialogue_Engine.SubscribeLiveSnapshots` |
+| Monitor live emitted events continuously | `Dialogue_Engine.SubscribeLiveEvents` |
+| Prioritize live emitted-event consumers | `Dialogue_Engine.SubscribePriorityLiveEvents` |
+| Inspect current section/text/status once | `GetLiveSnapshot` or `LiveSnapshot` request |
 | Determine whether an event occurred earlier | `HasEvent` request |
 | Query one DSL and one event | Explicit `DialoguePath + EventName` request |
 | Detect only new records | `SinceSequence` checkpoint |
 | Retrieve full history | `GetEvents` request |
 | Retrieve DSL registration/play count | `GetDialogue` request |
 | Wait across frames for an event | `StartBlockingRequest` with `WaitForEvent` |
-| Queue a callback for next engine Update | `Service.SendAsync` |
+| Queue a one-shot callback for later Updates | `Service.SendAsync` with `ClientId` |
 | Interrupt and discard | Play current with `interruptible:true, saveState:false` |
 | Interrupt and later resume | Play current with `interruptible:true, saveState:true` |
-| Build a custom integration | `IDialogueService` |
+| Build a custom integration | `IDialogueService` plus live subscription APIs |
 
 ---
 
@@ -1195,12 +1285,13 @@ Do not rely on the volatile database after exiting Play Mode or unloading its en
 For most projects:
 
 1. Use `Dialogue_Engine.Play` to launch narrative files.
-2. Use `OnEmit` for immediate gameplay reactions.
+2. Use `OnEmit` or live event subscriptions for immediate gameplay reactions.
 3. Use explicit DSL/event database queries for historical conditions.
-4. Use snapshots for monitoring and debugging.
+4. Use one-shot snapshots for single reads and live snapshot subscriptions for continuous monitoring.
 5. Use sequence checkpoints for repeated events.
-6. Keep permanent gameplay state in the game's own save architecture.
-7. Treat Unity Behavior and other BT adapters as optional clients of the same code API.
+6. Set `ClientId` on async one-shot queries when you want latest-request coalescing per client.
+7. Keep permanent gameplay state in the game's own save architecture.
+8. Treat Unity Behavior and other BT adapters as optional clients of the same code API.
 
 This preserves the intended architecture:
 

@@ -212,6 +212,10 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     public static Dialogue_Engine Instance { get; private set; }
     public static event Action<string> OnEmit;
     public static IDialogueService Service { get { return Instance; } }
+    public DialogueQueryServer QueryServer { get { return queryServer; } }
+    public DialogueLiveSnapshotServer LiveSnapshotServer { get { return liveSnapshotServer; } }
+    public DialogueLiveEventServer LiveEventServer { get { return liveEventServer; } }
+    public DialoguePriorityLiveEventServer PriorityLiveEventServer { get { return priorityLiveEventServer; } }
 
     public static DialogueResponse SendRequest(DialogueRequest request)
     {
@@ -223,6 +227,61 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                 Code = DialogueResponseCode.NotFound,
                 Message = "<error>Dialogue_Engine service is not running.</error>"
             };
+    }
+
+    public static int SubscribeLiveSnapshots(Action<DialogueLiveSnapshot> callback,
+        string clientId = "", string dialoguePathFilter = "",
+        bool onlyOnChange = true, float minIntervalSeconds = 0f)
+    {
+        return Instance != null
+            ? Instance.RegisterLiveSnapshotSubscription(callback, clientId,
+                dialoguePathFilter, onlyOnChange, minIntervalSeconds)
+            : -1;
+    }
+
+    public static int SubscribeLiveEvents(Action<string> callback,
+        string clientId = "", string dialoguePathFilter = "",
+        string eventNameFilter = "")
+    {
+        return Instance != null
+            ? Instance.RegisterLiveEventSubscription(callback, clientId,
+                dialoguePathFilter, eventNameFilter)
+            : -1;
+    }
+
+    public static int SubscribePriorityLiveEvents(
+        Func<string, DialoguePriorityDispatchResult> callback,
+        int priority, string clientId = "", string dialoguePathFilter = "",
+        string eventNameFilter = "")
+    {
+        return Instance != null
+            ? Instance.RegisterPriorityLiveEventSubscription(callback, priority,
+                clientId, dialoguePathFilter, eventNameFilter)
+            : -1;
+    }
+
+    public static void UnsubscribeLiveSnapshots(int subscriptionId)
+    {
+        if (Instance != null)
+            Instance.UnregisterLiveSnapshotSubscription(subscriptionId);
+    }
+
+    public static void UnsubscribeLiveEvents(int subscriptionId)
+    {
+        if (Instance != null)
+            Instance.UnregisterLiveEventSubscription(subscriptionId);
+    }
+
+    public static void UnsubscribePriorityLiveEvents(int subscriptionId)
+    {
+        if (Instance != null)
+            Instance.UnregisterPriorityLiveEventSubscription(subscriptionId);
+    }
+
+    public static void UnsubscribeAllClientSubscriptions(string clientId)
+    {
+        if (Instance != null)
+            Instance.UnregisterAllClientSubscriptions(clientId);
     }
 
     // ─── Paths ────────────────────────────────────────────────────────────────
@@ -505,13 +564,13 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     string lastEmittedEvent = "";
     DialogueRuntimeStatus runtimeStatus = DialogueRuntimeStatus.Idle;
     string runtimeDetail = "Not playing";
-    sealed class PendingServiceRequest
-    {
-        public DialogueRequest request;
-        public Action<DialogueResponse> completed;
-    }
-    readonly Queue<PendingServiceRequest> serviceRequests =
-        new Queue<PendingServiceRequest>();
+    [Header("Service Scheduling")]
+    [Tooltip("Maximum distinct async query clients whose latest one-shot request is resolved per frame.")]
+    [Min(1)] public int maxAsyncQueryClientsPerFrame = 8;
+    readonly DialogueQueryServer queryServer = new DialogueQueryServer();
+    readonly DialogueLiveSnapshotServer liveSnapshotServer = new DialogueLiveSnapshotServer();
+    readonly DialogueLiveEventServer liveEventServer = new DialogueLiveEventServer();
+    readonly DialoguePriorityLiveEventServer priorityLiveEventServer = new DialoguePriorityLiveEventServer();
 
     // ─── Graph & Traversal State ──────────────────────────────────────────────
     DialogueGraph graph;
@@ -790,6 +849,15 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             });
 
         Debug.Log($"Dialogue_Engine: Awake done. box={box != null}");
+    }
+
+    void OnDestroy()
+    {
+        queryServer.Clear();
+        liveSnapshotServer.Clear();
+        liveEventServer.Clear();
+        priorityLiveEventServer.Clear();
+        if (Instance == this) Instance = null;
     }
 
     void EnsureCharacterPanelDefaults()
@@ -1364,6 +1432,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             isTyping = false;
             runtimeStatus = DialogueRuntimeStatus.WaitingForInput;
             runtimeDetail = "Resumed; waiting for Enter/Space";
+            MarkLiveSnapshotDirty();
         }
         StartHintPulse();
     }
@@ -1408,6 +1477,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             RuntimeDatabase.Record(currentDialogueId, currentTextName,
                 currentServiceText, status, emittedEvent, runtimeDetail);
         }
+        MarkLiveSnapshotDirty();
     }
 
     void EmitEvent(EventToken token)
@@ -1417,6 +1487,8 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         SetRuntimeStatus(DialogueRuntimeStatus.EventEmitted,
             "Emitted event " + emitted, emitted);
         Debug.Log($"Dialogue_Engine: @EMIT \"{emitted}\"");
+        liveEventServer.Publish(currentDialoguePath, emitted);
+        priorityLiveEventServer.Publish(currentDialoguePath, emitted);
         // Yes: the compiler-resolved event is emitted publicly as a string.
         OnEmit?.Invoke(emitted);
     }
@@ -1517,11 +1589,16 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     public void SendAsync(DialogueRequest request,
                           Action<DialogueResponse> completed)
     {
-        serviceRequests.Enqueue(new PendingServiceRequest
+        if (request == null)
         {
-            request = request,
-            completed = completed
-        });
+            completed?.Invoke(Send(null));
+            return;
+        }
+
+        string clientId = !string.IsNullOrEmpty(request.ClientId)
+            ? request.ClientId
+            : request.RequestId;
+        queryServer.EnqueueLatest(clientId, request, completed);
     }
 
     public IEnumerator SendBlocking(DialogueRequest request,
@@ -1562,6 +1639,72 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         return StartCoroutine(SendBlocking(request, completed));
     }
 
+    public void SendAsyncForClient(string clientId, DialogueRequest request,
+                                   Action<DialogueResponse> completed)
+    {
+        if (request == null)
+        {
+            completed?.Invoke(Send(null));
+            return;
+        }
+        request.ClientId = clientId ?? "";
+        SendAsync(request, completed);
+    }
+
+    public int RegisterLiveSnapshotSubscription(
+        Action<DialogueLiveSnapshot> callback, string clientId = "",
+        string dialoguePathFilter = "", bool onlyOnChange = true,
+        float minIntervalSeconds = 0f)
+    {
+        return liveSnapshotServer.Subscribe(clientId, dialoguePathFilter,
+            callback, onlyOnChange, minIntervalSeconds);
+    }
+
+    public void UnregisterLiveSnapshotSubscription(int subscriptionId)
+    {
+        liveSnapshotServer.Unsubscribe(subscriptionId);
+    }
+
+    public int RegisterLiveEventSubscription(Action<string> callback,
+        string clientId = "", string dialoguePathFilter = "",
+        string eventNameFilter = "")
+    {
+        return liveEventServer.Subscribe(clientId, dialoguePathFilter,
+            eventNameFilter, callback);
+    }
+
+    public void UnregisterLiveEventSubscription(int subscriptionId)
+    {
+        liveEventServer.Unsubscribe(subscriptionId);
+    }
+
+    public int RegisterPriorityLiveEventSubscription(
+        Func<string, DialoguePriorityDispatchResult> callback,
+        int priority, string clientId = "", string dialoguePathFilter = "",
+        string eventNameFilter = "")
+    {
+        return priorityLiveEventServer.Subscribe(clientId, priority,
+            dialoguePathFilter, eventNameFilter, callback);
+    }
+
+    public void UnregisterPriorityLiveEventSubscription(int subscriptionId)
+    {
+        priorityLiveEventServer.Unsubscribe(subscriptionId);
+    }
+
+    public void UnregisterAllClientSubscriptions(string clientId)
+    {
+        liveSnapshotServer.UnsubscribeClient(clientId);
+        liveEventServer.UnsubscribeClient(clientId);
+        priorityLiveEventServer.UnsubscribeClient(clientId);
+        queryServer.Cancel(clientId);
+    }
+
+    void MarkLiveSnapshotDirty()
+    {
+        liveSnapshotServer.MarkDirty(GetLiveSnapshot());
+    }
+
     static string BuildEventsMessage(List<DialogueEventRecord> rows)
     {
         int rowCount = DialogueEventMetrics.CountRows(rows);
@@ -1587,14 +1730,11 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     // ─── Update ────────────────────────────────────────────────────────────────
     void Update()
     {
-        // Async clients post requests into this in-process queue. Processing on
-        // Update gives request/response ordering without sockets or threads.
-        while (serviceRequests.Count > 0)
-        {
-            PendingServiceRequest pending = serviceRequests.Dequeue();
-            DialogueResponse response = Send(pending.request);
-            pending.completed?.Invoke(response);
-        }
+        // Async one-shot requests are coalesced by client. Each frame resolves
+        // only a bounded number of latest requests so monitoring traffic cannot
+        // stall the rest of the engine in one update.
+        queryServer.Process(Mathf.Max(1, maxAsyncQueryClientsPerFrame), Send);
+        liveSnapshotServer.PublishDue(Time.realtimeSinceStartup);
 
         if (!isOpen) return;
 

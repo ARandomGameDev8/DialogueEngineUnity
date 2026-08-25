@@ -38,6 +38,10 @@ yet, the action returns Running and keeps polling on graph updates. If that DSL
 finishes without the event, it writes Result=false and returns Success so a
 following Branch node can evaluate the result.
 
+Warning: this remains a query-style action. Do not build high-frequency generic
+monitoring loops around it when dedicated live event registration exists for
+continuous monitoring.
+
 ### Listen For Dialogue Events
 
 Inputs: DSL Path and `TargetEventEnum`.
@@ -68,6 +72,9 @@ The action keeps listening to the latest play of that DSL:
 Outputs the current engine snapshot immediately: current DSL path, section, text
 name, text, IO status, last event, playing flag, latest sequence, and XML-like
 service message.
+
+Warning: this is still a one-shot snapshot action. Use dedicated live snapshot
+registration for continuous monitoring instead of generic loop polling.
 
 ### Get Dialogue Live Snapshot Blocking
 

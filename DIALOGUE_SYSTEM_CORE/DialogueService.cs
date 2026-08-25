@@ -35,6 +35,12 @@ public enum DialogueResponseCode
     Timeout = 408
 }
 
+public enum DialoguePriorityDispatchResult
+{
+    Continue,
+    CullLowerPriorities
+}
+
 [Serializable]
 public sealed class DialogueScriptRecord
 {
@@ -92,6 +98,7 @@ public sealed class DialogueLiveSnapshot
 public sealed class DialogueRequest
 {
     public string RequestId = Guid.NewGuid().ToString("N");
+    public string ClientId;
     public DialogueRequestType Type = DialogueRequestType.LiveSnapshot;
     public string DialogueId;
     public string DialoguePath;
@@ -138,6 +145,415 @@ public interface IDialogueService
     DialogueResponse Send(DialogueRequest request);
     void SendAsync(DialogueRequest request, Action<DialogueResponse> completed);
     IEnumerator SendBlocking(DialogueRequest request, Action<DialogueResponse> completed);
+}
+
+/// <summary>
+/// Coalesces asynchronous one-shot requests. Each client keeps only its latest
+/// pending request so monitoring traffic cannot flood a single frame.
+/// </summary>
+public sealed class DialogueQueryServer
+{
+    sealed class PendingQuerySlot
+    {
+        public string ClientId;
+        public DialogueRequest Request;
+        public Action<DialogueResponse> Completed;
+    }
+
+    readonly Dictionary<string, PendingQuerySlot> pendingByClient =
+        new Dictionary<string, PendingQuerySlot>(StringComparer.Ordinal);
+    readonly Queue<string> pendingOrder = new Queue<string>();
+
+    public int PendingClientCount { get { return pendingByClient.Count; } }
+
+    public void EnqueueLatest(string clientId, DialogueRequest request,
+        Action<DialogueResponse> completed)
+    {
+        string resolvedClientId = string.IsNullOrEmpty(clientId)
+            ? Guid.NewGuid().ToString("N") : clientId;
+        bool existed = pendingByClient.ContainsKey(resolvedClientId);
+        pendingByClient[resolvedClientId] = new PendingQuerySlot
+        {
+            ClientId = resolvedClientId,
+            Request = request,
+            Completed = completed
+        };
+        if (!existed)
+            pendingOrder.Enqueue(resolvedClientId);
+    }
+
+    public void Cancel(string clientId)
+    {
+        if (string.IsNullOrEmpty(clientId)) return;
+        pendingByClient.Remove(clientId);
+    }
+
+    public void Clear()
+    {
+        pendingByClient.Clear();
+        pendingOrder.Clear();
+    }
+
+    public int Process(int maxClientsPerFrame,
+        Func<DialogueRequest, DialogueResponse> resolver)
+    {
+        if (resolver == null || maxClientsPerFrame <= 0) return 0;
+
+        int processed = 0;
+        int availableThisFrame = pendingOrder.Count;
+        while (processed < maxClientsPerFrame &&
+               availableThisFrame-- > 0 &&
+               pendingOrder.Count > 0)
+        {
+            string clientId = pendingOrder.Dequeue();
+            if (!pendingByClient.TryGetValue(clientId, out PendingQuerySlot slot))
+                continue;
+
+            pendingByClient.Remove(clientId);
+            DialogueResponse response = resolver(slot.Request);
+            slot.Completed?.Invoke(response);
+            processed++;
+        }
+        return processed;
+    }
+}
+
+/// <summary>
+/// Pushes live dialogue snapshots to registered listeners outside the one-shot
+/// request queue.
+/// </summary>
+public sealed class DialogueLiveSnapshotServer
+{
+    sealed class SnapshotSubscriber
+    {
+        public int SubscriptionId;
+        public string ClientId;
+        public string DialoguePathFilter;
+        public Action<DialogueLiveSnapshot> Callback;
+        public bool OnlyOnChange;
+        public float MinIntervalSeconds;
+        public long LastDeliveredVersion;
+        public float LastSentAtSeconds = float.NegativeInfinity;
+    }
+
+    readonly Dictionary<int, SnapshotSubscriber> subscribers =
+        new Dictionary<int, SnapshotSubscriber>();
+    int nextSubscriptionId = 1;
+    long latestVersion;
+    DialogueLiveSnapshot latestSnapshot;
+
+    public int Subscribe(string clientId, string dialoguePathFilter,
+        Action<DialogueLiveSnapshot> callback, bool onlyOnChange = true,
+        float minIntervalSeconds = 0f)
+    {
+        if (callback == null) return -1;
+        int id = nextSubscriptionId++;
+        subscribers[id] = new SnapshotSubscriber
+        {
+            SubscriptionId = id,
+            ClientId = clientId ?? "",
+            DialoguePathFilter = DialogueMessage.NormalizePath(dialoguePathFilter),
+            Callback = callback,
+            OnlyOnChange = onlyOnChange,
+            MinIntervalSeconds = Math.Max(0f, minIntervalSeconds)
+        };
+        return id;
+    }
+
+    public void Unsubscribe(int subscriptionId)
+    {
+        subscribers.Remove(subscriptionId);
+    }
+
+    public void UnsubscribeClient(string clientId)
+    {
+        if (string.IsNullOrEmpty(clientId)) return;
+        var toRemove = new List<int>();
+        foreach (var pair in subscribers)
+            if (string.Equals(pair.Value.ClientId, clientId, StringComparison.Ordinal))
+                toRemove.Add(pair.Key);
+        for (int i = 0; i < toRemove.Count; i++)
+            subscribers.Remove(toRemove[i]);
+    }
+
+    public void Clear()
+    {
+        subscribers.Clear();
+        latestSnapshot = null;
+        latestVersion = 0;
+    }
+
+    public void MarkDirty(DialogueLiveSnapshot snapshot)
+    {
+        latestSnapshot = DialogueMessage.CloneSnapshot(snapshot);
+        latestVersion++;
+    }
+
+    public int PublishDue(float nowSeconds)
+    {
+        if (latestVersion <= 0 || latestSnapshot == null || subscribers.Count == 0)
+            return 0;
+
+        int delivered = 0;
+        var ids = new List<int>(subscribers.Keys);
+        for (int i = 0; i < ids.Count; i++)
+        {
+            if (!subscribers.TryGetValue(ids[i], out SnapshotSubscriber sub))
+                continue;
+            if (!MatchesPathFilter(sub.DialoguePathFilter, latestSnapshot.DialoguePath))
+                continue;
+
+            bool hasNewVersion = sub.LastDeliveredVersion != latestVersion;
+            bool intervalElapsed =
+                nowSeconds - sub.LastSentAtSeconds >= sub.MinIntervalSeconds;
+            if (sub.OnlyOnChange)
+            {
+                if (!hasNewVersion || !intervalElapsed) continue;
+            }
+            else if (!intervalElapsed)
+            {
+                continue;
+            }
+
+            sub.Callback?.Invoke(DialogueMessage.CloneSnapshot(latestSnapshot));
+            sub.LastDeliveredVersion = latestVersion;
+            sub.LastSentAtSeconds = nowSeconds;
+            delivered++;
+        }
+        return delivered;
+    }
+
+    static bool MatchesPathFilter(string filter, string dialoguePath)
+    {
+        if (string.IsNullOrEmpty(filter)) return true;
+        return string.Equals(filter, DialogueMessage.NormalizePath(dialoguePath),
+            StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+/// <summary>
+/// Pushes live emitted event names to subscribers, similar to OnEmit but with
+/// explicit registration and filtering.
+/// </summary>
+public sealed class DialogueLiveEventServer
+{
+    sealed class EventSubscriber
+    {
+        public int SubscriptionId;
+        public string ClientId;
+        public string DialoguePathFilter;
+        public string EventNameFilter;
+        public Action<string> Callback;
+    }
+
+    readonly Dictionary<int, EventSubscriber> subscribers =
+        new Dictionary<int, EventSubscriber>();
+    int nextSubscriptionId = 1;
+
+    public int Subscribe(string clientId, string dialoguePathFilter,
+        string eventNameFilter, Action<string> callback)
+    {
+        if (callback == null) return -1;
+        int id = nextSubscriptionId++;
+        subscribers[id] = new EventSubscriber
+        {
+            SubscriptionId = id,
+            ClientId = clientId ?? "",
+            DialoguePathFilter = DialogueMessage.NormalizePath(dialoguePathFilter),
+            EventNameFilter = eventNameFilter ?? "",
+            Callback = callback
+        };
+        return id;
+    }
+
+    public void Unsubscribe(int subscriptionId)
+    {
+        subscribers.Remove(subscriptionId);
+    }
+
+    public void UnsubscribeClient(string clientId)
+    {
+        if (string.IsNullOrEmpty(clientId)) return;
+        var toRemove = new List<int>();
+        foreach (var pair in subscribers)
+            if (string.Equals(pair.Value.ClientId, clientId, StringComparison.Ordinal))
+                toRemove.Add(pair.Key);
+        for (int i = 0; i < toRemove.Count; i++)
+            subscribers.Remove(toRemove[i]);
+    }
+
+    public void Clear()
+    {
+        subscribers.Clear();
+    }
+
+    public int Publish(string dialoguePath, string eventName)
+    {
+        if (string.IsNullOrEmpty(eventName) || subscribers.Count == 0) return 0;
+
+        int delivered = 0;
+        string normalizedPath = DialogueMessage.NormalizePath(dialoguePath);
+        var ids = new List<int>(subscribers.Keys);
+        for (int i = 0; i < ids.Count; i++)
+        {
+            if (!subscribers.TryGetValue(ids[i], out EventSubscriber sub))
+                continue;
+            if (!MatchesPathFilter(sub.DialoguePathFilter, normalizedPath))
+                continue;
+            if (!MatchesEventFilter(sub.EventNameFilter, eventName))
+                continue;
+            sub.Callback?.Invoke(eventName);
+            delivered++;
+        }
+        return delivered;
+    }
+
+    static bool MatchesPathFilter(string filter, string normalizedPath)
+    {
+        if (string.IsNullOrEmpty(filter)) return true;
+        return string.Equals(filter, normalizedPath,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool MatchesEventFilter(string filter, string eventName)
+    {
+        return string.IsNullOrEmpty(filter) ||
+            string.Equals(filter, eventName, StringComparison.Ordinal);
+    }
+}
+
+/// <summary>
+/// Pushes live emitted event names to priority subscribers. A callback may cull
+/// all lower-priority subscribers while keeping same-priority ones alive.
+/// </summary>
+public sealed class DialoguePriorityLiveEventServer
+{
+    sealed class PrioritySubscriber
+    {
+        public int SubscriptionId;
+        public string ClientId;
+        public int Priority;
+        public string DialoguePathFilter;
+        public string EventNameFilter;
+        public Func<string, DialoguePriorityDispatchResult> Callback;
+    }
+
+    readonly Dictionary<int, PrioritySubscriber> subscribers =
+        new Dictionary<int, PrioritySubscriber>();
+    readonly List<PrioritySubscriber> sortedSubscribers = new List<PrioritySubscriber>();
+    int nextSubscriptionId = 1;
+    bool sortDirty = true;
+
+    public int Subscribe(string clientId, int priority, string dialoguePathFilter,
+        string eventNameFilter,
+        Func<string, DialoguePriorityDispatchResult> callback)
+    {
+        if (callback == null) return -1;
+        int id = nextSubscriptionId++;
+        subscribers[id] = new PrioritySubscriber
+        {
+            SubscriptionId = id,
+            ClientId = clientId ?? "",
+            Priority = priority,
+            DialoguePathFilter = DialogueMessage.NormalizePath(dialoguePathFilter),
+            EventNameFilter = eventNameFilter ?? "",
+            Callback = callback
+        };
+        sortDirty = true;
+        return id;
+    }
+
+    public void Unsubscribe(int subscriptionId)
+    {
+        if (subscribers.Remove(subscriptionId)) sortDirty = true;
+    }
+
+    public void UnsubscribeClient(string clientId)
+    {
+        if (string.IsNullOrEmpty(clientId)) return;
+        var toRemove = new List<int>();
+        foreach (var pair in subscribers)
+            if (string.Equals(pair.Value.ClientId, clientId, StringComparison.Ordinal))
+                toRemove.Add(pair.Key);
+        for (int i = 0; i < toRemove.Count; i++)
+            subscribers.Remove(toRemove[i]);
+        if (toRemove.Count > 0) sortDirty = true;
+    }
+
+    public void Clear()
+    {
+        subscribers.Clear();
+        sortedSubscribers.Clear();
+        sortDirty = true;
+    }
+
+    public int Publish(string dialoguePath, string eventName)
+    {
+        if (string.IsNullOrEmpty(eventName) || subscribers.Count == 0) return 0;
+
+        EnsureSorted();
+        int delivered = 0;
+        int currentFloor = int.MinValue;
+        string normalizedPath = DialogueMessage.NormalizePath(dialoguePath);
+        for (int i = 0; i < sortedSubscribers.Count; i++)
+        {
+            PrioritySubscriber sub = sortedSubscribers[i];
+            if (sub == null) continue;
+            if (currentFloor != int.MinValue && sub.Priority < currentFloor)
+                break;
+            if (!subscribers.ContainsKey(sub.SubscriptionId)) continue;
+            if (!MatchesPathFilter(sub.DialoguePathFilter, normalizedPath))
+                continue;
+            if (!MatchesEventFilter(sub.EventNameFilter, eventName))
+                continue;
+
+            DialoguePriorityDispatchResult result =
+                sub.Callback != null
+                    ? sub.Callback(eventName)
+                    : DialoguePriorityDispatchResult.Continue;
+            delivered++;
+            if (result == DialoguePriorityDispatchResult.CullLowerPriorities)
+            {
+                currentFloor = sub.Priority;
+                RemoveLowerPriorities(sub.Priority);
+            }
+        }
+        return delivered;
+    }
+
+    void RemoveLowerPriorities(int minimumPriorityToKeep)
+    {
+        var toRemove = new List<int>();
+        foreach (var pair in subscribers)
+            if (pair.Value.Priority < minimumPriorityToKeep)
+                toRemove.Add(pair.Key);
+        for (int i = 0; i < toRemove.Count; i++)
+            subscribers.Remove(toRemove[i]);
+        if (toRemove.Count > 0) sortDirty = true;
+    }
+
+    void EnsureSorted()
+    {
+        if (!sortDirty) return;
+        sortedSubscribers.Clear();
+        foreach (var pair in subscribers)
+            sortedSubscribers.Add(pair.Value);
+        sortedSubscribers.Sort((a, b) => b.Priority.CompareTo(a.Priority));
+        sortDirty = false;
+    }
+
+    static bool MatchesPathFilter(string filter, string normalizedPath)
+    {
+        if (string.IsNullOrEmpty(filter)) return true;
+        return string.Equals(filter, normalizedPath,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool MatchesEventFilter(string filter, string eventName)
+    {
+        return string.IsNullOrEmpty(filter) ||
+            string.Equals(filter, eventName, StringComparison.Ordinal);
+    }
 }
 
 /// <summary>
@@ -262,5 +678,30 @@ public static class DialogueMessage
         if (string.IsNullOrEmpty(value)) return "";
         return value.Replace("&", "&amp;").Replace("<", "&lt;")
             .Replace(">", "&gt;").Replace("\"", "&quot;");
+    }
+
+    public static string NormalizePath(string path)
+    {
+        return string.IsNullOrWhiteSpace(path)
+            ? ""
+            : path.Replace('\\', '/').Trim();
+    }
+
+    public static DialogueLiveSnapshot CloneSnapshot(DialogueLiveSnapshot snapshot)
+    {
+        if (snapshot == null) return null;
+        return new DialogueLiveSnapshot
+        {
+            IsPlaying = snapshot.IsPlaying,
+            DialogueId = snapshot.DialogueId,
+            DialoguePath = snapshot.DialoguePath,
+            SectionId = snapshot.SectionId,
+            TextName = snapshot.TextName,
+            Text = snapshot.Text,
+            LastEvent = snapshot.LastEvent,
+            Status = snapshot.Status,
+            Detail = snapshot.Detail,
+            LatestSequence = snapshot.LatestSequence
+        };
     }
 }
