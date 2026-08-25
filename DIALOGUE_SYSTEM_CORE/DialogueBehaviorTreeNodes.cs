@@ -22,7 +22,7 @@ static class DialogueBTUtility
     {
         return string.IsNullOrWhiteSpace(path)
             ? ""
-            : path.Replace('\', '/').Trim();
+            : path.Replace('\\', '/').Trim();
     }
 
     public static string NormalizeEventKey(string value)
