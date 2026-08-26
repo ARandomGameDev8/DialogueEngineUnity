@@ -294,8 +294,8 @@ public sealed class DialogueQueryServer
         {
             RequestId = request != null ? request.RequestId : "",
             Code = DialogueResponseCode.Timeout,
-            Message = "<error>One-shot request for client "" +
-                DialogueMessage.Escape(clientId) + "" exceeded the query " +
+            Message = "<error>One-shot request for client \"" +
+                DialogueMessage.Escape(clientId) + "\" exceeded the query " +
                 "server retry limit of " + maxDeferrals + " deferred frame(s).</error>"
         };
     }
