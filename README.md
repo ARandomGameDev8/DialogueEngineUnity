@@ -67,8 +67,38 @@ DialogueResponse response = Dialogue_Engine.SendRequest(
 Debug.Log(response.Message); // <dialogue-snapshot>...</dialogue-snapshot>
 ```
 
+This compatibility form resolves immediately in the same call. It is still the
+most direct choice for simple code and the existing BT / Unity Behavior wrappers.
+
 Warning: this is a one-shot snapshot query. Do not build tight monitoring loops
 around it when live snapshot subscriptions are available.
+
+### Preferred coalesced one-shot query
+
+Use the caller-aware overload when many systems may issue one-shot queries in the
+same frame and you want latest-wins coalescing per caller.
+
+```csharp
+DialogueResponse response = Dialogue_Engine.SendRequest(
+    this,
+    DialogueRequest.Snapshot());
+
+if (response.IsSuccess)
+    Debug.Log(response.Snapshot.SectionId);
+else if (response.IsPending)
+    Debug.Log("Query server will retry automatically next frame.");
+else if (response.IsFail)
+    Debug.LogError(response.Message);
+```
+
+For plain C# systems that do not inherit from `UnityEngine.Object`, use a stable
+string key instead of `this`:
+
+```csharp
+DialogueResponse response = Dialogue_Engine.SendRequest(
+    "quest-system",
+    DialogueRequest.HasEvent("door_opened"));
+```
 
 ### Poll for an event (non-blocking)
 
@@ -175,9 +205,14 @@ int subscriptionId = Dialogue_Engine.Subscribe(
     });
 ```
 
-If a priority callback returns `CullLowerPriorities`, all lower-priority live
-subscribers are removed while same-priority ones remain. Advanced
-client/path/event filtering remains available through
+Priority callbacks support three explicit outcomes:
+
+- `Continue` → keep dispatching normally
+- `CullLowerPriorities` → suppress lower-priority subscribers for THIS dispatch only
+- `DeregisterLowerPriorities` → permanently remove lower-priority subscribers
+
+Same-priority subscribers always remain eligible in either lower-priority case.
+Advanced client/path/event filtering remains available through
 `SubscribePriorityLiveEvents(...)`.
 
 ### Coroutine-blocking wait

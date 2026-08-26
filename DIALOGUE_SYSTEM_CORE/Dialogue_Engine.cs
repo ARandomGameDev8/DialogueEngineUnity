@@ -229,6 +229,36 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             };
     }
 
+    // Preferred coalesced one-shot query overload for Unity objects. The
+    // caller identity is derived automatically from GetInstanceID().
+    public static DialogueResponse SendRequest(UnityEngine.Object caller,
+                                               DialogueRequest request)
+    {
+        return Instance != null
+            ? Instance.SendRequestForCaller(caller, request)
+            : new DialogueResponse
+            {
+                RequestId = request != null ? request.RequestId : "",
+                Code = DialogueResponseCode.NotFound,
+                Message = "<error>Dialogue_Engine service is not running.</error>"
+            };
+    }
+
+    // Preferred coalesced one-shot query overload for plain C# systems that
+    // already own a stable client key.
+    public static DialogueResponse SendRequest(string clientId,
+                                               DialogueRequest request)
+    {
+        return Instance != null
+            ? Instance.SendRequestForClient(clientId, request)
+            : new DialogueResponse
+            {
+                RequestId = request != null ? request.RequestId : "",
+                Code = DialogueResponseCode.NotFound,
+                Message = "<error>Dialogue_Engine service is not running.</error>"
+            };
+    }
+
     public static int SubscribeLiveSnapshots(Action<DialogueLiveSnapshot> callback,
         string clientId = "", string dialoguePathFilter = "",
         bool onlyOnChange = true, float minIntervalSeconds = 0f)
@@ -631,8 +661,10 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     DialogueRuntimeStatus runtimeStatus = DialogueRuntimeStatus.Idle;
     string runtimeDetail = "Not playing";
     [Header("Service Scheduling")]
-    [Tooltip("Maximum distinct async query clients whose latest one-shot request is resolved per frame.")]
+    [Tooltip("Maximum distinct query clients whose latest queued one-shot request is resolved per frame.")]
     [Min(1)] public int maxAsyncQueryClientsPerFrame = 8;
+    [Tooltip("Maximum deferred frames allowed for coalesced SendRequest(this, request) calls before they fail.")]
+    [Min(0)] public int maxCoalescedSendRequestRetries = 4;
     readonly DialogueQueryServer queryServer = new DialogueQueryServer();
     readonly DialogueLiveSnapshotServer liveSnapshotServer = new DialogueLiveSnapshotServer();
     readonly DialogueLiveEventServer liveEventServer = new DialogueLiveEventServer();
@@ -1664,7 +1696,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         string clientId = !string.IsNullOrEmpty(request.ClientId)
             ? request.ClientId
             : request.RequestId;
-        queryServer.EnqueueLatest(clientId, request, completed);
+        queryServer.EnqueueLatest(clientId, request, completed, -1);
     }
 
     public IEnumerator SendBlocking(DialogueRequest request,
@@ -1715,6 +1747,71 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         }
         request.ClientId = clientId ?? "";
         SendAsync(request, completed);
+    }
+
+
+    public DialogueResponse SendRequestForCaller(UnityEngine.Object caller,
+                                                 DialogueRequest request)
+    {
+        if (caller == null)
+        {
+            return new DialogueResponse
+            {
+                RequestId = request != null ? request.RequestId : "",
+                Code = DialogueResponseCode.InvalidRequest,
+                Message = "<error>Caller is null. Use SendRequest(string clientId, request) for non-Unity clients.</error>"
+            };
+        }
+        return SendRequestForClient(caller.GetInstanceID().ToString(), request);
+    }
+
+    public DialogueResponse SendRequestForClient(string clientId,
+                                                 DialogueRequest request)
+    {
+        if (request == null)
+            return Send(null);
+
+        string resolvedClientId = string.IsNullOrEmpty(clientId)
+            ? request.RequestId : clientId;
+        DialogueResponse immediate = null;
+        queryServer.EnqueueLatest(resolvedClientId, request,
+            response => immediate = response,
+            Mathf.Max(0, maxCoalescedSendRequestRetries));
+        queryServer.Process(Mathf.Max(1, maxAsyncQueryClientsPerFrame),
+            Time.frameCount, Send, OnDeferredQueryRequestDropped);
+
+        if (immediate != null)
+            return immediate;
+
+        if (queryServer.ContainsPending(resolvedClientId, request.RequestId))
+        {
+            Debug.Log("Dialogue_Engine: one-shot request pending for client " +
+                resolvedClientId + "; it will retry automatically next frame.");
+            return new DialogueResponse
+            {
+                RequestId = request.RequestId,
+                Code = DialogueResponseCode.Pending,
+                Message = "<pending client=\"" + DialogueMessage.Escape(resolvedClientId) +
+                    "\" request=\"" + DialogueMessage.Escape(request.Type.ToString()) +
+                    "\" />"
+            };
+        }
+
+        return new DialogueResponse
+        {
+            RequestId = request.RequestId,
+            Code = DialogueResponseCode.Timeout,
+            Message = "<error>One-shot request left the coalesced queue before resolution.</error>"
+        };
+    }
+
+    void OnDeferredQueryRequestDropped(DialogueRequest request,
+                                       DialogueResponse response)
+    {
+        if (request == null || response == null) return;
+        Debug.LogWarning("Dialogue_Engine: deferred one-shot request dropped after retry limit. " +
+            "RequestId=" + request.RequestId + ", Type=" + request.Type +
+            ", Path=" + request.DialoguePath + ", Event=" + request.EventName);
     }
 
     public int RegisterLiveSnapshotSubscription(
@@ -1799,7 +1896,8 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         // Async one-shot requests are coalesced by client. Each frame resolves
         // only a bounded number of latest requests so monitoring traffic cannot
         // stall the rest of the engine in one update.
-        queryServer.Process(Mathf.Max(1, maxAsyncQueryClientsPerFrame), Send);
+        queryServer.Process(Mathf.Max(1, maxAsyncQueryClientsPerFrame),
+            Time.frameCount, Send, OnDeferredQueryRequestDropped);
         liveSnapshotServer.PublishDue(Time.realtimeSinceStartup);
 
         if (!isOpen) return;

@@ -363,14 +363,22 @@ int subscriptionId = Dialogue_Engine.Subscribe(
     });
 ```
 
-If a priority callback returns `CullLowerPriorities`, all lower-priority live
-subscribers are deregistered while same-priority ones remain.
+Priority callbacks support three explicit outcomes:
+
+- `Continue` → keep dispatching normally
+- `CullLowerPriorities` → suppress lower-priority subscribers for THIS dispatch only
+- `DeregisterLowerPriorities` → permanently remove lower-priority subscribers
+
+Same-priority subscribers remain eligible in either lower-priority case.
 
 Unsubscribe later:
 
 ```csharp
 Dialogue_Engine.UnsubscribePriorityLiveEvents(subscriptionId);
 ```
+
+Use `CullLowerPriorities` for temporary per-dispatch suppression and
+`DeregisterLowerPriorities` only when permanent removal is actually intended.
 
 Advanced filtering by client/path/event remains available through
 `SubscribePriorityLiveEvents(...)`.
@@ -413,11 +421,17 @@ Access it through:
 IDialogueService service = Dialogue_Engine.Service;
 ```
 
-Or use the static convenience method:
+Or use the static convenience methods:
 
 ```csharp
-DialogueResponse response =
-    Dialogue_Engine.SendRequest(request);
+// Immediate compatibility path
+DialogueResponse response = Dialogue_Engine.SendRequest(request);
+
+// Preferred coalesced one-shot path for Unity objects
+DialogueResponse coalesced = Dialogue_Engine.SendRequest(this, request);
+
+// Preferred coalesced one-shot path for plain C# systems
+DialogueResponse plain = Dialogue_Engine.SendRequest("quest-system", request);
 ```
 
 ## 12. `DialogueRequest`
@@ -426,6 +440,7 @@ DialogueResponse response =
 public sealed class DialogueRequest
 {
     public string RequestId;
+    public string ClientId;
     public DialogueRequestType Type;
     public string DialogueId;
     public string DialoguePath;
@@ -440,7 +455,7 @@ public sealed class DialogueRequest
 | Field | Purpose |
 |---|---|
 | `RequestId` | Correlates a response with its request; generated automatically |
-| `ClientId` | Optional coalescing key for async one-shot requests |
+| `ClientId` | Optional coalescing key for async or caller-managed one-shot requests |
 | `Type` | Operation to execute |
 | `DialogueId` | Optional DSL table key/filter |
 | `DialoguePath` | Optional DSL path/filter |
@@ -487,6 +502,8 @@ public sealed class DialogueResponse
     public bool Matched;
 
     public bool IsSuccess;
+    public bool IsPending;
+    public bool IsFail;
 }
 ```
 
@@ -516,12 +533,14 @@ public enum DialogueResponseCode
 | Code | Meaning |
 |---|---|
 | `Ok` | Request resolved successfully |
-| `Pending` | Event condition has not matched yet |
+| `Pending` | Event condition has not matched yet, or a coalesced one-shot request was deferred |
 | `InvalidRequest` | Missing/unsupported request information |
 | `NotFound` | Engine service or requested DSL unavailable |
-| `Timeout` | Blocking coroutine wait exceeded its timeout |
+| `Timeout` | Blocking coroutine wait exceeded its timeout, or a coalesced one-shot request exceeded its retry limit |
 
 `response.IsSuccess` is true only when `Code == Ok`.
+`response.IsPending` is true only when `Code == Pending`.
+`response.IsFail` is true for every non-success, non-pending outcome.
 
 ## 16. Immediate request
 
@@ -529,7 +548,35 @@ public enum DialogueResponseCode
 DialogueResponse response = Dialogue_Engine.SendRequest(request);
 ```
 
-This returns during the same method call. It does not wait across frames.
+This compatibility form returns during the same method call. It does not wait
+across frames and does not use caller-based latest-wins coalescing.
+
+## 16A. Preferred coalesced one-shot request
+
+For code that may issue many one-shot queries from many callers in the same
+frame, prefer the caller-aware overloads:
+
+```csharp
+DialogueResponse response = Dialogue_Engine.SendRequest(
+    this,
+    DialogueRequest.Snapshot());
+```
+
+Or, from a plain C# system:
+
+```csharp
+DialogueResponse response = Dialogue_Engine.SendRequest(
+    "quest-system",
+    DialogueRequest.HasEvent("door_opened"));
+```
+
+Behavior:
+
+- each caller/client keeps only its latest queued one-shot request
+- the query server resolves at most `maxAsyncQueryClientsPerFrame` clients per frame
+- if your caller's slot is processed immediately, `IsSuccess` is true
+- if not, `IsPending` is returned and the request retries automatically next frame
+- if the coalesced retry limit is exceeded, `IsFail` becomes true
 
 ## 17. Update-queued asynchronous request
 
@@ -1296,6 +1343,7 @@ Do not rely on the volatile database after exiting Play Mode or unloading its en
 | Monitor live snapshots continuously | `Dialogue_Engine.SubscribeLiveSnapshots` |
 | Monitor live emitted events continuously | `Dialogue_Engine.Subscribe(...)` |
 | Prioritize live emitted-event consumers | `Dialogue_Engine.Subscribe(priority, ...)` |
+| Issue coalesced one-shot queries from gameplay code | `Dialogue_Engine.SendRequest(this, request)` |
 | Inspect current section/text/status once | `GetLiveSnapshot` or `LiveSnapshot` request |
 | Determine whether an event occurred earlier | `HasEvent` request |
 | Query one DSL and one event | Explicit `DialoguePath + EventName` request |

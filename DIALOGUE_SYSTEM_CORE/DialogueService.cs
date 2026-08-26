@@ -38,7 +38,8 @@ public enum DialogueResponseCode
 public enum DialoguePriorityDispatchResult
 {
     Continue,
-    CullLowerPriorities
+    CullLowerPriorities,
+    DeregisterLowerPriorities
 }
 
 [Serializable]
@@ -134,6 +135,8 @@ public sealed class DialogueResponse
     public bool Matched;
 
     public bool IsSuccess { get { return Code == DialogueResponseCode.Ok; } }
+    public bool IsPending { get { return Code == DialogueResponseCode.Pending; } }
+    public bool IsFail { get { return Code != DialogueResponseCode.Ok && Code != DialogueResponseCode.Pending; } }
 }
 
 /// <summary>
@@ -158,63 +161,143 @@ public sealed class DialogueQueryServer
         public string ClientId;
         public DialogueRequest Request;
         public Action<DialogueResponse> Completed;
+        public int MaxDeferrals = -1;
+        public int DeferredFrames;
+        public int LastDeferredFrame = -1;
     }
 
     readonly Dictionary<string, PendingQuerySlot> pendingByClient =
         new Dictionary<string, PendingQuerySlot>(StringComparer.Ordinal);
     readonly Queue<string> pendingOrder = new Queue<string>();
+    readonly Dictionary<string, int> lastProcessedFrameByClient =
+        new Dictionary<string, int>(StringComparer.Ordinal);
+    int lastProcessFrame = -1;
+    int processedThisFrameCount;
 
     public int PendingClientCount { get { return pendingByClient.Count; } }
 
     public void EnqueueLatest(string clientId, DialogueRequest request,
-        Action<DialogueResponse> completed)
+        Action<DialogueResponse> completed, int maxDeferrals = -1)
     {
         string resolvedClientId = string.IsNullOrEmpty(clientId)
             ? Guid.NewGuid().ToString("N") : clientId;
-        bool existed = pendingByClient.ContainsKey(resolvedClientId);
-        pendingByClient[resolvedClientId] = new PendingQuerySlot
+        bool existed = pendingByClient.TryGetValue(resolvedClientId,
+            out PendingQuerySlot slot);
+        if (!existed || slot == null)
         {
-            ClientId = resolvedClientId,
-            Request = request,
-            Completed = completed
-        };
-        if (!existed)
+            slot = new PendingQuerySlot();
+            pendingByClient[resolvedClientId] = slot;
             pendingOrder.Enqueue(resolvedClientId);
+        }
+
+        slot.ClientId = resolvedClientId;
+        slot.Request = request;
+        slot.Completed = completed;
+        slot.MaxDeferrals = maxDeferrals;
+        slot.DeferredFrames = 0;
+        slot.LastDeferredFrame = -1;
+    }
+
+    public bool ContainsPending(string clientId, string requestId)
+    {
+        return !string.IsNullOrEmpty(clientId) &&
+               pendingByClient.TryGetValue(clientId, out PendingQuerySlot slot) &&
+               slot != null && slot.Request != null &&
+               string.Equals(slot.Request.RequestId, requestId, StringComparison.Ordinal);
     }
 
     public void Cancel(string clientId)
     {
         if (string.IsNullOrEmpty(clientId)) return;
         pendingByClient.Remove(clientId);
+        lastProcessedFrameByClient.Remove(clientId);
     }
 
     public void Clear()
     {
         pendingByClient.Clear();
         pendingOrder.Clear();
+        lastProcessedFrameByClient.Clear();
+        lastProcessFrame = -1;
+        processedThisFrameCount = 0;
     }
 
-    public int Process(int maxClientsPerFrame,
-        Func<DialogueRequest, DialogueResponse> resolver)
+    public int Process(int maxClientsPerFrame, int currentFrame,
+        Func<DialogueRequest, DialogueResponse> resolver,
+        Action<DialogueRequest, DialogueResponse> onDropped = null)
     {
         if (resolver == null || maxClientsPerFrame <= 0) return 0;
+        if (currentFrame != lastProcessFrame)
+        {
+            lastProcessFrame = currentFrame;
+            processedThisFrameCount = 0;
+        }
 
         int processed = 0;
         int availableThisFrame = pendingOrder.Count;
-        while (processed < maxClientsPerFrame &&
+        var processedClientIds = new List<string>();
+        while (processedThisFrameCount < maxClientsPerFrame &&
                availableThisFrame-- > 0 &&
                pendingOrder.Count > 0)
         {
             string clientId = pendingOrder.Dequeue();
-            if (!pendingByClient.TryGetValue(clientId, out PendingQuerySlot slot))
+            if (!pendingByClient.TryGetValue(clientId, out PendingQuerySlot slot) ||
+                slot == null || slot.Request == null)
                 continue;
+            if (lastProcessedFrameByClient.TryGetValue(clientId, out int lastProcessedFrame) &&
+                lastProcessedFrame == currentFrame)
+            {
+                pendingOrder.Enqueue(clientId);
+                continue;
+            }
 
             pendingByClient.Remove(clientId);
             DialogueResponse response = resolver(slot.Request);
             slot.Completed?.Invoke(response);
+            processedClientIds.Add(clientId);
+            lastProcessedFrameByClient[clientId] = currentFrame;
+            processedThisFrameCount++;
             processed++;
         }
+
+        if (pendingByClient.Count > 0)
+        {
+            var toRemove = new List<string>();
+            foreach (var pair in pendingByClient)
+            {
+                PendingQuerySlot slot = pair.Value;
+                if (slot == null || slot.MaxDeferrals < 0) continue;
+                if (processedClientIds.Contains(pair.Key)) continue;
+                if (slot.LastDeferredFrame == currentFrame) continue;
+
+                slot.LastDeferredFrame = currentFrame;
+                slot.DeferredFrames++;
+                if (slot.DeferredFrames <= slot.MaxDeferrals) continue;
+
+                DialogueResponse fail = BuildRetryLimitFailure(slot.Request,
+                    slot.ClientId, slot.MaxDeferrals);
+                slot.Completed?.Invoke(fail);
+                onDropped?.Invoke(slot.Request, fail);
+                toRemove.Add(pair.Key);
+            }
+            for (int i = 0; i < toRemove.Count; i++)
+                pendingByClient.Remove(toRemove[i]);
+        }
+
         return processed;
+    }
+
+    static DialogueResponse BuildRetryLimitFailure(DialogueRequest request,
+        string clientId, int maxDeferrals)
+    {
+        return new DialogueResponse
+        {
+            RequestId = request != null ? request.RequestId : "",
+            Code = DialogueResponseCode.Timeout,
+            Message = "<error>One-shot request for client "" +
+                DialogueMessage.Escape(clientId) + "" exceeded the query " +
+                "server retry limit of " + maxDeferrals + " deferred frame(s).</error>"
+        };
     }
 }
 
@@ -391,115 +474,15 @@ public sealed class DialogueLiveEventServer
     {
         if (string.IsNullOrEmpty(eventName) || subscribers.Count == 0) return 0;
 
-        int delivered = 0;
-        string normalizedPath = DialogueMessage.NormalizePath(dialoguePath);
-        var ids = new List<int>(subscribers.Keys);
-        for (int i = 0; i < ids.Count; i++)
-        {
-            if (!subscribers.TryGetValue(ids[i], out EventSubscriber sub))
-                continue;
-            if (!MatchesPathFilter(sub.DialoguePathFilter, normalizedPath))
-                continue;
-            if (!MatchesEventFilter(sub.EventNameFilter, eventName))
-                continue;
-            sub.Callback?.Invoke(eventName);
-            delivered++;
-        }
-        return delivered;
-    }
-
-    static bool MatchesPathFilter(string filter, string normalizedPath)
-    {
-        if (string.IsNullOrEmpty(filter)) return true;
-        return string.Equals(filter, normalizedPath,
-            StringComparison.OrdinalIgnoreCase);
-    }
-
-    static bool MatchesEventFilter(string filter, string eventName)
-    {
-        return string.IsNullOrEmpty(filter) ||
-            string.Equals(filter, eventName, StringComparison.Ordinal);
-    }
-}
-
-/// <summary>
-/// Pushes live emitted event names to priority subscribers. A callback may cull
-/// all lower-priority subscribers while keeping same-priority ones alive.
-/// </summary>
-public sealed class DialoguePriorityLiveEventServer
-{
-    sealed class PrioritySubscriber
-    {
-        public int SubscriptionId;
-        public string ClientId;
-        public int Priority;
-        public string DialoguePathFilter;
-        public string EventNameFilter;
-        public Func<string, DialoguePriorityDispatchResult> Callback;
-    }
-
-    readonly Dictionary<int, PrioritySubscriber> subscribers =
-        new Dictionary<int, PrioritySubscriber>();
-    readonly List<PrioritySubscriber> sortedSubscribers = new List<PrioritySubscriber>();
-    int nextSubscriptionId = 1;
-    bool sortDirty = true;
-
-    public int Subscribe(string clientId, int priority, string dialoguePathFilter,
-        string eventNameFilter,
-        Func<string, DialoguePriorityDispatchResult> callback)
-    {
-        if (callback == null) return -1;
-        int id = nextSubscriptionId++;
-        subscribers[id] = new PrioritySubscriber
-        {
-            SubscriptionId = id,
-            ClientId = clientId ?? "",
-            Priority = priority,
-            DialoguePathFilter = DialogueMessage.NormalizePath(dialoguePathFilter),
-            EventNameFilter = eventNameFilter ?? "",
-            Callback = callback
-        };
-        sortDirty = true;
-        return id;
-    }
-
-    public void Unsubscribe(int subscriptionId)
-    {
-        if (subscribers.Remove(subscriptionId)) sortDirty = true;
-    }
-
-    public void UnsubscribeClient(string clientId)
-    {
-        if (string.IsNullOrEmpty(clientId)) return;
-        var toRemove = new List<int>();
-        foreach (var pair in subscribers)
-            if (string.Equals(pair.Value.ClientId, clientId, StringComparison.Ordinal))
-                toRemove.Add(pair.Key);
-        for (int i = 0; i < toRemove.Count; i++)
-            subscribers.Remove(toRemove[i]);
-        if (toRemove.Count > 0) sortDirty = true;
-    }
-
-    public void Clear()
-    {
-        subscribers.Clear();
-        sortedSubscribers.Clear();
-        sortDirty = true;
-    }
-
-    public int Publish(string dialoguePath, string eventName)
-    {
-        if (string.IsNullOrEmpty(eventName) || subscribers.Count == 0) return 0;
-
         EnsureSorted();
         int delivered = 0;
-        int currentFloor = int.MinValue;
+        int suppressionFloor = int.MinValue;
         string normalizedPath = DialogueMessage.NormalizePath(dialoguePath);
         for (int i = 0; i < sortedSubscribers.Count; i++)
         {
             PrioritySubscriber sub = sortedSubscribers[i];
             if (sub == null) continue;
-            if (currentFloor != int.MinValue && sub.Priority < currentFloor)
+            if (suppressionFloor != int.MinValue && sub.Priority < suppressionFloor)
                 break;
             if (!subscribers.ContainsKey(sub.SubscriptionId)) continue;
             if (!MatchesPathFilter(sub.DialoguePathFilter, normalizedPath))
@@ -514,7 +497,11 @@ public sealed class DialoguePriorityLiveEventServer
             delivered++;
             if (result == DialoguePriorityDispatchResult.CullLowerPriorities)
             {
-                currentFloor = sub.Priority;
+                suppressionFloor = sub.Priority;
+            }
+            else if (result == DialoguePriorityDispatchResult.DeregisterLowerPriorities)
+            {
+                suppressionFloor = sub.Priority;
                 RemoveLowerPriorities(sub.Priority);
             }
         }
