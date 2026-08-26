@@ -136,8 +136,8 @@ The async query server keeps only the latest pending one-shot request per
 
 ```csharp
 int subscriptionId = Dialogue_Engine.SubscribeLiveSnapshots(
+    this,
     snapshot => Debug.Log(snapshot.ToMessage()),
-    clientId: "debug-panel",
     dialoguePathFilter: "",
     onlyOnChange: true,
     minIntervalSeconds: 0f);
@@ -156,6 +156,7 @@ any fields or local variables from your script.
 
 ```csharp
 int subscriptionId = Dialogue_Engine.Subscribe(
+    this,
     "quest_accepted",
     () =>
     {
@@ -171,16 +172,19 @@ If you also want the emitted event string:
 
 ```csharp
 int subscriptionId = Dialogue_Engine.Subscribe(
+    this,
     eventName => Debug.Log(eventName));
 ```
 
-Advanced filtering (client/path/event) is still available through
-`SubscribeLiveEvents(...)`.
+Non-Unity callers can pass a stable string client id instead of `this`. Advanced
+filtering by path/event is still available through
+`SubscribeLiveEvents(clientId, ...)`.
 
 ### Priority live event subscription
 
 ```csharp
 int subscriptionId = Dialogue_Engine.Subscribe(
+    this,
     100,
     "quest_accepted",
     () =>
@@ -197,6 +201,7 @@ If you want the emitted event string inside the priority callback:
 
 ```csharp
 int subscriptionId = Dialogue_Engine.Subscribe(
+    this,
     100,
     eventName =>
     {
@@ -212,8 +217,9 @@ Priority callbacks support three explicit outcomes:
 - `DeregisterLowerPriorities` → permanently remove lower-priority subscribers
 
 Same-priority subscribers always remain eligible in either lower-priority case.
-Advanced client/path/event filtering remains available through
-`SubscribePriorityLiveEvents(...)`.
+Non-Unity callers can pass a stable string client id instead of `this`. Advanced
+client/path/event filtering remains available through
+`SubscribePriorityLiveEvents(clientId, ...)`.
 
 ### Coroutine-blocking wait
 

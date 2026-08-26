@@ -293,8 +293,8 @@ instead of repeatedly querying one-shot requests in loops.
 
 ```csharp
 int subscriptionId = Dialogue_Engine.SubscribeLiveSnapshots(
+    this,
     snapshot => Debug.Log(snapshot.ToMessage()),
-    clientId: "debug-panel",
     dialoguePathFilter: "",
     onlyOnChange: true,
     minIntervalSeconds: 0f);
@@ -313,6 +313,7 @@ fields or local variables from the surrounding script.
 
 ```csharp
 int subscriptionId = Dialogue_Engine.Subscribe(
+    this,
     "quest_accepted",
     () =>
     {
@@ -325,6 +326,7 @@ If you want the emitted event string too:
 
 ```csharp
 int subscriptionId = Dialogue_Engine.Subscribe(
+    this,
     eventName => Debug.Log(eventName));
 ```
 
@@ -334,13 +336,15 @@ Unsubscribe later:
 Dialogue_Engine.UnsubscribeLiveEvents(subscriptionId);
 ```
 
-Advanced filtering by client/path/event remains available through
-`SubscribeLiveEvents(...)`.
+Non-Unity callers can pass a stable string client id instead of `this`. Advanced
+filtering by path/event remains available through
+`SubscribeLiveEvents(clientId, ...)`.
 
 ### Priority live event subscriptions
 
 ```csharp
 int subscriptionId = Dialogue_Engine.Subscribe(
+    this,
     100,
     "quest_accepted",
     () =>
@@ -355,6 +359,7 @@ If you want the emitted event string inside the priority callback:
 
 ```csharp
 int subscriptionId = Dialogue_Engine.Subscribe(
+    this,
     100,
     eventName =>
     {
@@ -380,8 +385,9 @@ Dialogue_Engine.UnsubscribePriorityLiveEvents(subscriptionId);
 Use `CullLowerPriorities` for temporary per-dispatch suppression and
 `DeregisterLowerPriorities` only when permanent removal is actually intended.
 
-Advanced filtering by client/path/event remains available through
-`SubscribePriorityLiveEvents(...)`.
+Non-Unity callers can pass a stable string client id instead of `this`. Advanced
+filtering by client/path/event remains available through
+`SubscribePriorityLiveEvents(clientId, ...)`.
 
 ### Client-wide cleanup
 
@@ -1379,6 +1385,20 @@ Simple narrative DSL
 Small request/event boundary
        +
 Existing gameplay architecture
+       =
+Fast basic dialogue that can scale into complex interactions
+```
+ll request/event boundary
+       +
+Existing gameplay architecture
+       =
+Fast basic dialogue that can scale into complex interactions
+```
+ay architecture
+       =
+Fast basic dialogue that can scale into complex interactions
+```
+tecture
        =
 Fast basic dialogue that can scale into complex interactions
 ```
