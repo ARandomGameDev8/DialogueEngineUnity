@@ -474,6 +474,108 @@ public sealed class DialogueLiveEventServer
     {
         if (string.IsNullOrEmpty(eventName) || subscribers.Count == 0) return 0;
 
+        int delivered = 0;
+        string normalizedPath = DialogueMessage.NormalizePath(dialoguePath);
+        var ids = new List<int>(subscribers.Keys);
+        for (int i = 0; i < ids.Count; i++)
+        {
+            if (!subscribers.TryGetValue(ids[i], out EventSubscriber sub))
+                continue;
+            if (!MatchesPathFilter(sub.DialoguePathFilter, normalizedPath))
+                continue;
+            if (!MatchesEventFilter(sub.EventNameFilter, eventName))
+                continue;
+            sub.Callback?.Invoke(eventName);
+            delivered++;
+        }
+        return delivered;
+    }
+
+    static bool MatchesPathFilter(string filter, string normalizedPath)
+    {
+        if (string.IsNullOrEmpty(filter)) return true;
+        return string.Equals(filter, normalizedPath,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool MatchesEventFilter(string filter, string eventName)
+    {
+        return string.IsNullOrEmpty(filter) ||
+            string.Equals(filter, eventName, StringComparison.Ordinal);
+    }
+}
+
+/// <summary>
+/// Pushes live emitted event names to priority subscribers. A callback may
+/// temporarily suppress lower-priority subscribers for the current dispatch, or
+/// permanently deregister them, while same-priority subscribers stay eligible.
+/// </summary>
+public sealed class DialoguePriorityLiveEventServer
+{
+    sealed class PrioritySubscriber
+    {
+        public int SubscriptionId;
+        public string ClientId;
+        public int Priority;
+        public string DialoguePathFilter;
+        public string EventNameFilter;
+        public Func<string, DialoguePriorityDispatchResult> Callback;
+    }
+
+    readonly Dictionary<int, PrioritySubscriber> subscribers =
+        new Dictionary<int, PrioritySubscriber>();
+    readonly List<PrioritySubscriber> sortedSubscribers =
+        new List<PrioritySubscriber>();
+    int nextSubscriptionId = 1;
+    bool sortDirty = true;
+
+    public int Subscribe(string clientId, int priority,
+        string dialoguePathFilter, string eventNameFilter,
+        Func<string, DialoguePriorityDispatchResult> callback)
+    {
+        if (callback == null) return -1;
+        int id = nextSubscriptionId++;
+        subscribers[id] = new PrioritySubscriber
+        {
+            SubscriptionId = id,
+            ClientId = clientId ?? "",
+            Priority = priority,
+            DialoguePathFilter = DialogueMessage.NormalizePath(dialoguePathFilter),
+            EventNameFilter = eventNameFilter ?? "",
+            Callback = callback
+        };
+        sortDirty = true;
+        return id;
+    }
+
+    public void Unsubscribe(int subscriptionId)
+    {
+        if (subscribers.Remove(subscriptionId)) sortDirty = true;
+    }
+
+    public void UnsubscribeClient(string clientId)
+    {
+        if (string.IsNullOrEmpty(clientId)) return;
+        var toRemove = new List<int>();
+        foreach (var pair in subscribers)
+            if (string.Equals(pair.Value.ClientId, clientId, StringComparison.Ordinal))
+                toRemove.Add(pair.Key);
+        for (int i = 0; i < toRemove.Count; i++)
+            subscribers.Remove(toRemove[i]);
+        if (toRemove.Count > 0) sortDirty = true;
+    }
+
+    public void Clear()
+    {
+        subscribers.Clear();
+        sortedSubscribers.Clear();
+        sortDirty = true;
+    }
+
+    public int Publish(string dialoguePath, string eventName)
+    {
+        if (string.IsNullOrEmpty(eventName) || subscribers.Count == 0) return 0;
+
         EnsureSorted();
         int delivered = 0;
         int suppressionFloor = int.MinValue;
