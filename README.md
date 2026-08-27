@@ -1,82 +1,209 @@
 # DialogueEngineUnity
 
-## Standalone events
+A Unity dialogue system built around a **simple narrative DSL**, a **runtime code/service API**, and **live monitoring/event hooks** that let dialogue plug into existing gameplay code fast.
 
-`@EMIT` is a leaf `EventToken` and may appear anywhere inside a section. The
-legacy inline option form is also supported.
+## Core idea
+
+```text
+Simple dialogue text files
+        +
+Small event/query boundary
+        +
+Your existing gameplay systems
+        =
+Fast dialogue authoring without DSL bloat
+```
+
+The DSL handles:
+- narrative lines
+- sections
+- choices
+- section jumps
+- emitted events
+
+Your game code handles:
+- quests
+- AI
+- combat
+- UI logic
+- world state
+- save data
+- any advanced gameplay rules
+
+That boundary is the point of the package.
+
+---
+
+# What is included
+
+## Runtime core
+Located in `DIALOGUE_SYSTEM_CORE/`
+
+Main files:
+- `Dialogue_Engine.cs`
+- `DialogueService.cs`
+- `Compiler_S.cs`
+- `File_S.cs`
+
+## Editor/UI customization
+Located in `UNITY_EDITOR_EXTENSION_FOR_UI_CUSTOMIZATION/`
+
+Main files:
+- `DialogueEngineEditor.cs`
+- `DialogueLayoutBuilder.cs`
+- `DialoguePreviewWindow.cs`
+
+## Test DSLs
+Located in `TEST_DSLS/`
+
+Useful for quick validation of:
+- standalone `@EMIT`
+- choice event emission
+- interruption / resume
+- variable resolution
+
+---
+
+# Documentation files
+
+## Start here
+- `README.md` — package overview + practical API quick start
+- `README_DSL_SYNTAX.md` — full DSL syntax guide
+
+## Full API reference
+- `CODE_API_DOCUMENTATION.md` — complete C# API/service/runtime reference
+
+## Optional integration docs
+If you are using the optional behavior/BT layer, also read:
+- `README_BT.md`
+- `README_UNITY_BEHAVIOR.md`
+- `BT_NODE_DOCUMENTATION.md`
+
+---
+
+# Minimal scene setup
+
+Your scene needs **one active `Dialogue_Engine` component**.
+
+At runtime it is available through:
+
+```csharp
+Dialogue_Engine.Instance
+```
+
+Always check that the engine exists before using instance-only APIs:
+
+```csharp
+if (Dialogue_Engine.Instance == null)
+{
+    Debug.LogError("No Dialogue_Engine exists in this scene.");
+    return;
+}
+```
+
+---
+
+# Minimal DSL example
 
 ```text
 START
 @ENTRY INTRO
 
 SECTION INTRO
-[NARRATOR]: "The door opens.";
-@EMIT "door_opened";
-[NARRATOR]: "Something approaches.";
+[NARRATOR]: "Welcome to the station.";
+@EMIT "station_intro_seen";
+[NARRATOR]: "Choose where to go.";
 
 CHOICE:
-OPTION_0: "Run"; goto ESCAPE; @EMIT "player_ran";
-OPTION_1: "Stay"; goto WAIT;
+OPTION_0: "Visit engineering"; goto ENGINEERING; @EMIT "engineering_selected";
+OPTION_1: "Visit the bridge"; goto BRIDGE; @EMIT "bridge_selected";
 ;
 END_SECTION
 
-SECTION ESCAPE
-@EMIT "escape_started";
-[NARRATOR]: "You run.";
+SECTION ENGINEERING
+[ENGINEER]: "The reactor is stable.";
+@EMIT "engineering_finished";
 END_SECTION
 
-SECTION WAIT
-[NARRATOR]: "You wait.";
+SECTION BRIDGE
+[CAPTAIN]: "We are ready to depart.";
+@EMIT "bridge_finished";
 END_SECTION
+
 END
 ```
 
-The compiler resolves the event to a string and the engine publishes it through:
+See `README_DSL_SYNTAX.md` for the full syntax.
+
+---
+
+# Fast API map
+
+## Start dialogue
 
 ```csharp
-Dialogue_Engine.OnEmit += eventName => Debug.Log(eventName);
+bool ok = Dialogue_Engine.Play(
+    "Assets/Dialogues/station_intro.txt",
+    interruptible: true,
+    saveState: true);
 ```
 
-## Play-session database
+Returns:
+- `true` when file open + compile + playback start succeeded
+- `false` when startup failed or playback was rejected
 
-Each `Dialogue_Engine` owns an in-memory `DialogueRuntimeDatabase`. It contains:
+---
 
-- one unique `DialogueScriptRecord` per DSL path;
-- many `DialogueEventRecord` rows per DSL;
-- a collision-safe `timestamp + text name` primary key;
-- current statuses (`TypingText`, `WaitingForInput`, `TakingChoice`,
-  `ChoiceSelected`, `EventEmitted`, and others);
-- the emitted string, which is empty for ordinary status rows.
+## Live emitted events
 
-Nothing is written to disk. The database resets when the engine is destroyed or
-Play Mode stops.
+## Compatibility hook: `OnEmit`
 
-## In-process client/service API
+```csharp
+Dialogue_Engine.OnEmit += HandleDialogueEvent;
+Dialogue_Engine.OnEmit -= HandleDialogueEvent;
+```
 
-The engine implements `IDialogueService`. This is an HTTP-like request/response
-interface without OS sockets or worker threads. One-shot query requests are
-resolved by a bounded query server, while dedicated live subscription servers
-handle snapshot monitoring and live emitted events separately.
+`OnEmit` is still available as a **simple compatibility facade**.
 
-### Immediate non-blocking snapshot
+Use it when you want:
+- a quick global event hook
+- one script receiving all emitted events
+- old-school `+=` / `-=` usage
+
+Example:
+
+```csharp
+void HandleDialogueEvent(string eventName)
+{
+    if (eventName == "door_opened")
+        Debug.Log("Door opened.");
+}
+```
+
+## Recommended scalable hook: `Subscribe(...)`
+
+Use `Subscribe(...)` when you want:
+- explicit live subscription management
+- client identity
+- event filtering
+- priority dispatch
+
+---
+
+# One-shot query API
+
+The engine supports **request/response** style access for current state and historical state.
+
+## Immediate compatibility request
 
 ```csharp
 DialogueResponse response = Dialogue_Engine.SendRequest(
     DialogueRequest.Snapshot());
-
-Debug.Log(response.Message); // <dialogue-snapshot>...</dialogue-snapshot>
 ```
 
-This compatibility form resolves immediately in the same call. It is still the
-most direct choice for simple code and the existing BT / Unity Behavior wrappers.
+Use this when you simply want an immediate result now.
 
-Warning: this is a one-shot snapshot query. Do not build tight monitoring loops
-around it when live snapshot subscriptions are available.
-
-### Preferred coalesced one-shot query
-
-Use the caller-aware overload when many systems may issue one-shot queries in the
-same frame and you want latest-wins coalescing per caller.
+## Preferred coalesced one-shot request for Unity objects
 
 ```csharp
 DialogueResponse response = Dialogue_Engine.SendRequest(
@@ -86,13 +213,17 @@ DialogueResponse response = Dialogue_Engine.SendRequest(
 if (response.IsSuccess)
     Debug.Log(response.Snapshot.SectionId);
 else if (response.IsPending)
-    Debug.Log("Query server will retry automatically next frame.");
+    Debug.Log("The query server will retry automatically next frame.");
 else if (response.IsFail)
     Debug.LogError(response.Message);
 ```
 
-For plain C# systems that do not inherit from `UnityEngine.Object`, use a stable
-string key instead of `this`:
+Use this when many systems may issue one-shot requests in the same frame and you want:
+- latest-wins behavior per caller
+- bounded server work per frame
+- no request-spam hitching
+
+## Preferred coalesced one-shot request for plain C# systems
 
 ```csharp
 DialogueResponse response = Dialogue_Engine.SendRequest(
@@ -100,39 +231,22 @@ DialogueResponse response = Dialogue_Engine.SendRequest(
     DialogueRequest.HasEvent("door_opened"));
 ```
 
-### Poll for an event (non-blocking)
+---
 
-```csharp
-DialogueResponse response = Dialogue_Engine.SendRequest(
-    DialogueRequest.HasEvent("door_opened", sinceSequence));
+# Live monitoring subscriptions
 
-if (response.Matched)
-    Debug.Log("The dialogue reached the door.");
-```
+There are now **dedicated live monitoring APIs**.
 
-Store `response.Snapshot.LatestSequence` (or an event row's `Sequence`) and pass
-it as `SinceSequence` to only inspect newer records.
+Important rule:
+- **live subscriptions require an explicit client**
+- if the listener is a Unity object, pass `this`
+- if the listener is a plain C# system, pass a stable string client id
 
-Warning: `HasEvent` is a query-style check, not a live event stream. For
-continuous monitoring, register a live event subscription instead of spamming it
-inside loops.
+---
 
-### Async request handled on later Updates
+## Live snapshot monitoring
 
-```csharp
-var request = DialogueRequest.Snapshot();
-request.ClientId = "debug-panel";
-
-Dialogue_Engine.Service.SendAsync(
-    request,
-    response => Debug.Log(response.Message));
-```
-
-The async query server keeps only the latest pending one-shot request per
-`ClientId`. If `ClientId` is left empty, the request falls back to its own
-`RequestId`, which preserves one callback per call but disables coalescing.
-
-### Live snapshot subscription
+### Unity object client
 
 ```csharp
 int subscriptionId = Dialogue_Engine.SubscribeLiveSnapshots(
@@ -142,17 +256,35 @@ int subscriptionId = Dialogue_Engine.SubscribeLiveSnapshots(
     onlyOnChange: true,
     minIntervalSeconds: 0f);
 
-// Later:
 Dialogue_Engine.UnsubscribeLiveSnapshots(subscriptionId);
 ```
 
-Use a one-shot snapshot query to get the current state immediately, then keep a
-live subscription for ongoing monitoring.
+### Plain C# client
 
-### Live event subscription
+```csharp
+int subscriptionId = Dialogue_Engine.SubscribeLiveSnapshots(
+    "debug-panel",
+    snapshot => Debug.Log(snapshot.ToMessage()),
+    dialoguePathFilter: "",
+    onlyOnChange: true,
+    minIntervalSeconds: 0f);
+```
 
-The simplest API is intentionally closure-friendly, so the callback can capture
-any fields or local variables from your script.
+Use this for:
+- live debug panels
+- quest/UI state mirrors
+- AI state monitors
+- monitoring current text/section/status over time
+
+Warning:
+- `GetLiveSnapshot()` and `LiveSnapshot` requests are **one-shot reads**
+- for continuous monitoring, use `SubscribeLiveSnapshots(...)`
+
+---
+
+## Live event monitoring (non-priority)
+
+### Unity object client
 
 ```csharp
 int subscriptionId = Dialogue_Engine.Subscribe(
@@ -164,11 +296,10 @@ int subscriptionId = Dialogue_Engine.Subscribe(
         ui.ShowAccepted();
     });
 
-// Later:
 Dialogue_Engine.UnsubscribeLiveEvents(subscriptionId);
 ```
 
-If you also want the emitted event string:
+If you want the emitted event string:
 
 ```csharp
 int subscriptionId = Dialogue_Engine.Subscribe(
@@ -176,11 +307,30 @@ int subscriptionId = Dialogue_Engine.Subscribe(
     eventName => Debug.Log(eventName));
 ```
 
-Non-Unity callers can pass a stable string client id instead of `this`. Advanced
-filtering by path/event is still available through
-`SubscribeLiveEvents(clientId, ...)`.
+### Plain C# client
 
-### Priority live event subscription
+```csharp
+int subscriptionId = Dialogue_Engine.Subscribe(
+    "quest-system",
+    "quest_accepted",
+    () => questSystem.Accept(currentQuestId));
+```
+
+Advanced filtering by path/event is still available through:
+
+```csharp
+Dialogue_Engine.SubscribeLiveEvents(
+    "quest-system",
+    eventName => Debug.Log(eventName),
+    dialoguePathFilter: "Assets/Dialogues/quest_offer.txt",
+    eventNameFilter: "quest_accepted");
+```
+
+---
+
+## Live event monitoring (priority)
+
+### Unity object client
 
 ```csharp
 int subscriptionId = Dialogue_Engine.Subscribe(
@@ -189,15 +339,16 @@ int subscriptionId = Dialogue_Engine.Subscribe(
     "quest_accepted",
     () =>
     {
-        questSystem.Accept(currentQuestId);
-        return DialoguePriorityDispatchResult.CullLowerPriorities;
+        if (questSystem.CanClaim(currentQuestId))
+            return DialoguePriorityDispatchResult.CullLowerPriorities;
+
+        return DialoguePriorityDispatchResult.Continue;
     });
 
-// Later:
 Dialogue_Engine.UnsubscribePriorityLiveEvents(subscriptionId);
 ```
 
-If you want the emitted event string inside the priority callback:
+With emitted event string:
 
 ```csharp
 int subscriptionId = Dialogue_Engine.Subscribe(
@@ -210,21 +361,62 @@ int subscriptionId = Dialogue_Engine.Subscribe(
     });
 ```
 
-Priority callbacks support three explicit outcomes:
+### Plain C# client
 
+```csharp
+int subscriptionId = Dialogue_Engine.Subscribe(
+    "npc-arbiter",
+    100,
+    "quest_accepted",
+    () => DialoguePriorityDispatchResult.DeregisterLowerPriorities);
+```
+
+Priority results:
 - `Continue` → keep dispatching normally
-- `CullLowerPriorities` → suppress lower-priority subscribers for THIS dispatch only
+- `CullLowerPriorities` → suppress lower priorities for **this dispatch only**
 - `DeregisterLowerPriorities` → permanently remove lower-priority subscribers
 
-Same-priority subscribers always remain eligible in either lower-priority case.
-Non-Unity callers can pass a stable string client id instead of `this`. Advanced
-client/path/event filtering remains available through
-`SubscribePriorityLiveEvents(clientId, ...)`.
+Same-priority subscribers remain eligible.
 
-### Coroutine-blocking wait
+Advanced filtering by path/event is still available through:
 
-"Blocking" is implemented as a coroutine, so it never freezes Unity's main
-thread:
+```csharp
+Dialogue_Engine.SubscribePriorityLiveEvents(
+    "npc-arbiter",
+    eventName => DialoguePriorityDispatchResult.Continue,
+    priority: 100,
+    dialoguePathFilter: "Assets/Dialogues/quest_offer.txt",
+    eventNameFilter: "quest_accepted");
+```
+
+---
+
+# Request/response service API
+
+`Dialogue_Engine` implements `IDialogueService`.
+
+```csharp
+IDialogueService service = Dialogue_Engine.Service;
+```
+
+## Immediate send
+
+```csharp
+DialogueResponse response = service.Send(request);
+```
+
+## Async send
+
+```csharp
+var request = DialogueRequest.Snapshot();
+request.ClientId = "debug-panel";
+
+service.SendAsync(
+    request,
+    response => Debug.Log(response.Message));
+```
+
+## Coroutine wait
 
 ```csharp
 var request = new DialogueRequest
@@ -234,15 +426,149 @@ var request = new DialogueRequest
     TimeoutSeconds = 15f
 };
 
-Dialogue_Engine.Instance.StartBlockingRequest(request, response =>
-{
-    if (response.Code == DialogueResponseCode.Ok)
-        Debug.Log("Event received");
-    else
-        Debug.Log("Timed out");
-});
+Dialogue_Engine.Instance.StartBlockingRequest(
+    request,
+    response => Debug.Log(response.Code));
 ```
 
-Requests still support one-shot live snapshots, dialogue lookup, event queries,
-event polling, and conditional event waits. Continuous monitoring now belongs to
-the dedicated live subscription APIs rather than repeated loop polling.
+---
+
+# Main request types
+
+```csharp
+public enum DialogueRequestType
+{
+    LiveSnapshot,
+    GetDialogue,
+    GetEvents,
+    HasEvent,
+    WaitForEvent
+}
+```
+
+## Use these for
+- `LiveSnapshot` → current engine state once
+- `GetDialogue` → one DSL record
+- `GetEvents` → historical rows
+- `HasEvent` → event already occurred?
+- `WaitForEvent` → coroutine-style waiting across frames
+
+---
+
+# Main response helpers
+
+`DialogueResponse` exposes:
+- `IsSuccess`
+- `IsPending`
+- `IsFail`
+
+Typical handling:
+
+```csharp
+DialogueResponse response = Dialogue_Engine.SendRequest(this, request);
+
+if (response.IsSuccess)
+{
+    // use response
+}
+else if (response.IsPending)
+{
+    // caller-aware one-shot request was deferred; engine retries automatically
+}
+else if (response.IsFail)
+{
+    Debug.LogError(response.Message);
+}
+```
+
+---
+
+# Runtime database
+
+Each engine owns an in-memory `DialogueRuntimeDatabase`.
+
+It stores:
+- one `DialogueScriptRecord` per DSL path
+- many `DialogueEventRecord` rows
+- sequence ordering
+- emitted events
+- runtime status history
+
+Important:
+- this database is **volatile**
+- it is **not** a save-game system
+- it resets when Play Mode stops or the engine is destroyed
+
+Use your own save architecture for permanent state.
+
+---
+
+# Important usage rules
+
+## 1) Use the right API for the job
+
+### One-shot read
+Use:
+- `SendRequest(request)`
+- `SendRequest(this, request)`
+- `GetLiveSnapshot()`
+- `HasEvent`
+- `GetEvents`
+
+### Continuous monitoring
+Use:
+- `SubscribeLiveSnapshots(...)`
+- `Subscribe(...)`
+- `Subscribe(priority, ...)`
+
+Do **not** build generic monitoring loops by spamming one-shot requests every frame when a live subscription exists.
+
+## 2) Always unsubscribe
+Especially for live subscriptions:
+- subscribe in `OnEnable()`
+- unsubscribe in `OnDisable()`
+
+## 3) Keep live callbacks fast
+They run on Unity’s main thread.
+
+## 4) Keep your DSL narrative-only
+Let the DSL emit signals.
+Let code decide gameplay consequences.
+
+---
+
+# Suggested lifecycle patterns
+
+## MonoBehaviour listener
+- subscribe in `OnEnable()`
+- unsubscribe in `OnDisable()`
+- pass `this`
+
+## Plain C# system listener
+- subscribe in your init/setup method
+- unsubscribe in your shutdown/dispose method
+- pass a stable string client id
+
+---
+
+# Optional files you may also want
+
+- `CODE_API_DOCUMENTATION.md` — complete detailed API reference
+- `README_DSL_SYNTAX.md` — complete DSL syntax guide
+- `TEST_DSLS/README.md` — test dialogue pack notes
+
+---
+
+# Summary
+
+This package is strongest when you use it like this:
+
+```text
+DSL for narrative
++
+C# for gameplay logic
++
+Event/query/subscription boundary for integration
+=
+Fast dialogue authoring that still scales into complex game systems
+```
