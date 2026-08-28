@@ -241,10 +241,15 @@ DialogueResponse response = Dialogue_Engine.SendRequest(
 
 There are now **dedicated live monitoring APIs**.
 
-Important rule:
+Important rules:
 - **live subscriptions require an explicit client**
 - if the listener is a Unity object, pass `this`
 - if the listener is a plain C# system, pass a stable string client id
+- each live subscription returns a typed handle object:
+  - `SnaphotSubID`
+  - `EventMonitorID`
+  - `PriorityEventMonitorID`
+- each unsubscribe method accepts only its matching handle type
 
 ---
 
@@ -253,20 +258,20 @@ Important rule:
 ### Unity object client
 
 ```csharp
-int subscriptionId = Dialogue_Engine.SubscribeLiveSnapshots(
+SnaphotSubID snapshotSubId = Dialogue_Engine.SubscribeLiveSnapshots(
     this,
     snapshot => Debug.Log(snapshot.ToMessage()),
     dialoguePathFilter: "",
     onlyOnChange: true,
     minIntervalSeconds: 0f);
 
-Dialogue_Engine.UnsubscribeLiveSnapshots(subscriptionId);
+Dialogue_Engine.UnsubscribeLiveSnapshots(snapshotSubId);
 ```
 
 ### Plain C# client
 
 ```csharp
-int subscriptionId = Dialogue_Engine.SubscribeLiveSnapshots(
+SnaphotSubID snapshotSubId = Dialogue_Engine.SubscribeLiveSnapshots(
     "debug-panel",
     snapshot => Debug.Log(snapshot.ToMessage()),
     dialoguePathFilter: "",
@@ -291,7 +296,7 @@ Warning:
 ### Unity object client
 
 ```csharp
-int subscriptionId = Dialogue_Engine.Subscribe(
+EventMonitorID eventMonitorId = Dialogue_Engine.Subscribe(
     this,
     "quest_accepted",
     () =>
@@ -300,13 +305,13 @@ int subscriptionId = Dialogue_Engine.Subscribe(
         ui.ShowAccepted();
     });
 
-Dialogue_Engine.UnsubscribeLiveEvents(subscriptionId);
+Dialogue_Engine.UnsubscribeLiveEvents(eventMonitorId);
 ```
 
 If you want the emitted event string:
 
 ```csharp
-int subscriptionId = Dialogue_Engine.Subscribe(
+EventMonitorID eventMonitorId = Dialogue_Engine.Subscribe(
     this,
     eventName => Debug.Log(eventName));
 ```
@@ -314,7 +319,7 @@ int subscriptionId = Dialogue_Engine.Subscribe(
 ### Plain C# client
 
 ```csharp
-int subscriptionId = Dialogue_Engine.Subscribe(
+EventMonitorID eventMonitorId = Dialogue_Engine.Subscribe(
     "quest-system",
     "quest_accepted",
     () => questSystem.Accept(currentQuestId));
@@ -337,7 +342,7 @@ Dialogue_Engine.SubscribeLiveEvents(
 ### Unity object client
 
 ```csharp
-int subscriptionId = Dialogue_Engine.Subscribe(
+PriorityEventMonitorID priorityEventMonitorId = Dialogue_Engine.Subscribe(
     this,
     100,
     "quest_accepted",
@@ -349,13 +354,13 @@ int subscriptionId = Dialogue_Engine.Subscribe(
         return DialoguePriorityDispatchResult.Continue;
     });
 
-Dialogue_Engine.UnsubscribePriorityLiveEvents(subscriptionId);
+Dialogue_Engine.UnsubscribePriorityLiveEvents(priorityEventMonitorId);
 ```
 
 With emitted event string:
 
 ```csharp
-int subscriptionId = Dialogue_Engine.Subscribe(
+PriorityEventMonitorID priorityEventMonitorId = Dialogue_Engine.Subscribe(
     this,
     100,
     eventName =>
@@ -368,7 +373,7 @@ int subscriptionId = Dialogue_Engine.Subscribe(
 ### Plain C# client
 
 ```csharp
-int subscriptionId = Dialogue_Engine.Subscribe(
+PriorityEventMonitorID priorityEventMonitorId = Dialogue_Engine.Subscribe(
     "npc-arbiter",
     100,
     "quest_accepted",

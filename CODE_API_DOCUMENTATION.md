@@ -296,7 +296,7 @@ instead of repeatedly querying one-shot requests in loops.
 ### Live snapshot subscriptions
 
 ```csharp
-int subscriptionId = Dialogue_Engine.SubscribeLiveSnapshots(
+SnaphotSubID snapshotSubId = Dialogue_Engine.SubscribeLiveSnapshots(
     this,
     snapshot => Debug.Log(snapshot.ToMessage()),
     dialoguePathFilter: "",
@@ -307,7 +307,7 @@ int subscriptionId = Dialogue_Engine.SubscribeLiveSnapshots(
 Unsubscribe later:
 
 ```csharp
-Dialogue_Engine.UnsubscribeLiveSnapshots(subscriptionId);
+Dialogue_Engine.UnsubscribeLiveSnapshots(snapshotSubId);
 ```
 
 ### Live event subscriptions
@@ -316,7 +316,7 @@ The simplest public API is closure-friendly: your callback can capture any
 fields or local variables from the surrounding script.
 
 ```csharp
-int subscriptionId = Dialogue_Engine.Subscribe(
+EventMonitorID eventMonitorId = Dialogue_Engine.Subscribe(
     this,
     "quest_accepted",
     () =>
@@ -329,7 +329,7 @@ int subscriptionId = Dialogue_Engine.Subscribe(
 If you want the emitted event string too:
 
 ```csharp
-int subscriptionId = Dialogue_Engine.Subscribe(
+EventMonitorID eventMonitorId = Dialogue_Engine.Subscribe(
     this,
     eventName => Debug.Log(eventName));
 ```
@@ -337,7 +337,7 @@ int subscriptionId = Dialogue_Engine.Subscribe(
 Unsubscribe later:
 
 ```csharp
-Dialogue_Engine.UnsubscribeLiveEvents(subscriptionId);
+Dialogue_Engine.UnsubscribeLiveEvents(eventMonitorId);
 ```
 
 Non-Unity callers can pass a stable string client id instead of `this`. Advanced
@@ -347,7 +347,7 @@ filtering by path/event remains available through
 ### Priority live event subscriptions
 
 ```csharp
-int subscriptionId = Dialogue_Engine.Subscribe(
+PriorityEventMonitorID priorityEventMonitorId = Dialogue_Engine.Subscribe(
     this,
     100,
     "quest_accepted",
@@ -362,7 +362,7 @@ int subscriptionId = Dialogue_Engine.Subscribe(
 If you want the emitted event string inside the priority callback:
 
 ```csharp
-int subscriptionId = Dialogue_Engine.Subscribe(
+PriorityEventMonitorID priorityEventMonitorId = Dialogue_Engine.Subscribe(
     this,
     100,
     eventName =>
@@ -383,7 +383,7 @@ Same-priority subscribers remain eligible in either lower-priority case.
 Unsubscribe later:
 
 ```csharp
-Dialogue_Engine.UnsubscribePriorityLiveEvents(subscriptionId);
+Dialogue_Engine.UnsubscribePriorityLiveEvents(priorityEventMonitorId);
 ```
 
 Use `CullLowerPriorities` for temporary per-dispatch suppression and
@@ -1405,4 +1405,7 @@ Fast basic dialogue that can scale into complex interactions
 tecture
        =
 Fast basic dialogue that can scale into complex interactions
+```
+ns
+```
 ```

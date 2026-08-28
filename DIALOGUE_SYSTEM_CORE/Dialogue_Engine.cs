@@ -214,8 +214,8 @@ public class DialoguePresetDTO
 public class Dialogue_Engine : MonoBehaviour, IDialogueService
 {
     public static Dialogue_Engine Instance { get; private set; }
-    static readonly Dictionary<Action<string>, List<int>> onEmitFacadeSubscriptionIds =
-        new Dictionary<Action<string>, List<int>>();
+    static readonly Dictionary<Action<string>, List<EventMonitorID>> onEmitFacadeSubscriptionIds =
+        new Dictionary<Action<string>, List<EventMonitorID>>();
     public static event Action<string> OnEmit
     {
         add
@@ -226,11 +226,11 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                 Debug.LogWarning("Dialogue_Engine.OnEmit subscription was added before the engine instance existed. Subscribe after the engine awakens, or use the explicit client-based Subscribe APIs.");
                 return;
             }
-            int subscriptionId = Instance.RegisterOnEmitFacade(value);
-            if (subscriptionId < 0) return;
-            if (!onEmitFacadeSubscriptionIds.TryGetValue(value, out List<int> ids))
+            EventMonitorID subscriptionId = Instance.RegisterOnEmitFacade(value);
+            if (subscriptionId == null || !subscriptionId.IsValid) return;
+            if (!onEmitFacadeSubscriptionIds.TryGetValue(value, out List<EventMonitorID> ids))
             {
-                ids = new List<int>();
+                ids = new List<EventMonitorID>();
                 onEmitFacadeSubscriptionIds[value] = ids;
             }
             ids.Add(subscriptionId);
@@ -238,10 +238,10 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         remove
         {
             if (value == null) return;
-            if (!onEmitFacadeSubscriptionIds.TryGetValue(value, out List<int> ids) ||
+            if (!onEmitFacadeSubscriptionIds.TryGetValue(value, out List<EventMonitorID> ids) ||
                 ids == null || ids.Count == 0) return;
             int last = ids.Count - 1;
-            int subscriptionId = ids[last];
+            EventMonitorID subscriptionId = ids[last];
             ids.RemoveAt(last);
             if (ids.Count == 0) onEmitFacadeSubscriptionIds.Remove(value);
             if (Instance != null)
@@ -297,7 +297,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             };
     }
 
-    public static int SubscribeLiveSnapshots(UnityEngine.Object client,
+    public static SnaphotSubID SubscribeLiveSnapshots(UnityEngine.Object client,
         Action<DialogueLiveSnapshot> callback, string dialoguePathFilter = "",
         bool onlyOnChange = true, float minIntervalSeconds = 0f)
     {
@@ -305,10 +305,10 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         return TryResolveClientId(client, "SubscribeLiveSnapshots", out clientId)
             ? SubscribeLiveSnapshots(clientId, callback, dialoguePathFilter,
                 onlyOnChange, minIntervalSeconds)
-            : -1;
+            : null;
     }
 
-    public static int SubscribeLiveSnapshots(string clientId,
+    public static SnaphotSubID SubscribeLiveSnapshots(string clientId,
         Action<DialogueLiveSnapshot> callback, string dialoguePathFilter = "",
         bool onlyOnChange = true, float minIntervalSeconds = 0f)
     {
@@ -316,10 +316,10 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         return TryResolveClientId(clientId, "SubscribeLiveSnapshots", out resolvedClientId) && Instance != null
             ? Instance.RegisterLiveSnapshotSubscription(callback, resolvedClientId,
                 dialoguePathFilter, onlyOnChange, minIntervalSeconds)
-            : -1;
+            : null;
     }
 
-    public static int SubscribeLiveEvents(UnityEngine.Object client,
+    public static EventMonitorID SubscribeLiveEvents(UnityEngine.Object client,
         Action<string> callback, string dialoguePathFilter = "",
         string eventNameFilter = "")
     {
@@ -327,10 +327,10 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         return TryResolveClientId(client, "SubscribeLiveEvents", out clientId)
             ? SubscribeLiveEvents(clientId, callback, dialoguePathFilter,
                 eventNameFilter)
-            : -1;
+            : null;
     }
 
-    public static int SubscribeLiveEvents(string clientId,
+    public static EventMonitorID SubscribeLiveEvents(string clientId,
         Action<string> callback, string dialoguePathFilter = "",
         string eventNameFilter = "")
     {
@@ -338,32 +338,32 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         return TryResolveClientId(clientId, "SubscribeLiveEvents", out resolvedClientId) && Instance != null
             ? Instance.RegisterLiveEventSubscription(callback, resolvedClientId,
                 dialoguePathFilter, eventNameFilter)
-            : -1;
+            : null;
     }
 
     // Friendly live-event overloads. Lambdas naturally capture any fields or
     // locals from the caller, so gameplay code can pass "any arguments" by
     // closure without expanding the engine API surface.
-    public static int Subscribe(UnityEngine.Object client, Action callback)
+    public static EventMonitorID Subscribe(UnityEngine.Object client, Action callback)
     {
         return Subscribe(client, "", callback);
     }
 
-    public static int Subscribe(UnityEngine.Object client, string targetEvent,
+    public static EventMonitorID Subscribe(UnityEngine.Object client, string targetEvent,
         Action callback)
     {
         string clientId;
         return TryResolveClientId(client, "Subscribe", out clientId)
             ? Subscribe(clientId, targetEvent, callback)
-            : -1;
+            : null;
     }
 
-    public static int Subscribe(string clientId, Action callback)
+    public static EventMonitorID Subscribe(string clientId, Action callback)
     {
         return Subscribe(clientId, "", callback);
     }
 
-    public static int Subscribe(string clientId, string targetEvent,
+    public static EventMonitorID Subscribe(string clientId, string targetEvent,
         Action callback)
     {
         string resolvedClientId;
@@ -371,39 +371,39 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             ? Instance.RegisterLiveEventSubscription(
                 callback != null ? new Action<string>(_ => callback()) : null,
                 resolvedClientId, "", targetEvent)
-            : -1;
+            : null;
     }
 
-    public static int Subscribe(UnityEngine.Object client, Action<string> callback)
+    public static EventMonitorID Subscribe(UnityEngine.Object client, Action<string> callback)
     {
         return Subscribe(client, "", callback);
     }
 
-    public static int Subscribe(UnityEngine.Object client, string targetEvent,
+    public static EventMonitorID Subscribe(UnityEngine.Object client, string targetEvent,
         Action<string> callback)
     {
         string clientId;
         return TryResolveClientId(client, "Subscribe", out clientId)
             ? Subscribe(clientId, targetEvent, callback)
-            : -1;
+            : null;
     }
 
-    public static int Subscribe(string clientId, Action<string> callback)
+    public static EventMonitorID Subscribe(string clientId, Action<string> callback)
     {
         return Subscribe(clientId, "", callback);
     }
 
-    public static int Subscribe(string clientId, string targetEvent,
+    public static EventMonitorID Subscribe(string clientId, string targetEvent,
         Action<string> callback)
     {
         string resolvedClientId;
         return TryResolveClientId(clientId, "Subscribe", out resolvedClientId) && Instance != null
             ? Instance.RegisterLiveEventSubscription(callback, resolvedClientId,
                 "", targetEvent)
-            : -1;
+            : null;
     }
 
-    public static int SubscribePriorityLiveEvents(UnityEngine.Object client,
+    public static PriorityEventMonitorID SubscribePriorityLiveEvents(UnityEngine.Object client,
         Func<string, DialoguePriorityDispatchResult> callback,
         int priority, string dialoguePathFilter = "",
         string eventNameFilter = "")
@@ -412,10 +412,10 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         return TryResolveClientId(client, "SubscribePriorityLiveEvents", out clientId)
             ? SubscribePriorityLiveEvents(clientId, callback, priority,
                 dialoguePathFilter, eventNameFilter)
-            : -1;
+            : null;
     }
 
-    public static int SubscribePriorityLiveEvents(string clientId,
+    public static PriorityEventMonitorID SubscribePriorityLiveEvents(string clientId,
         Func<string, DialoguePriorityDispatchResult> callback,
         int priority, string dialoguePathFilter = "",
         string eventNameFilter = "")
@@ -424,31 +424,31 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         return TryResolveClientId(clientId, "SubscribePriorityLiveEvents", out resolvedClientId) && Instance != null
             ? Instance.RegisterPriorityLiveEventSubscription(callback, priority,
                 resolvedClientId, dialoguePathFilter, eventNameFilter)
-            : -1;
+            : null;
     }
 
-    public static int Subscribe(UnityEngine.Object client, int priority,
+    public static PriorityEventMonitorID Subscribe(UnityEngine.Object client, int priority,
         Func<DialoguePriorityDispatchResult> callback)
     {
         return Subscribe(client, priority, "", callback);
     }
 
-    public static int Subscribe(UnityEngine.Object client, int priority,
+    public static PriorityEventMonitorID Subscribe(UnityEngine.Object client, int priority,
         string targetEvent, Func<DialoguePriorityDispatchResult> callback)
     {
         string clientId;
         return TryResolveClientId(client, "Subscribe", out clientId)
             ? Subscribe(clientId, priority, targetEvent, callback)
-            : -1;
+            : null;
     }
 
-    public static int Subscribe(string clientId, int priority,
+    public static PriorityEventMonitorID Subscribe(string clientId, int priority,
         Func<DialoguePriorityDispatchResult> callback)
     {
         return Subscribe(clientId, priority, "", callback);
     }
 
-    public static int Subscribe(string clientId, int priority,
+    public static PriorityEventMonitorID Subscribe(string clientId, int priority,
         string targetEvent, Func<DialoguePriorityDispatchResult> callback)
     {
         string resolvedClientId;
@@ -459,43 +459,43 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                         _ => callback())
                     : null,
                 priority, resolvedClientId, "", targetEvent)
-            : -1;
+            : null;
     }
 
-    public static int Subscribe(UnityEngine.Object client, int priority,
+    public static PriorityEventMonitorID Subscribe(UnityEngine.Object client, int priority,
         Func<string, DialoguePriorityDispatchResult> callback)
     {
         return Subscribe(client, priority, "", callback);
     }
 
-    public static int Subscribe(UnityEngine.Object client, int priority,
+    public static PriorityEventMonitorID Subscribe(UnityEngine.Object client, int priority,
         string targetEvent, Func<string, DialoguePriorityDispatchResult> callback)
     {
         string clientId;
         return TryResolveClientId(client, "Subscribe", out clientId)
             ? Subscribe(clientId, priority, targetEvent, callback)
-            : -1;
+            : null;
     }
 
-    public static int Subscribe(string clientId, int priority,
+    public static PriorityEventMonitorID Subscribe(string clientId, int priority,
         Func<string, DialoguePriorityDispatchResult> callback)
     {
         return Subscribe(clientId, priority, "", callback);
     }
 
-    public static int Subscribe(string clientId, int priority,
+    public static PriorityEventMonitorID Subscribe(string clientId, int priority,
         string targetEvent, Func<string, DialoguePriorityDispatchResult> callback)
     {
         string resolvedClientId;
         return TryResolveClientId(clientId, "Subscribe", out resolvedClientId) && Instance != null
             ? Instance.RegisterPriorityLiveEventSubscription(callback,
                 priority, resolvedClientId, "", targetEvent)
-            : -1;
+            : null;
     }
 
-    int RegisterOnEmitFacade(Action<string> callback)
+    EventMonitorID RegisterOnEmitFacade(Action<string> callback)
     {
-        if (callback == null) return -1;
+        if (callback == null) return null;
         return RegisterLiveEventSubscription(callback,
             BuildOnEmitFacadeClientId(callback), "", "");
     }
@@ -533,19 +533,19 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         return false;
     }
 
-    public static void UnsubscribeLiveSnapshots(int subscriptionId)
+    public static void UnsubscribeLiveSnapshots(SnaphotSubID subscriptionId)
     {
         if (Instance != null)
             Instance.UnregisterLiveSnapshotSubscription(subscriptionId);
     }
 
-    public static void UnsubscribeLiveEvents(int subscriptionId)
+    public static void UnsubscribeLiveEvents(EventMonitorID subscriptionId)
     {
         if (Instance != null)
             Instance.UnregisterLiveEventSubscription(subscriptionId);
     }
 
-    public static void UnsubscribePriorityLiveEvents(int subscriptionId)
+    public static void UnsubscribePriorityLiveEvents(PriorityEventMonitorID subscriptionId)
     {
         if (Instance != null)
             Instance.UnregisterPriorityLiveEventSubscription(subscriptionId);
@@ -2000,45 +2000,63 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             ", Path=" + request.DialoguePath + ", Event=" + request.EventName);
     }
 
-    public int RegisterLiveSnapshotSubscription(
+    public SnaphotSubID RegisterLiveSnapshotSubscription(
         Action<DialogueLiveSnapshot> callback, string clientId = "",
         string dialoguePathFilter = "", bool onlyOnChange = true,
         float minIntervalSeconds = 0f)
     {
-        return liveSnapshotServer.Subscribe(clientId, dialoguePathFilter,
+        int id = liveSnapshotServer.Subscribe(clientId, dialoguePathFilter,
             callback, onlyOnChange, minIntervalSeconds);
+        return id > 0 ? new SnaphotSubID(id) : null;
     }
 
-    public void UnregisterLiveSnapshotSubscription(int subscriptionId)
+    public void UnregisterLiveSnapshotSubscription(SnaphotSubID subscriptionId)
     {
-        liveSnapshotServer.Unsubscribe(subscriptionId);
+        if (subscriptionId == null || !subscriptionId.IsValid)
+        {
+            Debug.LogError("Dialogue_Engine.UnregisterLiveSnapshotSubscription received an invalid SnaphotSubID.");
+            return;
+        }
+        liveSnapshotServer.Unsubscribe(subscriptionId.Value);
     }
 
-    public int RegisterLiveEventSubscription(Action<string> callback,
+    public EventMonitorID RegisterLiveEventSubscription(Action<string> callback,
         string clientId = "", string dialoguePathFilter = "",
         string eventNameFilter = "")
     {
-        return liveEventServer.Subscribe(clientId, dialoguePathFilter,
+        int id = liveEventServer.Subscribe(clientId, dialoguePathFilter,
             eventNameFilter, callback);
+        return id > 0 ? new EventMonitorID(id) : null;
     }
 
-    public void UnregisterLiveEventSubscription(int subscriptionId)
+    public void UnregisterLiveEventSubscription(EventMonitorID subscriptionId)
     {
-        liveEventServer.Unsubscribe(subscriptionId);
+        if (subscriptionId == null || !subscriptionId.IsValid)
+        {
+            Debug.LogError("Dialogue_Engine.UnregisterLiveEventSubscription received an invalid EventMonitorID.");
+            return;
+        }
+        liveEventServer.Unsubscribe(subscriptionId.Value);
     }
 
-    public int RegisterPriorityLiveEventSubscription(
+    public PriorityEventMonitorID RegisterPriorityLiveEventSubscription(
         Func<string, DialoguePriorityDispatchResult> callback,
         int priority, string clientId = "", string dialoguePathFilter = "",
         string eventNameFilter = "")
     {
-        return priorityLiveEventServer.Subscribe(clientId, priority,
+        int id = priorityLiveEventServer.Subscribe(clientId, priority,
             dialoguePathFilter, eventNameFilter, callback);
+        return id > 0 ? new PriorityEventMonitorID(id) : null;
     }
 
-    public void UnregisterPriorityLiveEventSubscription(int subscriptionId)
+    public void UnregisterPriorityLiveEventSubscription(PriorityEventMonitorID subscriptionId)
     {
-        priorityLiveEventServer.Unsubscribe(subscriptionId);
+        if (subscriptionId == null || !subscriptionId.IsValid)
+        {
+            Debug.LogError("Dialogue_Engine.UnregisterPriorityLiveEventSubscription received an invalid PriorityEventMonitorID.");
+            return;
+        }
+        priorityLiveEventServer.Unsubscribe(subscriptionId.Value);
     }
 
     public void UnregisterAllClientSubscriptions(string clientId)

@@ -43,6 +43,33 @@ public enum DialoguePriorityDispatchResult
 }
 
 [Serializable]
+public sealed class SnaphotSubID
+{
+    internal readonly int Value;
+    internal SnaphotSubID(int value) { Value = value; }
+    public bool IsValid { get { return Value > 0; } }
+    public override string ToString() { return "SnaphotSubID(" + Value + ")"; }
+}
+
+[Serializable]
+public sealed class EventMonitorID
+{
+    internal readonly int Value;
+    internal EventMonitorID(int value) { Value = value; }
+    public bool IsValid { get { return Value > 0; } }
+    public override string ToString() { return "EventMonitorID(" + Value + ")"; }
+}
+
+[Serializable]
+public sealed class PriorityEventMonitorID
+{
+    internal readonly int Value;
+    internal PriorityEventMonitorID(int value) { Value = value; }
+    public bool IsValid { get { return Value > 0; } }
+    public override string ToString() { return "PriorityEventMonitorID(" + Value + ")"; }
+}
+
+[Serializable]
 public sealed class DialogueScriptRecord
 {
     public string DialogueId;
