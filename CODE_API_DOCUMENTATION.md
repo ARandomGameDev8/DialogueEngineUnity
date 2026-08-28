@@ -30,6 +30,10 @@ The DSL owns narrative content. Gameplay systems remain in C# or another archite
 
 The service is **in-process**. It resembles a client/server request API, but it does not use sockets, IPC, worker threads, or network serialization.
 
+Compatibility notes:
+- Unity-object client keys use the modern `GetEntityId()` path on newer Unity versions, with fallback to `GetInstanceID()` on older editors.
+- Runtime input handling supports legacy Input Manager, new Input System, or Both project modes.
+
 ---
 
 ## 2. Required scene setup

@@ -2,6 +2,10 @@
 
 A Unity dialogue system built around a **simple narrative DSL**, a **runtime code/service API**, and **live monitoring/event hooks** that let dialogue plug into existing gameplay code fast.
 
+Compatibility notes:
+- uses Unity's modern object identity path on newer Unity versions (`GetEntityId`) with fallback for older editors
+- supports legacy Input Manager, new Input System, or Both active input handling modes
+
 ## Core idea
 
 ```text

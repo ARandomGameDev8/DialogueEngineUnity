@@ -9,6 +9,10 @@ using System.IO;
 using UnityEditor;
 #endif
 
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
+
 // ── Enums ─────────────────────────────────────────────────────────────────────
 public enum PortraitMode         { None, Single, Dual }      // Single = uni mode, Dual = duel mode
 public enum PortraitPlacement    { Inside, OnBorder, Outside, CharacterPanel }
@@ -263,7 +267,8 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     }
 
     // Preferred coalesced one-shot query overload for Unity objects. The
-    // caller identity is derived automatically from GetInstanceID().
+    // caller identity is derived automatically from the engine's Unity-object
+    // key helper, using the modern EntityId path on newer Unity versions.
     public static DialogueResponse SendRequest(UnityEngine.Object caller,
                                                DialogueRequest request)
     {
@@ -500,7 +505,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         if (callback == null) return "";
         object target = callback.Target;
         if (target is UnityEngine.Object unityObject && unityObject != null)
-            return "OnEmit:" + unityObject.GetInstanceID();
+            return "OnEmit:" + GetClientKey(unityObject);
         if (target != null)
             return "OnEmit:" + target.GetType().FullName + ":" + target.GetHashCode();
         return "OnEmit:" + callback.Method.DeclaringType.FullName + ":" + callback.Method.Name;
@@ -515,7 +520,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             Debug.LogError("Dialogue_Engine." + apiName + " requires a non-null UnityEngine.Object client.");
             return false;
         }
-        clientId = client.GetInstanceID().ToString();
+        clientId = GetClientKey(client);
         return true;
     }
 
@@ -1933,7 +1938,17 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                 Message = "<error>Caller is null. Use SendRequest(string clientId, request) for non-Unity clients.</error>"
             };
         }
-        return SendRequestForClient(caller.GetInstanceID().ToString(), request);
+        return SendRequestForClient(GetClientKey(caller), request);
+    }
+
+    static string GetClientKey(UnityEngine.Object unityObject)
+    {
+        if (unityObject == null) return "";
+        #if UNITY_6000_5_OR_NEWER
+        return unityObject.GetEntityId().ToString();
+        #else
+        return unityObject.GetInstanceID().ToString();
+        #endif
     }
 
     public DialogueResponse SendRequestForClient(string clientId,
@@ -2061,6 +2076,65 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         return b.Append("</events>").ToString();
     }
 
+    bool AdvanceOrConfirmKeyPressed()
+    {
+        #if ENABLE_INPUT_SYSTEM
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard != null &&
+            (keyboard.spaceKey.wasPressedThisFrame ||
+             keyboard.enterKey.wasPressedThisFrame ||
+             keyboard.numpadEnterKey.wasPressedThisFrame))
+            return true;
+        #endif
+
+        #if ENABLE_LEGACY_INPUT_MANAGER
+        if (Input.GetKeyDown(KeyCode.Space) ||
+            Input.GetKeyDown(KeyCode.Return) ||
+            Input.GetKeyDown(KeyCode.KeypadEnter))
+            return true;
+        #endif
+
+        return false;
+    }
+
+    bool AdvanceKeyPressed()
+    {
+        #if ENABLE_INPUT_SYSTEM
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard != null &&
+            (keyboard.spaceKey.wasPressedThisFrame ||
+             keyboard.numpadEnterKey.wasPressedThisFrame))
+            return true;
+        #endif
+
+        #if ENABLE_LEGACY_INPUT_MANAGER
+        if (Input.GetKeyDown(KeyCode.Space) ||
+            Input.GetKeyDown(KeyCode.KeypadEnter))
+            return true;
+        #endif
+
+        return false;
+    }
+
+    bool SpeedUpKeyHeld()
+    {
+        #if ENABLE_INPUT_SYSTEM
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard != null &&
+            (keyboard.leftCtrlKey.isPressed ||
+             keyboard.rightCtrlKey.isPressed))
+            return true;
+        #endif
+
+        #if ENABLE_LEGACY_INPUT_MANAGER
+        if (Input.GetKey(KeyCode.LeftControl) ||
+            Input.GetKey(KeyCode.RightControl))
+            return true;
+        #endif
+
+        return false;
+    }
+
     // ─── Update ────────────────────────────────────────────────────────────────
     void Update()
     {
@@ -2075,13 +2149,10 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
 
         // Choices are mouse-only. Space/Enter must never advance the section
         // behind an unanswered choice or accidentally close the dialogue.
-        if (IsChoiceAwaitingSelection() &&
-            (Input.GetKeyDown(KeyCode.Space) ||
-             Input.GetKeyDown(KeyCode.Return) ||
-             Input.GetKeyDown(KeyCode.KeypadEnter)))
+        if (IsChoiceAwaitingSelection() && AdvanceOrConfirmKeyPressed())
             return;
 
-        if (Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.KeypadEnter))
+        if (AdvanceKeyPressed())
         {
             SetRuntimeStatus(DialogueRuntimeStatus.Transitioning,
                 isTyping ? "Input completed typewriter" : "Enter/Space pressed");
@@ -2269,7 +2340,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         {
             RenderDialogueText(text.Substring(0, i));
             // Hold Ctrl to speed through the typewriter.
-            float delay = (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))
+            float delay = SpeedUpKeyHeld()
                 ? typewriterSpeed * 0.12f : typewriterSpeed;
             yield return new WaitForSeconds(delay);
         }
