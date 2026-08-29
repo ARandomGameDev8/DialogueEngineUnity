@@ -187,14 +187,14 @@ public static class DialogueVisualEditorUtility
     static void ApplyParentDefaultsToSlot(DialogueSlotDefinition slot,
         DialogueBackgroundStyle background, DialogueBorderStyle border,
         DialogueShadowStyle shadow, DialogueOpacitySettings opacity,
-        int zLayer, float defaultWidth, float defaultHeight)
+        int zLayer)
     {
         if (slot == null) return;
-        slot.Width.Unit = DialogueSizeUnit.Pixels;
-        if (slot.Width.Value <= 0f) slot.Width.Value = defaultWidth;
-        slot.Height.Unit = DialogueSizeUnit.Pixels;
-        if (slot.Height.Value <= 0f) slot.Height.Value = defaultHeight;
-        slot.GapAfter = slot.GapAfter < 0f ? -1f : slot.GapAfter;
+        slot.Width.Unit = DialogueSizeUnit.Auto;
+        slot.Width.Value = 0f;
+        slot.Height.Unit = DialogueSizeUnit.Auto;
+        slot.Height.Value = 0f;
+        slot.GapAfter = -1f;
 
         if (background != null)
         {

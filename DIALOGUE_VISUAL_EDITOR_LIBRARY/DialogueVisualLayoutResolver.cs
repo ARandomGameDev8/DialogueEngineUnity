@@ -213,7 +213,7 @@ public static class DialogueVisualLayoutResolver
         int slotCount = GetPartitionSlotCount(def.PartitionLevel);
         bool horizontal = def.Side == DialogueAttachedAreaSide.Top ||
                           def.Side == DialogueAttachedAreaSide.Bottom;
-        if (slotCount > 1)
+        if (slotCount > 1 && HasPartitionedSlotOverrides(def.Slots, horizontal, slotCount))
             ResolvePartitionedParentSize(def.Slots, horizontal, slotCount, def.InterSlotSpacing,
                 width, height, out width, out height);
 

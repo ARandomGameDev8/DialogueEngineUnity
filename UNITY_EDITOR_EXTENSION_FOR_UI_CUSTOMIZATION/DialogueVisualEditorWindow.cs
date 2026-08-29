@@ -722,7 +722,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         area.PartitionLevel = EditorGUILayout.IntSlider("Partition Level", area.PartitionLevel, 0, 2);
         area.InterSlotSpacing = EditorGUILayout.FloatField("Default Inter-Slot Spacing", area.InterSlotSpacing);
         area.ZLayer = EditorGUILayout.IntSlider("Z Layer", area.ZLayer, -10, 10);
-        if (area.PartitionLevel != oldPartition && area.PartitionLevel > 0)
+        if (area.PartitionLevel != oldPartition && area.PartitionLevel > oldPartition)
             DialogueVisualEditorUtility.SyncVisibleSlotsFromArea(area);
         if (area.PartitionLevel > 0 && GUILayout.Button("Sync Visible Slots From Parent Area", GUILayout.Height(22f)))
             DialogueVisualEditorUtility.SyncVisibleSlotsFromArea(area);
