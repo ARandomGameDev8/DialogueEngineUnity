@@ -189,7 +189,7 @@ public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
 
     void HandleDragAndDrop(Rect rect)
     {
-        Event evt = Event.current;
+        UnityEngine.Event evt = UnityEngine.Event.current;
         if (!rect.Contains(evt.mousePosition)) return;
         if (evt.type != EventType.DragUpdated && evt.type != EventType.DragPerform) return;
         if (DragAndDrop.objectReferences == null || DragAndDrop.objectReferences.Length == 0) return;

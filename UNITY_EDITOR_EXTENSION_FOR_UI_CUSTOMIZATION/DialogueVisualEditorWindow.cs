@@ -211,7 +211,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             canvasRect.width - 24f, canvasRect.height - 24f);
         resolved = DialogueVisualLayoutResolver.Resolve(layoutAsset, padded);
         DrawCanvas(resolved);
-        HandleCanvasInput(Event.current, padded);
+        HandleCanvasInput(UnityEngine.Event.current, padded);
         HandleCanvasDragAndDrop(canvasRect);
 
         EditorGUILayout.EndVertical();
@@ -355,7 +355,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         }
     }
 
-    void HandleCanvasInput(Event evt, Rect paddedCanvas)
+    void HandleCanvasInput(UnityEngine.Event evt, Rect paddedCanvas)
     {
         if (evt == null || layoutAsset == null || resolved == null) return;
 
@@ -455,7 +455,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     void BeginMainResize()
     {
         dragMode = DragMode.ResizeMain;
-        dragStartMouse = Event.current.mousePosition;
+        dragStartMouse = UnityEngine.Event.current.mousePosition;
         dragStartWidthUnit = layoutAsset.MainPanel.Width.Unit;
         dragStartHeightUnit = layoutAsset.MainPanel.Height.Unit;
         dragStartWidthValue = layoutAsset.MainPanel.Width.Value;
@@ -466,7 +466,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     void BeginMainMove()
     {
         dragMode = DragMode.MoveMainCustom;
-        dragStartMouse = Event.current.mousePosition;
+        dragStartMouse = UnityEngine.Event.current.mousePosition;
         dragStartOffset = new Vector2(layoutAsset.MainPanel.CustomAnchor.OffsetX,
             layoutAsset.MainPanel.CustomAnchor.OffsetY);
         DialogueVisualEditorUtility.RecordChange(layoutAsset, "Move Main Panel");
@@ -477,7 +477,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         DialogueAttachedAreaDefinition area = DialogueVisualEditorUtility.GetArea(layoutAsset, kind);
         if (area == null) return;
         dragMode = DragMode.ResizeArea;
-        dragStartMouse = Event.current.mousePosition;
+        dragStartMouse = UnityEngine.Event.current.mousePosition;
         dragStartWidthUnit = area.Width.Unit;
         dragStartHeightUnit = area.Height.Unit;
         dragStartWidthValue = area.Width.Value;
@@ -491,7 +491,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         DialogueAttachedAreaDefinition area = DialogueVisualEditorUtility.GetArea(layoutAsset, kind);
         if (area == null) return;
         dragMode = DragMode.AdjustAreaGap;
-        dragStartMouse = Event.current.mousePosition;
+        dragStartMouse = UnityEngine.Event.current.mousePosition;
         dragStartGapValue = area.GapFromMainPanel;
         selection.AreaKind = kind;
         DialogueVisualEditorUtility.RecordChange(layoutAsset, "Adjust Area Gap");
@@ -503,7 +503,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             component.AreaKind, component.SlotIndex, component.ComponentIndex);
         if (def == null) return;
         dragMode = DragMode.MoveComponent;
-        dragStartMouse = Event.current.mousePosition;
+        dragStartMouse = UnityEngine.Event.current.mousePosition;
         dragStartOffset = def.Offset;
         DialogueVisualEditorUtility.RecordChange(layoutAsset, "Move Component");
     }
@@ -514,7 +514,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             component.AreaKind, component.SlotIndex, component.ComponentIndex);
         if (def == null) return;
         dragMode = DragMode.ResizeComponent;
-        dragStartMouse = Event.current.mousePosition;
+        dragStartMouse = UnityEngine.Event.current.mousePosition;
         dragStartWidthUnit = def.Width.Unit;
         dragStartHeightUnit = def.Height.Unit;
         dragStartWidthValue = def.Width.Value;
@@ -1226,7 +1226,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
     void HandleCanvasDragAndDrop(Rect rect)
     {
-        Event evt = Event.current;
+        UnityEngine.Event evt = UnityEngine.Event.current;
         if (!rect.Contains(evt.mousePosition)) return;
         if (evt.type != EventType.DragUpdated && evt.type != EventType.DragPerform) return;
         if (DragAndDrop.objectReferences == null || DragAndDrop.objectReferences.Length == 0) return;
