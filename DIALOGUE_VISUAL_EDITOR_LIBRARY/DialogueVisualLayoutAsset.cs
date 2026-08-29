@@ -217,6 +217,9 @@ public sealed class DialogueMainPanelDefinition
 [Serializable]
 public sealed class DialogueInnerRegionDefinition
 {
+    public string DisplayName = "Inner Region";
+    public bool Enabled = true;
+
     public DialogueSizeValue Width = new DialogueSizeValue
     {
         Unit = DialogueSizeUnit.Percent,
