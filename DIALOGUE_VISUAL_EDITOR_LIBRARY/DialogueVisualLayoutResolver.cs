@@ -13,10 +13,20 @@ public sealed class ResolvedDialogueLayout
     public readonly List<ResolvedDialogueComponentRect> Components = new List<ResolvedDialogueComponentRect>();
 }
 
+public enum ResolvedDialogueAreaKind
+{
+    MainInner,
+    Top,
+    Bottom,
+    Left,
+    Right
+}
+
 [Serializable]
 public sealed class ResolvedDialogueArea
 {
     public string Name;
+    public ResolvedDialogueAreaKind AreaKind;
     public DialogueAttachedAreaSide Side;
     public Rect Rect;
     public int ZLayer;
@@ -26,6 +36,8 @@ public sealed class ResolvedDialogueArea
 public sealed class ResolvedDialogueSlot
 {
     public string AreaName;
+    public ResolvedDialogueAreaKind AreaKind;
+    public int SlotIndex;
     public string SlotId;
     public Rect Rect;
 }
@@ -34,7 +46,9 @@ public sealed class ResolvedDialogueSlot
 public sealed class ResolvedDialogueComponentRect
 {
     public string AreaName;
-    public string SlotId;
+    public ResolvedDialogueAreaKind AreaKind;
+    public int SlotIndex;
+    public int ComponentIndex;
     public string DisplayName;
     public DialogueComponentType ComponentType;
     public Rect Rect;
@@ -162,12 +176,14 @@ public static class DialogueVisualLayoutResolver
         resolved.Areas.Add(new ResolvedDialogueArea
         {
             Name = areaName,
+            AreaKind = ResolvedDialogueAreaKind.MainInner,
             Side = DialogueAttachedAreaSide.Top,
             Rect = areaRect,
             ZLayer = 0
         });
 
-        ResolveSlotsAndComponents(areaName, areaRect, true, def.BasePartitionCount,
+        ResolveSlotsAndComponents(areaName, ResolvedDialogueAreaKind.MainInner,
+            areaRect, true, def.BasePartitionCount,
             def.OverflowEnabled, def.RowGap, def.InterSlotSpacing, def.Slots, resolved);
     }
 
@@ -211,9 +227,11 @@ public static class DialogueVisualLayoutResolver
                 break;
         }
 
+        ResolvedDialogueAreaKind kind = ToAreaKind(def.Side);
         resolved.Areas.Add(new ResolvedDialogueArea
         {
             Name = def.DisplayName,
+            AreaKind = kind,
             Side = def.Side,
             Rect = areaRect,
             ZLayer = def.ZLayer
@@ -221,12 +239,13 @@ public static class DialogueVisualLayoutResolver
 
         bool horizontal = def.Side == DialogueAttachedAreaSide.Top ||
                           def.Side == DialogueAttachedAreaSide.Bottom;
-        ResolveSlotsAndComponents(def.DisplayName, areaRect, horizontal,
+        ResolveSlotsAndComponents(def.DisplayName, kind, areaRect, horizontal,
             def.BasePartitionCount, def.OverflowEnabled, def.RowOrColumnGap,
             def.InterSlotSpacing, def.Slots, resolved);
     }
 
-    static void ResolveSlotsAndComponents(string areaName, Rect areaRect, bool horizontal,
+    static void ResolveSlotsAndComponents(string areaName,
+        ResolvedDialogueAreaKind areaKind, Rect areaRect, bool horizontal,
         int baseCount, bool overflow, float overflowGap, float interSlotSpacing,
         List<DialogueSlotDefinition> slots, ResolvedDialogueLayout resolved)
     {
@@ -237,7 +256,7 @@ public static class DialogueVisualLayoutResolver
 
         if (!overflow)
         {
-            ResolveSlotRow(areaName, areaRect, horizontal, 0, clampedBase,
+            ResolveSlotRow(areaName, areaKind, areaRect, horizontal, 0, clampedBase,
                 interSlotSpacing, slots, resolved, 0);
             return;
         }
@@ -248,9 +267,9 @@ public static class DialogueVisualLayoutResolver
             Rect topRow = new Rect(areaRect.x, areaRect.y, areaRect.width, rowHeight);
             Rect bottomRow = new Rect(areaRect.x, areaRect.y + rowHeight + overflowGap,
                 areaRect.width, rowHeight);
-            ResolveSlotRow(areaName, topRow, true, 0, clampedBase,
+            ResolveSlotRow(areaName, areaKind, topRow, true, 0, clampedBase,
                 interSlotSpacing, slots, resolved, 0);
-            ResolveSlotRow(areaName, bottomRow, true, clampedBase, overflowCount,
+            ResolveSlotRow(areaName, areaKind, bottomRow, true, clampedBase, overflowCount,
                 interSlotSpacing, slots, resolved, clampedBase);
         }
         else
@@ -259,20 +278,21 @@ public static class DialogueVisualLayoutResolver
             Rect leftColumn = new Rect(areaRect.x, areaRect.y, columnWidth, areaRect.height);
             Rect rightColumn = new Rect(areaRect.x + columnWidth + overflowGap, areaRect.y,
                 columnWidth, areaRect.height);
-            ResolveSlotRow(areaName, leftColumn, false, 0, clampedBase,
+            ResolveSlotRow(areaName, areaKind, leftColumn, false, 0, clampedBase,
                 interSlotSpacing, slots, resolved, 0);
-            ResolveSlotRow(areaName, rightColumn, false, clampedBase, overflowCount,
+            ResolveSlotRow(areaName, areaKind, rightColumn, false, clampedBase, overflowCount,
                 interSlotSpacing, slots, resolved, clampedBase);
         }
     }
 
-    static void ResolveSlotRow(string areaName, Rect rowRect, bool horizontal,
-        int startIndex, int slotCount, float spacing, List<DialogueSlotDefinition> slots,
-        ResolvedDialogueLayout resolved, int slotOffset)
+    static void ResolveSlotRow(string areaName, ResolvedDialogueAreaKind areaKind,
+        Rect rowRect, bool horizontal, int startIndex, int slotCount, float spacing,
+        List<DialogueSlotDefinition> slots, ResolvedDialogueLayout resolved, int slotOffset)
     {
         if (slotCount <= 0) return;
 
         List<DialogueSlotDefinition> active = new List<DialogueSlotDefinition>();
+        List<int> activeIndices = new List<int>();
         for (int i = 0; i < slotCount; i++)
         {
             int idx = startIndex + i;
@@ -280,6 +300,7 @@ public static class DialogueVisualLayoutResolver
             DialogueSlotDefinition slot = slots[idx];
             if (slot == null || !slot.Enabled) continue;
             active.Add(slot);
+            activeIndices.Add(idx);
         }
         if (active.Count == 0) return;
 
@@ -289,6 +310,7 @@ public static class DialogueVisualLayoutResolver
         for (int i = 0; i < active.Count; i++)
         {
             DialogueSlotDefinition slot = active[i];
+            int slotIndex = activeIndices[i];
             Rect slotRect;
             if (horizontal)
             {
@@ -304,6 +326,8 @@ public static class DialogueVisualLayoutResolver
             resolved.Slots.Add(new ResolvedDialogueSlot
             {
                 AreaName = areaName,
+                AreaKind = areaKind,
+                SlotIndex = slotIndex,
                 SlotId = slot.SlotId,
                 Rect = slotRect
             });
@@ -318,6 +342,9 @@ public static class DialogueVisualLayoutResolver
                 resolved.Components.Add(new ResolvedDialogueComponentRect
                 {
                     AreaName = areaName,
+                    AreaKind = areaKind,
+                    SlotIndex = slotIndex,
+                    ComponentIndex = c,
                     SlotId = slot.SlotId,
                     DisplayName = string.IsNullOrEmpty(component.DisplayName)
                         ? component.ComponentType.ToString() : component.DisplayName,
@@ -400,6 +427,17 @@ public static class DialogueVisualLayoutResolver
         for (int i = 0; i < sizes.Count; i++)
             if (sizes[i] < 0f) sizes[i] = autoSize;
         return sizes;
+    }
+
+    static ResolvedDialogueAreaKind ToAreaKind(DialogueAttachedAreaSide side)
+    {
+        switch (side)
+        {
+            case DialogueAttachedAreaSide.Top: return ResolvedDialogueAreaKind.Top;
+            case DialogueAttachedAreaSide.Bottom: return ResolvedDialogueAreaKind.Bottom;
+            case DialogueAttachedAreaSide.Left: return ResolvedDialogueAreaKind.Left;
+            default: return ResolvedDialogueAreaKind.Right;
+        }
     }
 
     static float ResolveCustomX(DialogueCustomAnchorDefinition custom, Rect canvas, float width)

@@ -79,6 +79,34 @@ public class DialogueEngineEditor : Editor
 
         EditorGUILayout.Space(6);
 
+        // ── Visual Layout Asset (phase 2/3) ───────────────────────────────────
+        showVisualLayoutAssetSection = EditorGUILayout.Foldout(showVisualLayoutAssetSection, "Visual Layout Asset", true);
+        if (showVisualLayoutAssetSection)
+        {
+            EditorGUI.indentLevel++;
+            e.useVisualLayoutAsset = EditorGUILayout.Toggle("Use Layout Asset", e.useVisualLayoutAsset);
+            e.visualLayoutAsset = (DialogueLayoutAsset)EditorGUILayout.ObjectField(
+                "Layout Asset", e.visualLayoutAsset, typeof(DialogueLayoutAsset), false);
+            EditorGUILayout.HelpBox(
+                "Phase 2/3 bridge: assign a DialogueLayoutAsset here if you want the visual layout asset system to drive supported runtime UI fields and be editable in the Dialogue Visual Editor window.",
+                MessageType.Info);
+
+            EditorGUILayout.BeginHorizontal();
+            GUI.enabled = e.visualLayoutAsset != null;
+            if (GUILayout.Button("Apply Layout Asset To Runtime Fields", GUILayout.Height(24)))
+            {
+                DialogueVisualLayoutBridge.ApplyToEngine(e, e.visualLayoutAsset);
+                EditorUtility.SetDirty(e);
+            }
+            GUI.enabled = true;
+            if (GUILayout.Button("Open Dialogue Visual Editor", GUILayout.Height(24)))
+                DialogueVisualEditorWindow.Open(e);
+            EditorGUILayout.EndHorizontal();
+            EditorGUI.indentLevel--;
+        }
+
+        EditorGUILayout.Space(6);
+
         // ── Panel ──────────────────────────────────────────────────────────────
         EditorGUILayout.LabelField("Panel", EditorStyles.boldLabel);
         e.panelSettings = (UnityEngine.UIElements.PanelSettings)EditorGUILayout.ObjectField(
@@ -527,6 +555,8 @@ public class DialogueEngineEditor : Editor
         GUI.backgroundColor = new Color(0.4f, 0.8f, 1f, 1f);
         if (GUILayout.Button("Open Layout Preview", GUILayout.Height(30)))
             DialoguePreviewWindow.Open(e);
+        if (GUILayout.Button("Open Dialogue Visual Editor", GUILayout.Height(30)))
+            DialogueVisualEditorWindow.Open(e);
         GUI.backgroundColor = Color.white;
 
         EditorGUILayout.Space(4);
