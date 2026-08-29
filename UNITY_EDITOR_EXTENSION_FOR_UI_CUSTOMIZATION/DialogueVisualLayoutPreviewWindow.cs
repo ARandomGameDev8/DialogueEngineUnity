@@ -87,17 +87,20 @@ public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
 
     void DrawResolved(ResolvedDialogueLayout layout)
     {
-        if (layout == null) return;
+        if (layout == null || layoutAsset == null) return;
 
-        EditorGUI.DrawRect(layout.MainPanelRect,
-            new Color(0.18f, 0.22f, 0.30f, 0.90f));
-        Handles.color = new Color(0.70f, 0.82f, 1f, 1f);
-        Handles.DrawAAPolyLine(2f,
-            new Vector3(layout.MainPanelRect.xMin, layout.MainPanelRect.yMin),
-            new Vector3(layout.MainPanelRect.xMax, layout.MainPanelRect.yMin),
-            new Vector3(layout.MainPanelRect.xMax, layout.MainPanelRect.yMax),
-            new Vector3(layout.MainPanelRect.xMin, layout.MainPanelRect.yMax),
-            new Vector3(layout.MainPanelRect.xMin, layout.MainPanelRect.yMin));
+        DialogueMainPanelDefinition mainPanel = layoutAsset.MainPanel;
+        DialogueInnerRegionDefinition innerRegion = mainPanel != null ? mainPanel.InnerRegion : null;
+
+        DialogueVisualStylePreviewUtility.DrawStyledElement(
+            layout.MainPanelRect,
+            mainPanel != null ? mainPanel.Background : null,
+            mainPanel != null ? mainPanel.Border : null,
+            mainPanel != null ? mainPanel.Shadow : null,
+            mainPanel != null ? mainPanel.Opacity : null,
+            new Color(0.18f, 0.22f, 0.30f, 0.90f),
+            new Color(0.70f, 0.82f, 1f, 1f),
+            2f);
 
         if (showLabels)
             GUI.Label(new Rect(layout.MainPanelRect.x + 6, layout.MainPanelRect.y + 4, 220, 18),
@@ -106,10 +109,39 @@ public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
         for (int i = 0; i < layout.Areas.Count; i++)
         {
             ResolvedDialogueArea area = layout.Areas[i];
-            if (area.Name == "Main Panel / Inner Region")
-                EditorGUI.DrawRect(area.Rect, new Color(0.22f, 0.26f, 0.30f, 0.35f));
+            DialogueBackgroundStyle background = null;
+            DialogueBorderStyle border = null;
+            DialogueShadowStyle shadow = null;
+            DialogueOpacitySettings opacity = null;
+            Color fallbackFill = area.AreaKind == ResolvedDialogueAreaKind.MainInner
+                ? new Color(0.22f, 0.26f, 0.30f, 0.35f)
+                : new Color(0.16f, 0.36f, 0.24f, 0.45f);
+
+            if (area.AreaKind == ResolvedDialogueAreaKind.MainInner)
+            {
+                background = innerRegion != null ? innerRegion.Background : null;
+                border = innerRegion != null ? innerRegion.Border : null;
+                shadow = innerRegion != null ? innerRegion.Shadow : null;
+                opacity = innerRegion != null ? innerRegion.Opacity : null;
+            }
             else
-                EditorGUI.DrawRect(area.Rect, new Color(0.16f, 0.36f, 0.24f, 0.45f));
+            {
+                DialogueAttachedAreaDefinition areaDef = DialogueVisualEditorUtility.GetArea(layoutAsset, area.AreaKind);
+                background = areaDef != null ? areaDef.Background : null;
+                border = areaDef != null ? areaDef.Border : null;
+                shadow = areaDef != null ? areaDef.Shadow : null;
+                opacity = areaDef != null ? areaDef.Opacity : null;
+            }
+
+            DialogueVisualStylePreviewUtility.DrawStyledElement(
+                area.Rect,
+                background,
+                border,
+                shadow,
+                opacity,
+                fallbackFill,
+                new Color(0.65f, 0.95f, 0.70f, 1f),
+                1.5f);
 
             if (showLabels)
                 GUI.Label(new Rect(area.Rect.x + 4, area.Rect.y + 2, 240, 18),
@@ -122,20 +154,15 @@ public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
             {
                 ResolvedDialogueSlot slot = layout.Slots[i];
                 DialogueSlotDefinition slotDef = DialogueVisualEditorUtility.GetSlot(layoutAsset, slot.AreaKind, slot.SlotIndex);
-                if (slotDef != null)
-                {
-                    Color fill = slotDef.Background != null ? slotDef.Background.ColorA : new Color(0f, 0f, 0f, 0f);
-                    float opacity = slotDef.Background != null ? slotDef.Background.Opacity : 0f;
-                    fill.a *= opacity * 0.4f;
-                    if (fill.a > 0f) EditorGUI.DrawRect(slot.Rect, fill);
-                }
-                Handles.color = new Color(1f, 0.84f, 0.40f, 1f);
-                Handles.DrawAAPolyLine(1.5f,
-                    new Vector3(slot.Rect.xMin, slot.Rect.yMin),
-                    new Vector3(slot.Rect.xMax, slot.Rect.yMin),
-                    new Vector3(slot.Rect.xMax, slot.Rect.yMax),
-                    new Vector3(slot.Rect.xMin, slot.Rect.yMax),
-                    new Vector3(slot.Rect.xMin, slot.Rect.yMin));
+                DialogueVisualStylePreviewUtility.DrawStyledElement(
+                    slot.Rect,
+                    slotDef != null ? slotDef.Background : null,
+                    slotDef != null ? slotDef.Border : null,
+                    slotDef != null ? slotDef.Shadow : null,
+                    slotDef != null ? slotDef.Opacity : null,
+                    new Color(1f, 0.84f, 0.40f, 0.08f),
+                    new Color(1f, 0.84f, 0.40f, 1f),
+                    1.5f);
                 if (showLabels)
                     GUI.Label(new Rect(slot.Rect.x + 4, slot.Rect.y + 2, 120, 18),
                         slot.SlotId, EditorStyles.miniLabel);
@@ -147,25 +174,32 @@ public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
             for (int i = 0; i < layout.Components.Count; i++)
             {
                 ResolvedDialogueComponentRect component = layout.Components[i];
-                Color fill = component.ComponentType == DialogueComponentType.ImagePanel
-                    ? new Color(0.75f, 0.46f, 0.16f, 0.22f)
-                    : component.ComponentType == DialogueComponentType.NamePanel
-                        ? new Color(0.24f, 0.56f, 0.92f, 0.22f)
-                        : new Color(0.92f, 0.92f, 0.92f, 0.12f);
-                EditorGUI.DrawRect(component.Rect, fill);
-
-                Handles.color = component.ClipToSlot
-                    ? new Color(1f, 1f, 1f, 0.85f)
-                    : new Color(1f, 0.4f, 0.4f, 0.95f);
-                Handles.DrawAAPolyLine(1.5f,
-                    new Vector3(component.Rect.xMin, component.Rect.yMin),
-                    new Vector3(component.Rect.xMax, component.Rect.yMin),
-                    new Vector3(component.Rect.xMax, component.Rect.yMax),
-                    new Vector3(component.Rect.xMin, component.Rect.yMax),
-                    new Vector3(component.Rect.xMin, component.Rect.yMin));
+                DialogueComponentDefinition componentDef = DialogueVisualEditorUtility.GetComponent(
+                    layoutAsset,
+                    component.AreaKind,
+                    component.SlotIndex,
+                    component.ComponentIndex);
+                DialogueVisualStylePreviewUtility.DrawStyledElement(
+                    component.Rect,
+                    componentDef != null ? componentDef.Background : null,
+                    componentDef != null ? componentDef.Border : null,
+                    componentDef != null ? componentDef.Shadow : null,
+                    componentDef != null ? componentDef.Opacity : null,
+                    component.ComponentType == DialogueComponentType.ImagePanel
+                        ? new Color(0.75f, 0.46f, 0.16f, 0.22f)
+                        : component.ComponentType == DialogueComponentType.NamePanel
+                            ? new Color(0.24f, 0.56f, 0.92f, 0.22f)
+                            : new Color(0.92f, 0.92f, 0.92f, 0.12f),
+                    component.ClipToSlot
+                        ? new Color(1f, 1f, 1f, 0.85f)
+                        : new Color(1f, 0.4f, 0.4f, 0.95f),
+                    1.5f);
 
                 if (!component.ClipToSlot)
+                {
+                    Handles.color = new Color(1f, 0.4f, 0.4f, 0.95f);
                     DrawDashedRect(component.Rect, 6f);
+                }
 
                 if (showLabels)
                     GUI.Label(new Rect(component.Rect.x + 3, component.Rect.y + 2, 180, 18),
