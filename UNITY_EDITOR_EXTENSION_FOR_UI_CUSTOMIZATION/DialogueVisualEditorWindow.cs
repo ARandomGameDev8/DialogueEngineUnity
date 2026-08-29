@@ -292,6 +292,13 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             for (int i = 0; i < layout.Slots.Count; i++)
             {
                 ResolvedDialogueSlot slot = layout.Slots[i];
+                DialogueSlotDefinition slotDef = DialogueVisualEditorUtility.GetSlot(layoutAsset, slot.AreaKind, slot.SlotIndex);
+                if (slotDef != null && slotDef.Background != null)
+                {
+                    Color fill = slotDef.Background.ColorA;
+                    fill.a *= slotDef.Background.Opacity * 0.35f;
+                    if (fill.a > 0f) EditorGUI.DrawRect(slot.Rect, fill);
+                }
                 Handles.color = IsSelected(slot)
                     ? new Color(1f, 1f, 0.45f, 1f)
                     : new Color(1f, 0.84f, 0.40f, 1f);
@@ -692,7 +699,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
         EditorGUILayout.Space(8f);
         EditorGUILayout.HelpBox(
-            "Inner Region is edited directly by selecting 'Inner Region' in the hierarchy or canvas. Its partition level controls whether it remains whole (level 0) or splits into two slots (level 1). Slots inherit the region's visual settings and cannot be partitioned further.",
+            "Inner Region is edited directly by selecting 'Inner Region' in the hierarchy or canvas. Partition level 0 keeps one slot, level 1 creates two slots, and level 2 creates three slots. Slots are terminal containers and cannot be partitioned further.",
             MessageType.None);
     }
 
@@ -711,9 +718,14 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         area.GapFromMainPanel = EditorGUILayout.FloatField("Gap From Main Panel", area.GapFromMainPanel);
         DrawSizeField("Width", area.Width);
         DrawSizeField("Height", area.Height);
-        area.PartitionLevel = EditorGUILayout.IntSlider("Partition Level", area.PartitionLevel, 0, 1);
-        area.InterSlotSpacing = EditorGUILayout.FloatField("Inter-Slot Spacing", area.InterSlotSpacing);
+        int oldPartition = area.PartitionLevel;
+        area.PartitionLevel = EditorGUILayout.IntSlider("Partition Level", area.PartitionLevel, 0, 2);
+        area.InterSlotSpacing = EditorGUILayout.FloatField("Default Inter-Slot Spacing", area.InterSlotSpacing);
         area.ZLayer = EditorGUILayout.IntSlider("Z Layer", area.ZLayer, -10, 10);
+        if (area.PartitionLevel != oldPartition && area.PartitionLevel > 0)
+            DialogueVisualEditorUtility.SyncVisibleSlotsFromArea(area);
+        if (area.PartitionLevel > 0 && GUILayout.Button("Sync Visible Slots From Parent Area", GUILayout.Height(22f)))
+            DialogueVisualEditorUtility.SyncVisibleSlotsFromArea(area);
         DrawBackgroundStyle(area.Background);
         DrawBorderStyle(area.Border);
         DrawShadowStyle(area.Shadow);
@@ -727,8 +739,17 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         slot.DisplayName = EditorGUILayout.TextField("Display Name", slot.DisplayName);
         slot.Enabled = EditorGUILayout.Toggle("Enabled", slot.Enabled);
         EditorGUILayout.HelpBox(
-            "Slots are the final partition pieces. They cannot be partitioned further and inherit their parent region's visual settings. Use this view to manage the slot's contained dialogue components.",
+            "Slots are the final partition pieces. They cannot be partitioned further. They inherit their parent region's visual settings by default, but you can override their own size, spacing-after, and visual styling here.",
             MessageType.None);
+        DrawSizeField("Width", slot.Width);
+        DrawSizeField("Height", slot.Height);
+        slot.GapAfter = EditorGUILayout.FloatField("Gap To Next Slot (-1 uses parent)", slot.GapAfter);
+        DrawPaddingField("Padding", slot.Padding);
+        slot.ZLayer = EditorGUILayout.IntSlider("Z Layer", slot.ZLayer, -10, 10);
+        DrawBackgroundStyle(slot.Background);
+        DrawBorderStyle(slot.Border);
+        DrawShadowStyle(slot.Shadow);
+        DrawOpacity(slot.Opacity);
         EditorGUILayout.Space(6f);
         GUILayout.Label("Components", EditorStyles.boldLabel);
         if (slot.Components != null)
@@ -776,9 +797,12 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         DrawSizeField("Width", region.Width);
         DrawSizeField("Height", region.Height);
         region.Offset = EditorGUILayout.Vector2Field("Offset", region.Offset);
-        region.PartitionLevel = EditorGUILayout.IntSlider("Partition Level", region.PartitionLevel, 0, 1);
-        region.InterSlotSpacing = EditorGUILayout.FloatField("Inter-Slot Spacing", region.InterSlotSpacing);
+        int oldPartition = region.PartitionLevel;
+        region.PartitionLevel = EditorGUILayout.IntSlider("Partition Level", region.PartitionLevel, 0, 2);
+        region.InterSlotSpacing = EditorGUILayout.FloatField("Default Inter-Slot Spacing", region.InterSlotSpacing);
         region.ZLayer = EditorGUILayout.IntSlider("Z Layer", region.ZLayer, -10, 10);
+        if (region.PartitionLevel != oldPartition && region.PartitionLevel > 0)
+            DialogueVisualEditorUtility.SyncVisibleSlotsFromRegion(region);
         DrawBackgroundStyle(region.Background);
         DrawBorderStyle(region.Border);
         DrawShadowStyle(region.Shadow);
@@ -791,10 +815,10 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         if (kind == ResolvedDialogueAreaKind.MainInner)
         {
             DialogueInnerRegionDefinition region = layoutAsset.MainPanel != null ? layoutAsset.MainPanel.InnerRegion : null;
-            return region != null ? 1 + Mathf.Clamp(region.PartitionLevel, 0, 1) : 1;
+            return DialogueVisualEditorUtility.GetVisibleSlotCount(region);
         }
         DialogueAttachedAreaDefinition area = DialogueVisualEditorUtility.GetArea(layoutAsset, kind);
-        return area != null ? 1 + Mathf.Clamp(area.PartitionLevel, 0, 1) : 1;
+        return DialogueVisualEditorUtility.GetVisibleSlotCount(area);
     }
 
     void DrawComponentInspector()

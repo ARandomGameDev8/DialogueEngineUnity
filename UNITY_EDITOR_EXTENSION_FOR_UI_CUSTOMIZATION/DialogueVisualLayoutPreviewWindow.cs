@@ -118,10 +118,18 @@ public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
 
         if (showSlots)
         {
-            Handles.color = new Color(1f, 0.84f, 0.40f, 1f);
             for (int i = 0; i < layout.Slots.Count; i++)
             {
                 ResolvedDialogueSlot slot = layout.Slots[i];
+                DialogueSlotDefinition slotDef = DialogueVisualEditorUtility.GetSlot(layoutAsset, slot.AreaKind, slot.SlotIndex);
+                if (slotDef != null)
+                {
+                    Color fill = slotDef.Background != null ? slotDef.Background.ColorA : new Color(0f, 0f, 0f, 0f);
+                    float opacity = slotDef.Background != null ? slotDef.Background.Opacity : 0f;
+                    fill.a *= opacity * 0.4f;
+                    if (fill.a > 0f) EditorGUI.DrawRect(slot.Rect, fill);
+                }
+                Handles.color = new Color(1f, 0.84f, 0.40f, 1f);
                 Handles.DrawAAPolyLine(1.5f,
                     new Vector3(slot.Rect.xMin, slot.Rect.yMin),
                     new Vector3(slot.Rect.xMax, slot.Rect.yMin),

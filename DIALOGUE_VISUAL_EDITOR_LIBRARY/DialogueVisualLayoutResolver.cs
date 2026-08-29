@@ -165,6 +165,10 @@ public static class DialogueVisualLayoutResolver
 
         float width = ResolveSize(def.Width, parentRect.width, parentRect.width);
         float height = ResolveSize(def.Height, parentRect.height, parentRect.height);
+        int slotCount = GetPartitionSlotCount(def.PartitionLevel);
+        if (slotCount > 1)
+            ResolvePartitionedParentSize(def.Slots, true, slotCount, def.InterSlotSpacing,
+                width, height, out width, out height);
         width = Mathf.Min(width, parentRect.width);
         height = Mathf.Min(height, parentRect.height);
 
@@ -206,6 +210,12 @@ public static class DialogueVisualLayoutResolver
         float height = ResolveSize(def.Height, heightReference,
             def.Side == DialogueAttachedAreaSide.Top || def.Side == DialogueAttachedAreaSide.Bottom
                 ? 100f : mainRect.height);
+        int slotCount = GetPartitionSlotCount(def.PartitionLevel);
+        bool horizontal = def.Side == DialogueAttachedAreaSide.Top ||
+                          def.Side == DialogueAttachedAreaSide.Bottom;
+        if (slotCount > 1)
+            ResolvePartitionedParentSize(def.Slots, horizontal, slotCount, def.InterSlotSpacing,
+                width, height, out width, out height);
 
         Rect areaRect = new Rect(mainRect.xMin, mainRect.yMin, width, height);
         switch (def.Side)
@@ -238,11 +248,8 @@ public static class DialogueVisualLayoutResolver
             ZLayer = def.ZLayer
         });
 
-        bool horizontal = def.Side == DialogueAttachedAreaSide.Top ||
-                          def.Side == DialogueAttachedAreaSide.Bottom;
         ResolveSlotsAndComponents(def.DisplayName, kind, areaRect, horizontal,
-            GetPartitionSlotCount(def.PartitionLevel),
-            def.InterSlotSpacing, def.Slots, resolved);
+            slotCount, def.InterSlotSpacing, def.Slots, resolved);
     }
 
     static void ResolveSlotsAndComponents(string areaName,
@@ -251,7 +258,7 @@ public static class DialogueVisualLayoutResolver
         List<DialogueSlotDefinition> slots, ResolvedDialogueLayout resolved)
     {
         if (slots == null || slots.Count == 0) return;
-        int clampedSlotCount = Mathf.Clamp(slotCount, 1, 2);
+        int clampedSlotCount = Mathf.Clamp(slotCount, 1, 3);
         ResolveSlotRow(areaName, areaKind, areaRect, horizontal, 0, clampedSlotCount,
             interSlotSpacing, slots, resolved, 0);
     }
@@ -275,7 +282,8 @@ public static class DialogueVisualLayoutResolver
         }
         if (active.Count == 0) return;
 
-        List<float> sizes = ResolveDistributedSizes(active.Count, horizontal ? rowRect.width : rowRect.height,
+        List<float> sizes = ResolveDistributedSizes(active, horizontal,
+            horizontal ? rowRect.width : rowRect.height, rowRect.width, rowRect.height,
             spacing);
         float cursor = horizontal ? rowRect.xMin : rowRect.yMin;
         for (int i = 0; i < active.Count; i++)
@@ -283,15 +291,20 @@ public static class DialogueVisualLayoutResolver
             DialogueSlotDefinition slot = active[i];
             int slotIndex = activeIndices[i];
             Rect slotRect;
+            float gapAfter = i < active.Count - 1 ? GetGapAfter(slot, spacing) : 0f;
             if (horizontal)
             {
-                slotRect = new Rect(cursor, rowRect.yMin, sizes[i], rowRect.height);
-                cursor += sizes[i] + spacing;
+                float slotHeight = ResolveSize(slot.Height, rowRect.height, rowRect.height);
+                slotHeight = Mathf.Min(slotHeight, rowRect.height);
+                slotRect = new Rect(cursor, rowRect.yMin, sizes[i], slotHeight);
+                cursor += sizes[i] + gapAfter;
             }
             else
             {
-                slotRect = new Rect(rowRect.xMin, cursor, rowRect.width, sizes[i]);
-                cursor += sizes[i] + spacing;
+                float slotWidth = ResolveSize(slot.Width, rowRect.width, rowRect.width);
+                slotWidth = Mathf.Min(slotWidth, rowRect.width);
+                slotRect = new Rect(rowRect.xMin, cursor, slotWidth, sizes[i]);
+                cursor += sizes[i] + gapAfter;
             }
 
             resolved.Slots.Add(new ResolvedDialogueSlot
@@ -369,21 +382,94 @@ public static class DialogueVisualLayoutResolver
         return new Rect(x + component.Offset.x, y + component.Offset.y, width, height);
     }
 
-    static List<float> ResolveDistributedSizes(int slotCount,
-        float totalSpace, float spacing)
+    static List<float> ResolveDistributedSizes(List<DialogueSlotDefinition> slots,
+        bool horizontal, float totalPrimarySpace, float availableWidth,
+        float availableHeight, float defaultSpacing)
     {
-        var sizes = new List<float>(slotCount);
-        float totalSpacing = spacing * Mathf.Max(0, slotCount - 1);
-        float usable = Mathf.Max(0f, totalSpace - totalSpacing);
-        float size = slotCount > 0 ? usable / slotCount : usable;
-        for (int i = 0; i < slotCount; i++)
-            sizes.Add(size);
+        var sizes = new List<float>(slots.Count);
+        float totalSpacing = 0f;
+        for (int i = 0; i < slots.Count - 1; i++)
+            totalSpacing += GetGapAfter(slots[i], defaultSpacing);
+        float usable = Mathf.Max(0f, totalPrimarySpace - totalSpacing);
+
+        float fixedTotal = 0f;
+        int autoCount = 0;
+        for (int i = 0; i < slots.Count; i++)
+        {
+            DialogueSizeValue size = horizontal ? slots[i].Width : slots[i].Height;
+            if (size == null || size.Unit == DialogueSizeUnit.Auto)
+            {
+                sizes.Add(-1f);
+                autoCount++;
+                continue;
+            }
+            float resolved = ResolveSize(size, usable, horizontal ? 180f : 140f);
+            resolved = Mathf.Max(0f, resolved);
+            sizes.Add(resolved);
+            fixedTotal += resolved;
+        }
+
+        float remaining = Mathf.Max(0f, usable - fixedTotal);
+        float autoSize = autoCount > 0 ? remaining / autoCount : 0f;
+        if (autoCount > 0 && autoSize <= 0f)
+            autoSize = horizontal ? 180f : 140f;
+
+        for (int i = 0; i < sizes.Count; i++)
+            if (sizes[i] < 0f) sizes[i] = autoSize;
         return sizes;
+    }
+
+    static void ResolvePartitionedParentSize(List<DialogueSlotDefinition> slots,
+        bool horizontal, int slotCount, float defaultSpacing,
+        float originalWidth, float originalHeight,
+        out float fittedWidth, out float fittedHeight)
+    {
+        fittedWidth = originalWidth;
+        fittedHeight = originalHeight;
+        if (slots == null || slots.Count == 0 || slotCount <= 1) return;
+
+        int visible = Mathf.Min(slotCount, slots.Count);
+        float totalPrimary = 0f;
+        float maxSecondary = 0f;
+        for (int i = 0; i < visible; i++)
+        {
+            DialogueSlotDefinition slot = slots[i];
+            if (slot == null || !slot.Enabled) continue;
+            float primary = ResolveSize(horizontal ? slot.Width : slot.Height,
+                horizontal ? originalWidth : originalHeight,
+                horizontal ? Mathf.Max(160f, originalWidth / Mathf.Max(visible, 1))
+                           : Mathf.Max(120f, originalHeight / Mathf.Max(visible, 1)));
+            float secondary = ResolveSize(horizontal ? slot.Height : slot.Width,
+                horizontal ? originalHeight : originalWidth,
+                horizontal ? Mathf.Max(100f, originalHeight)
+                           : Mathf.Max(160f, originalWidth));
+            totalPrimary += primary;
+            if (i < visible - 1)
+                totalPrimary += GetGapAfter(slot, defaultSpacing);
+            maxSecondary = Mathf.Max(maxSecondary, secondary);
+        }
+
+        if (horizontal)
+        {
+            fittedWidth = totalPrimary;
+            fittedHeight = maxSecondary;
+        }
+        else
+        {
+            fittedWidth = maxSecondary;
+            fittedHeight = totalPrimary;
+        }
+    }
+
+    static float GetGapAfter(DialogueSlotDefinition slot, float defaultSpacing)
+    {
+        if (slot == null) return defaultSpacing;
+        return slot.GapAfter >= 0f ? slot.GapAfter : defaultSpacing;
     }
 
     static int GetPartitionSlotCount(int partitionLevel)
     {
-        return 1 + Mathf.Clamp(partitionLevel, 0, 1);
+        return 1 + Mathf.Clamp(partitionLevel, 0, 2);
     }
 
     static ResolvedDialogueAreaKind ToAreaKind(DialogueAttachedAreaSide side)

@@ -233,7 +233,7 @@ public sealed class DialogueInnerRegionDefinition
 
     public Vector2 Offset;
 
-    [Range(0, 1)] public int PartitionLevel = 0;
+    [Range(0, 2)] public int PartitionLevel = 0;
     public float InterSlotSpacing = 8f;
 
     public DialogueBackgroundStyle Background =
@@ -283,7 +283,7 @@ public sealed class DialogueAttachedAreaDefinition
 
     public float GapFromMainPanel = 8f;
 
-    [Range(0, 1)] public int PartitionLevel = 0;
+    [Range(0, 2)] public int PartitionLevel = 0;
     public float InterSlotSpacing = 8f;
 
     public DialogueBackgroundStyle Background =
@@ -327,7 +327,19 @@ public sealed class DialogueSlotDefinition
         Value = 0f
     };
 
+    [Tooltip("Set below zero to use the parent region's inter-slot spacing.")]
+    public float GapAfter = -1f;
+
     public DialoguePadding Padding = new DialoguePadding();
+    public DialogueBackgroundStyle Background =
+        new DialogueBackgroundStyle();
+    public DialogueBorderStyle Border =
+        new DialogueBorderStyle();
+    public DialogueShadowStyle Shadow =
+        new DialogueShadowStyle();
+    public DialogueOpacitySettings Opacity =
+        new DialogueOpacitySettings();
+    [Range(-10, 10)] public int ZLayer;
 
     [SerializeReference]
     public List<DialogueComponentDefinition> Components =

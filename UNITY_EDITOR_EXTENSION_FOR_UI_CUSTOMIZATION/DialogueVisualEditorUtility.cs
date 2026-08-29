@@ -96,6 +96,53 @@ public static class DialogueVisualEditorUtility
         EnsureSlots(asset.RightArea);
     }
 
+    public static int GetVisibleSlotCount(DialogueInnerRegionDefinition region)
+    {
+        return region != null ? 1 + Mathf.Clamp(region.PartitionLevel, 0, 2) : 1;
+    }
+
+    public static int GetVisibleSlotCount(DialogueAttachedAreaDefinition area)
+    {
+        return area != null ? 1 + Mathf.Clamp(area.PartitionLevel, 0, 2) : 1;
+    }
+
+    public static void SyncVisibleSlotsFromRegion(DialogueInnerRegionDefinition region)
+    {
+        if (region == null || region.Slots == null) return;
+        EnsureSlots(region.Slots);
+        int count = GetVisibleSlotCount(region);
+        float defaultWidth = region.Width != null && region.Width.Unit == DialogueSizeUnit.Pixels && region.Width.Value > 0f
+            ? Mathf.Max(80f, region.Width.Value / count)
+            : 220f;
+        float defaultHeight = region.Height != null && region.Height.Unit == DialogueSizeUnit.Pixels && region.Height.Value > 0f
+            ? Mathf.Max(60f, region.Height.Value)
+            : 120f;
+        for (int i = 0; i < count && i < region.Slots.Count; i++)
+            ApplyParentDefaultsToSlot(region.Slots[i], region.Background, region.Border,
+                region.Shadow, region.Opacity, region.ZLayer, defaultWidth, defaultHeight);
+    }
+
+    public static void SyncVisibleSlotsFromArea(DialogueAttachedAreaDefinition area)
+    {
+        if (area == null || area.Slots == null) return;
+        EnsureSlots(area.Slots);
+        int count = GetVisibleSlotCount(area);
+        bool horizontal = area.Side == DialogueAttachedAreaSide.Top || area.Side == DialogueAttachedAreaSide.Bottom;
+        float defaultWidth = horizontal
+            ? (area.Width != null && area.Width.Unit == DialogueSizeUnit.Pixels && area.Width.Value > 0f
+                ? Mathf.Max(80f, area.Width.Value / count) : 200f)
+            : (area.Width != null && area.Width.Unit == DialogueSizeUnit.Pixels && area.Width.Value > 0f
+                ? Mathf.Max(80f, area.Width.Value) : 160f);
+        float defaultHeight = horizontal
+            ? (area.Height != null && area.Height.Unit == DialogueSizeUnit.Pixels && area.Height.Value > 0f
+                ? Mathf.Max(60f, area.Height.Value) : 100f)
+            : (area.Height != null && area.Height.Unit == DialogueSizeUnit.Pixels && area.Height.Value > 0f
+                ? Mathf.Max(60f, area.Height.Value / count) : 140f);
+        for (int i = 0; i < count && i < area.Slots.Count; i++)
+            ApplyParentDefaultsToSlot(area.Slots[i], area.Background, area.Border,
+                area.Shadow, area.Opacity, area.ZLayer, defaultWidth, defaultHeight);
+    }
+
     static void EnsureSlots(DialogueInnerRegionDefinition region)
     {
         if (region == null)
@@ -135,6 +182,55 @@ public static class DialogueVisualEditorUtility
     {
         const string letters = "ABCDEF";
         return index >= 0 && index < letters.Length ? letters[index].ToString() : "S" + index;
+    }
+
+    static void ApplyParentDefaultsToSlot(DialogueSlotDefinition slot,
+        DialogueBackgroundStyle background, DialogueBorderStyle border,
+        DialogueShadowStyle shadow, DialogueOpacitySettings opacity,
+        int zLayer, float defaultWidth, float defaultHeight)
+    {
+        if (slot == null) return;
+        slot.Width.Unit = DialogueSizeUnit.Pixels;
+        if (slot.Width.Value <= 0f) slot.Width.Value = defaultWidth;
+        slot.Height.Unit = DialogueSizeUnit.Pixels;
+        if (slot.Height.Value <= 0f) slot.Height.Value = defaultHeight;
+        slot.GapAfter = slot.GapAfter < 0f ? -1f : slot.GapAfter;
+
+        if (background != null)
+        {
+            slot.Background.Mode = background.Mode;
+            slot.Background.ColorA = background.ColorA;
+            slot.Background.ColorB = background.ColorB;
+            slot.Background.Opacity = background.Opacity;
+            slot.Background.SpriteSourceKey = background.SpriteSourceKey;
+            slot.Background.GradientDirection = background.GradientDirection;
+        }
+        if (border != null)
+        {
+            slot.Border.Enabled = border.Enabled;
+            slot.Border.LeftThickness = border.LeftThickness;
+            slot.Border.RightThickness = border.RightThickness;
+            slot.Border.TopThickness = border.TopThickness;
+            slot.Border.BottomThickness = border.BottomThickness;
+            slot.Border.BorderColor = border.BorderColor;
+            slot.Border.CornerRadiusTopLeft = border.CornerRadiusTopLeft;
+            slot.Border.CornerRadiusTopRight = border.CornerRadiusTopRight;
+            slot.Border.CornerRadiusBottomLeft = border.CornerRadiusBottomLeft;
+            slot.Border.CornerRadiusBottomRight = border.CornerRadiusBottomRight;
+            slot.Border.BorderSpriteSourceKey = border.BorderSpriteSourceKey;
+            slot.Border.Opacity = border.Opacity;
+        }
+        if (shadow != null)
+        {
+            slot.Shadow.Enabled = shadow.Enabled;
+            slot.Shadow.Offset = shadow.Offset;
+            slot.Shadow.Blur = shadow.Blur;
+            slot.Shadow.Color = shadow.Color;
+            slot.Shadow.Opacity = shadow.Opacity;
+        }
+        if (opacity != null)
+            slot.Opacity.Opacity = opacity.Opacity;
+        slot.ZLayer = zLayer;
     }
 
     public static void RecordChange(Object target, string actionName)
