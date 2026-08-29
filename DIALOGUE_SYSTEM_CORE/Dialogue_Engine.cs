@@ -674,7 +674,12 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     [Range(0f, 1f)] public float inactivePortraitOpacity = 0.4f;
     public Color inactiveTintColour = new Color(0.5f, 0.5f, 0.5f, 1f);
 
-    // ─── Character anelShowImagePanel = true;
+    // ─── Character Figure Panel ───────────────────────────────────────────────
+    const int CHARACTER_PANEL_DATA_VERSION = 2;
+    [HideInInspector] [SerializeField] int characterPanelDataVersion;
+    [Header("Character Panel (figure panel)")]
+    [Tooltip("The figure panel sits OUTSIDE the main panel ([figure panel] [main panel]). It is segmented into an image panel and a name panel, both fully customizable.")]
+    public bool characterPanelShowImagePanel = true;
     public bool characterPanelShowNamePanel  = true;
     [Tooltip("Default layout: image panel on top, name panel below.")]
     public CharacterPanelOrder characterPanelOrder = CharacterPanelOrder.ImageTop;
@@ -1171,6 +1176,12 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             ApplyVisualLayoutAssetIfAssigned();
     }
     #endif
+
+    void ApplyVisualLayoutAssetIfAssigned()
+    {
+        if (!useVisualLayoutAsset || visualLayoutAsset == null) return;
+        DialogueVisualLayoutBridge.ApplyToEngine(this, visualLayoutAsset);
+    }
 
     #if UNITY_EDITOR
     // Returns the path of the selected preset (applying its sidecar .json),
@@ -4200,6 +4211,86 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     }
 
     // ── Professional USS styling block (hover/selected states, transitions) ───
+    Justify ResolveLayoutAnchorJustify()
+    {
+        switch (layoutAssetAnchorPreset)
+        {
+            case DialogueAnchorPreset.TopLeft:
+            case DialogueAnchorPreset.Left:
+            case DialogueAnchorPreset.BottomLeft:
+                return Justify.FlexStart;
+            case DialogueAnchorPreset.TopRight:
+            case DialogueAnchorPreset.Right:
+            case DialogueAnchorPreset.BottomRight:
+                return Justify.FlexEnd;
+            case DialogueAnchorPreset.Custom:
+                return ResolveCustomAnchorJustify(layoutAssetCustomAnchor);
+            default:
+                return Justify.Center;
+        }
+    }
+
+    Align ResolveLayoutAnchorAlign()
+    {
+        switch (layoutAssetAnchorPreset)
+        {
+            case DialogueAnchorPreset.TopLeft:
+            case DialogueAnchorPreset.Top:
+            case DialogueAnchorPreset.TopRight:
+                return Align.FlexStart;
+            case DialogueAnchorPreset.BottomLeft:
+            case DialogueAnchorPreset.Bottom:
+            case DialogueAnchorPreset.BottomRight:
+                return Align.FlexEnd;
+            case DialogueAnchorPreset.Custom:
+                return ResolveCustomAnchorAlign(layoutAssetCustomAnchor);
+            default:
+                return Align.Center;
+        }
+    }
+
+    static Justify ResolveCustomAnchorJustify(DialogueCustomAnchorDefinition custom)
+    {
+        if (custom == null) return Justify.Center;
+        switch (custom.HorizontalReference)
+        {
+            case DialogueAnchorReferenceEdge.Left: return Justify.FlexStart;
+            case DialogueAnchorReferenceEdge.Right: return Justify.FlexEnd;
+            default: return Justify.Center;
+        }
+    }
+
+    static Align ResolveCustomAnchorAlign(DialogueCustomAnchorDefinition custom)
+    {
+        if (custom == null) return Align.Center;
+        switch (custom.VerticalReference)
+        {
+            case DialogueAnchorReferenceEdge.Top: return Align.FlexStart;
+            case DialogueAnchorReferenceEdge.Bottom: return Align.FlexEnd;
+            default: return Align.Center;
+        }
+    }
+
+    static string ToCssJustify(Justify justify)
+    {
+        switch (justify)
+        {
+            case Justify.FlexStart: return "flex-start";
+            case Justify.FlexEnd: return "flex-end";
+            default: return "center";
+        }
+    }
+
+    static string ToCssAlign(Align align)
+    {
+        switch (align)
+        {
+            case Align.FlexStart: return "flex-start";
+            case Align.FlexEnd: return "flex-end";
+            default: return "center";
+        }
+    }
+
     static string BuildUss(Dialogue_Engine e)
     {
         Color hover = Color.Lerp(e.backgroundColour, new Color(0.30f, 0.55f, 1f), 0.30f);

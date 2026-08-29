@@ -49,6 +49,7 @@ public sealed class ResolvedDialogueComponentRect
     public ResolvedDialogueAreaKind AreaKind;
     public int SlotIndex;
     public int ComponentIndex;
+    public string SlotId;
     public string DisplayName;
     public DialogueComponentType ComponentType;
     public Rect Rect;
