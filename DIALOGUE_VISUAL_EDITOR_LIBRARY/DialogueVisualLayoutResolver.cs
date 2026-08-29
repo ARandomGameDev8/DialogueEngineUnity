@@ -461,6 +461,31 @@ public static class DialogueVisualLayoutResolver
         }
     }
 
+    static bool HasPartitionedSlotOverrides(List<DialogueSlotDefinition> slots,
+        bool horizontal, int slotCount)
+    {
+        if (slots == null || slotCount <= 1) return false;
+
+        int visible = Mathf.Min(slotCount, slots.Count);
+        for (int i = 0; i < visible; i++)
+        {
+            DialogueSlotDefinition slot = slots[i];
+            if (slot == null) continue;
+
+            DialogueSizeValue primary = horizontal ? slot.Width : slot.Height;
+            DialogueSizeValue secondary = horizontal ? slot.Height : slot.Width;
+
+            if (primary != null && primary.Unit != DialogueSizeUnit.Auto && primary.Value > 0f)
+                return true;
+            if (secondary != null && secondary.Unit != DialogueSizeUnit.Auto && secondary.Value > 0f)
+                return true;
+            if (i < visible - 1 && slot.GapAfter >= 0f)
+                return true;
+        }
+
+        return false;
+    }
+
     static float GetGapAfter(DialogueSlotDefinition slot, float defaultSpacing)
     {
         if (slot == null) return defaultSpacing;
