@@ -803,6 +803,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         region.ZLayer = EditorGUILayout.IntSlider("Z Layer", region.ZLayer, -10, 10);
         if (region.PartitionLevel != oldPartition && region.PartitionLevel > 0)
             DialogueVisualEditorUtility.SyncVisibleSlotsFromRegion(region);
+        if (region.PartitionLevel > 0 && GUILayout.Button("Sync Visible Slots From Parent Region", GUILayout.Height(22f)))
+            DialogueVisualEditorUtility.SyncVisibleSlotsFromRegion(region);
         DrawBackgroundStyle(region.Background);
         DrawBorderStyle(region.Border);
         DrawShadowStyle(region.Shadow);
