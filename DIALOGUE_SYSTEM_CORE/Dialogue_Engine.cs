@@ -565,8 +565,15 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
 
     // ─── Preset ───────────────────────────────────────────────────────────────
     [Header("Preset")]
-    [Tooltip("Name of a preset UXML file inside Dialogue_Presets (without extension). Leave empty to use the inspector fields directly (generated layout).")]
+    [Tooltip("Name of a preset UXML file inside Dialogue_Presets (without extension). Leave empty to use the fields below (generated layout).")]
     public string presetName = "";
+
+    [Header("Visual Layout Asset (Phase 2)")]
+    [Tooltip("Optional DialogueLayoutAsset bridge. When enabled, its phase-2 supported fields are applied onto the runtime UI before UXML generation/build.")]
+    public bool useVisualLayoutAsset = false;
+    public DialogueLayoutAsset visualLayoutAsset;
+    [HideInInspector] public DialogueAnchorPreset layoutAssetAnchorPreset = DialogueAnchorPreset.Bottom;
+    [HideInInspector] public DialogueCustomAnchorDefinition layoutAssetCustomAnchor = new DialogueCustomAnchorDefinition();
 
     // ─── Panel ────────────────────────────────────────────────────────────────
     [Header("Panel")]
@@ -667,12 +674,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     [Range(0f, 1f)] public float inactivePortraitOpacity = 0.4f;
     public Color inactiveTintColour = new Color(0.5f, 0.5f, 0.5f, 1f);
 
-    // ─── Character Figure Panel ───────────────────────────────────────────────
-    const int CHARACTER_PANEL_DATA_VERSION = 2;
-    [HideInInspector] [SerializeField] int characterPanelDataVersion;
-    [Header("Character Panel (figure panel)")]
-    [Tooltip("The figure panel sits OUTSIDE the main panel ([figure panel] [main panel]). It is segmented into an image panel and a name panel, both fully customizable.")]
-    public bool characterPanelShowImagePanel = true;
+    // ─── Character anelShowImagePanel = true;
     public bool characterPanelShowNamePanel  = true;
     [Tooltip("Default layout: image panel on top, name panel below.")]
     public CharacterPanelOrder characterPanelOrder = CharacterPanelOrder.ImageTop;
@@ -1165,6 +1167,8 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         // (old defaults were 0.12 / 0.18) so picked colours show exactly.
         if (borderColour.a < 1f) borderColour.a = 1f;
         if (portraitBorderColour.a < 1f) portraitBorderColour.a = 1f;
+        if (!Application.isPlaying)
+            ApplyVisualLayoutAssetIfAssigned();
     }
     #endif
 
@@ -3507,6 +3511,8 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             rowContainer.style.width  = Length.Percent(100);
             rowContainer.style.height = Length.Percent(100);
             rowContainer.style.translate = new Translate(panelOffsetX, panelOffsetY, 0);
+            rowContainer.style.justifyContent = ResolveLayoutAnchorJustify();
+            rowContainer.style.alignItems = ResolveLayoutAnchorAlign();
         }
 
         box.style.width  = panelWidthMode == PanelSizeMode.Percent ? new StyleLength(Length.Percent(panelWidthValue)) : new StyleLength(panelWidthValue);
@@ -4314,9 +4320,12 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         string charRight = CharacterPanelXml(e, true);
         string uss = BuildUss(e);
 
+        string rowJustify = ToCssJustify(e.ResolveLayoutAnchorJustify());
+        string rowAlign = ToCssAlign(e.ResolveLayoutAnchorAlign());
+
         string uxml = $@"<ui:UXML xmlns:ui=""UnityEngine.UIElements"" xmlns:uie=""UnityEditor.UIElements"" xsi=""http://www.w3.org/2001/XMLSchema-instance"" engine=""UnityEngine.UIElements"" editor=""UnityEditor.UIElements"" noNamespaceSchemaLocation=""../../UIElementsSchema/UIElements.xsd"" editor-extension-mode=""False"">
-    <ui:VisualElement name=""Root"" style=""width: 100%; height: 100%; justify-content: flex-end; align-items: center;"">
-        <ui:VisualElement name=""RowContainer"" style=""flex-direction: row; align-items: flex-end; width: 100%; height: 100%; translate: {e.panelOffsetX:0.#}px {e.panelOffsetY:0.#}px;"">
+    <ui:VisualElement name=""Root"" style=""width: 100%; height: 100%; justify-content: flex-start; align-items: stretch;"">
+        <ui:VisualElement name=""RowContainer"" style=""flex-direction: row; justify-content: {rowJustify}; align-items: {rowAlign}; width: 100%; height: 100%; translate: {e.panelOffsetX:0.#}px {e.panelOffsetY:0.#}px;"">
 
             <!-- Outside Left Portrait -->
 {outsideLeft}
@@ -4379,6 +4388,138 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         <ui:Button name=""ToolbarToggle"" class=""dlg-toolbar-button"" text=""Menu"" style=""position: absolute; {tbPosition} {(e.showToolbar ? "" : "display: none;")}"" />
         <ui:VisualElement name=""ToolbarPanel"" style=""position: absolute; {tbPosition} {tbFlex} display: none;"">
             <ui:Button name=""HistoryButton"" class=""dlg-toolbar-button"" text=""History"" />
+            <ui:Button name=""SettingsButton"" class=""dlg-toolbar-button"" text=""Settings"" style=""{(e.showSettingsButton ? "" : "display: none;")}"" />
+            <ui:Button name=""RewindButton"" class=""dlg-toolbar-button"" text=""Rewind"" />
+        </ui:VisualElement>
+
+    </ui:VisualElement>
+
+    <Style>
+{uss}
+    </Style>
+</ui:UXML>";
+
+        return uxml;
+    }
+    #endif
+}
+
+s=""dlg-toolbar-button"" text=""History"" />
+            <ui:Button name=""SettingsButton"" class=""dlg-toolbar-button"" text=""Settings"" style=""{(e.showSettingsButton ? "" : "display: none;")}"" />
+            <ui:Button name=""RewindButton"" class=""dlg-toolbar-button"" text=""Rewind"" />
+        </ui:VisualElement>
+
+    </ui:VisualElement>
+
+    <Style>
+{uss}
+    </Style>
+</ui:UXML>";
+
+        return uxml;
+    }
+    #endif
+}
+
+: {boxMaxRadius:0.#}px; picking-mode: Ignore; {(borderIsImage ? "" : "display: none;")}"" />
+
+        <!-- On-Border Portraits (positioned by the engine at runtime) -->
+{borderLeft}
+{borderRight}
+
+        <!-- History Panel Overlay -->
+        <ui:VisualElement name=""HistoryPanel"" style=""position: absolute; left: 10%; top: 15%; width: 80%; height: 70%; background-color: rgba(20, 20, 20, 0.95); border-radius: 8px; padding: 20px; display: none;"">
+            <ui:ScrollView name=""HistoryContent"" style=""flex-grow: 1;"" />
+            <ui:Button name=""CloseHistoryButton"" class=""dlg-close-button"" text=""Close History"" style=""margin-top: 10px;"" />
+        </ui:VisualElement>
+
+        <!-- Settings Panel Overlay -->
+        <ui:VisualElement name=""SettingsPanel"" style=""position: absolute; left: 10%; top: 15%; width: 80%; height: 70%; background-color: rgba(20, 20, 20, 0.95); border-radius: 8px; padding: 20px; display: none;"">
+            <ui:ScrollView name=""SettingsContent"" style=""flex-grow: 1;"" />
+            <ui:Button name=""CloseSettingsButton"" class=""dlg-close-button"" text=""Close Settings"" style=""margin-top: 10px;"" />
+        </ui:VisualElement>
+
+        <!-- Toolbar Toggle + Panel -->
+        <ui:Button name=""ToolbarToggle"" class=""dlg-toolbar-button"" text=""Menu"" style=""position: absolute; {tbPosition} {(e.showToolbar ? "" : "display: none;")}"" />
+        <ui:VisualElement name=""ToolbarPanel"" style=""position: absolute; {tbPosition} {tbFlex} display: none;"">
+            <ui:Button name=""HistoryButton"" class=""dlg-toolbar-button"" text=""History"" />
+            <ui:Button name=""SettingsButton"" class=""dlg-toolbar-button"" text=""Settings"" style=""{(e.showSettingsButton ? "" : "display: none;")}"" />
+            <ui:Button name=""RewindButton"" class=""dlg-toolbar-button"" text=""Rewind"" />
+        </ui:VisualElement>
+
+    </ui:VisualElement>
+
+    <Style>
+{uss}
+    </Style>
+</ui:UXML>";
+
+        return uxml;
+    }
+    #endif
+}
+
+s=""dlg-toolbar-button"" text=""History"" />
+            <ui:Button name=""SettingsButton"" class=""dlg-toolbar-button"" text=""Settings"" style=""{(e.showSettingsButton ? "" : "display: none;")}"" />
+            <ui:Button name=""RewindButton"" class=""dlg-toolbar-button"" text=""Rewind"" />
+        </ui:VisualElement>
+
+    </ui:VisualElement>
+
+    <Style>
+{uss}
+    </Style>
+</ui:UXML>";
+
+        return uxml;
+    }
+    #endif
+}
+
+rn uxml;
+    }
+    #endif
+}
+
+: {boxMaxRadius:0.#}px; picking-mode: Ignore; {(borderIsImage ? "" : "display: none;")}"" />
+
+        <!-- On-Border Portraits (positioned by the engine at runtime) -->
+{borderLeft}
+{borderRight}
+
+        <!-- History Panel Overlay -->
+        <ui:VisualElement name=""HistoryPanel"" style=""position: absolute; left: 10%; top: 15%; width: 80%; height: 70%; background-color: rgba(20, 20, 20, 0.95); border-radius: 8px; padding: 20px; display: none;"">
+            <ui:ScrollView name=""HistoryContent"" style=""flex-grow: 1;"" />
+            <ui:Button name=""CloseHistoryButton"" class=""dlg-close-button"" text=""Close History"" style=""margin-top: 10px;"" />
+        </ui:VisualElement>
+
+        <!-- Settings Panel Overlay -->
+        <ui:VisualElement name=""SettingsPanel"" style=""position: absolute; left: 10%; top: 15%; width: 80%; height: 70%; background-color: rgba(20, 20, 20, 0.95); border-radius: 8px; padding: 20px; display: none;"">
+            <ui:ScrollView name=""SettingsContent"" style=""flex-grow: 1;"" />
+            <ui:Button name=""CloseSettingsButton"" class=""dlg-close-button"" text=""Close Settings"" style=""margin-top: 10px;"" />
+        </ui:VisualElement>
+
+        <!-- Toolbar Toggle + Panel -->
+        <ui:Button name=""ToolbarToggle"" class=""dlg-toolbar-button"" text=""Menu"" style=""position: absolute; {tbPosition} {(e.showToolbar ? "" : "display: none;")}"" />
+        <ui:VisualElement name=""ToolbarPanel"" style=""position: absolute; {tbPosition} {tbFlex} display: none;"">
+            <ui:Button name=""HistoryButton"" class=""dlg-toolbar-button"" text=""History"" />
+            <ui:Button name=""SettingsButton"" class=""dlg-toolbar-button"" text=""Settings"" style=""{(e.showSettingsButton ? "" : "display: none;")}"" />
+            <ui:Button name=""RewindButton"" class=""dlg-toolbar-button"" text=""Rewind"" />
+        </ui:VisualElement>
+
+    </ui:VisualElement>
+
+    <Style>
+{uss}
+    </Style>
+</ui:UXML>";
+
+        return uxml;
+    }
+    #endif
+}
+
+s=""dlg-toolbar-button"" text=""History"" />
             <ui:Button name=""SettingsButton"" class=""dlg-toolbar-button"" text=""Settings"" style=""{(e.showSettingsButton ? "" : "display: none;")}"" />
             <ui:Button name=""RewindButton"" class=""dlg-toolbar-button"" text=""Rewind"" />
         </ui:VisualElement>

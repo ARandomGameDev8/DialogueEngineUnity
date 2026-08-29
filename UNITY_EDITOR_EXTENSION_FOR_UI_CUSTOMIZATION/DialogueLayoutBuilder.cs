@@ -66,6 +66,9 @@ public static class DialogueLayoutBuilder
 
     public static void Build(Dialogue_Engine engine, string assetPath)
     {
+        if (engine != null && engine.useVisualLayoutAsset && engine.visualLayoutAsset != null)
+            DialogueVisualLayoutBridge.ApplyToEngine(engine, engine.visualLayoutAsset);
+
         string dir = Path.GetDirectoryName(assetPath);
         if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
 

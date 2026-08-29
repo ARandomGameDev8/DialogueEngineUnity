@@ -18,6 +18,7 @@ public class DialogueEngineEditor : Editor
     static bool showPortraitsFoldout  = true;
     static bool showDirtyFoldout      = true;
     static bool showPresetFoldout     = true;
+    static bool showVisualLayoutAssetSection = true;
 
     public override void OnInspectorGUI()
     {
@@ -591,6 +592,40 @@ public class DialogueEngineEditor : Editor
         EditorGUI.BeginChangeCheck();
         s.path = EditorGUILayout.TextField("File Path", s.path);
         if (EditorGUI.EndChangeCheck() && !string.IsNullOrEmpty(s.path))
+            s.sprite = null;
+        if (GUILayout.Button("Browse…", GUILayout.Width(70)))
+        {
+            string picked = EditorUtility.OpenFilePanel("Select Image File", "", "png,jpg,jpeg,tga,bmp,psd");
+            if (!string.IsNullOrEmpty(picked))
+            {
+                s.path   = picked;
+                s.sprite = null;
+            }
+        }
+        EditorGUILayout.EndHorizontal();
+
+        if (s.sprite != null || !string.IsNullOrEmpty(s.path))
+        {
+            s.tintEnabled = EditorGUILayout.Toggle("Colour Tint", s.tintEnabled);
+            if (s.tintEnabled)
+                s.tintColour = EditorGUILayout.ColorField("Tint Colour", s.tintColour);
+
+            s.scaleMode = (ImageScaleMode)EditorGUILayout.EnumPopup("Scale Mode", s.scaleMode);
+            if (s.scaleMode == ImageScaleMode.Tile)
+                s.tileScale = EditorGUILayout.Slider("Tile Scale", s.tileScale, 0.1f, 8f);
+            s.animate = EditorGUILayout.Toggle("Animate", s.animate);
+            if (s.animate)
+            {
+                s.animDirection = (TiledAnimDirection)EditorGUILayout.EnumPopup("Direction", s.animDirection);
+                s.animSpeed     = EditorGUILayout.Slider("Speed (px/s)", s.animSpeed, 1f, 400f);
+                s.loop          = EditorGUILayout.Toggle("Loop", s.loop);
+            }
+        }
+    }
+}
+#endif
+
+ !string.IsNullOrEmpty(s.path))
             s.sprite = null;
         if (GUILayout.Button("Browse…", GUILayout.Width(70)))
         {
