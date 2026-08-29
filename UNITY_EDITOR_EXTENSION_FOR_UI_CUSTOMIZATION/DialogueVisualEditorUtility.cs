@@ -111,15 +111,9 @@ public static class DialogueVisualEditorUtility
         if (region == null || region.Slots == null) return;
         EnsureSlots(region.Slots);
         int count = GetVisibleSlotCount(region);
-        float defaultWidth = region.Width != null && region.Width.Unit == DialogueSizeUnit.Pixels && region.Width.Value > 0f
-            ? Mathf.Max(80f, region.Width.Value / count)
-            : 220f;
-        float defaultHeight = region.Height != null && region.Height.Unit == DialogueSizeUnit.Pixels && region.Height.Value > 0f
-            ? Mathf.Max(60f, region.Height.Value)
-            : 120f;
         for (int i = 0; i < count && i < region.Slots.Count; i++)
             ApplyParentDefaultsToSlot(region.Slots[i], region.Background, region.Border,
-                region.Shadow, region.Opacity, region.ZLayer, defaultWidth, defaultHeight);
+                region.Shadow, region.Opacity, region.ZLayer);
     }
 
     public static void SyncVisibleSlotsFromArea(DialogueAttachedAreaDefinition area)
@@ -127,20 +121,9 @@ public static class DialogueVisualEditorUtility
         if (area == null || area.Slots == null) return;
         EnsureSlots(area.Slots);
         int count = GetVisibleSlotCount(area);
-        bool horizontal = area.Side == DialogueAttachedAreaSide.Top || area.Side == DialogueAttachedAreaSide.Bottom;
-        float defaultWidth = horizontal
-            ? (area.Width != null && area.Width.Unit == DialogueSizeUnit.Pixels && area.Width.Value > 0f
-                ? Mathf.Max(80f, area.Width.Value / count) : 200f)
-            : (area.Width != null && area.Width.Unit == DialogueSizeUnit.Pixels && area.Width.Value > 0f
-                ? Mathf.Max(80f, area.Width.Value) : 160f);
-        float defaultHeight = horizontal
-            ? (area.Height != null && area.Height.Unit == DialogueSizeUnit.Pixels && area.Height.Value > 0f
-                ? Mathf.Max(60f, area.Height.Value) : 100f)
-            : (area.Height != null && area.Height.Unit == DialogueSizeUnit.Pixels && area.Height.Value > 0f
-                ? Mathf.Max(60f, area.Height.Value / count) : 140f);
         for (int i = 0; i < count && i < area.Slots.Count; i++)
             ApplyParentDefaultsToSlot(area.Slots[i], area.Background, area.Border,
-                area.Shadow, area.Opacity, area.ZLayer, defaultWidth, defaultHeight);
+                area.Shadow, area.Opacity, area.ZLayer);
     }
 
     static void EnsureSlots(DialogueInnerRegionDefinition region)
