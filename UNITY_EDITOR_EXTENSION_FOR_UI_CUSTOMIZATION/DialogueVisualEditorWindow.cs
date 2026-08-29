@@ -606,7 +606,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     {
         List<DialogueSlotDefinition> slots = DialogueVisualEditorUtility.GetSlots(layoutAsset, kind);
         if (slots == null) return;
-        for (int i = 0; i < slots.Count; i++)
+        int visibleCount = GetVisibleSlotCount(kind);
+        for (int i = 0; i < visibleCount && i < slots.Count; i++)
         {
             DialogueSlotDefinition slot = slots[i];
             if (slot == null) continue;
@@ -690,27 +691,16 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         DrawOpacity(panel.Opacity);
 
         EditorGUILayout.Space(8f);
-        GUILayout.Label("Inner Region", EditorStyles.boldLabel);
-        DialogueInnerRegionDefinition region = panel.InnerRegion;
-        if (region == null)
-        {
-            region = new DialogueInnerRegionDefinition();
-            panel.InnerRegion = region;
-        }
-        DrawSizeField("Inner Width", region.Width);
-        DrawSizeField("Inner Height", region.Height);
-        region.Offset = EditorGUILayout.Vector2Field("Offset", region.Offset);
-        region.BasePartitionCount = EditorGUILayout.IntSlider("Base Partitions", region.BasePartitionCount, 1, 3);
-        region.OverflowEnabled = EditorGUILayout.Toggle("Overflow Enabled", region.OverflowEnabled);
-        region.RowGap = EditorGUILayout.FloatField("Overflow Gap", region.RowGap);
-        region.InterSlotSpacing = EditorGUILayout.FloatField("Inter-Slot Spacing", region.InterSlotSpacing);
+        EditorGUILayout.HelpBox(
+            "Inner Region is edited directly by selecting 'Inner Region' in the hierarchy or canvas. Its partition level controls whether it remains whole (level 0) or splits into two slots (level 1). Slots inherit the region's visual settings and cannot be partitioned further.",
+            MessageType.None);
     }
 
     void DrawAreaInspector()
     {
         if (selection.AreaKind == ResolvedDialogueAreaKind.MainInner)
         {
-            EditorGUILayout.HelpBox("Select Main Panel to edit the Inner Region fields. This selection exists mainly for visual feedback and hierarchy navigation.", MessageType.None);
+            DrawInnerRegionInspector();
             return;
         }
         DialogueAttachedAreaDefinition area = DialogueVisualEditorUtility.GetArea(layoutAsset, selection.AreaKind);
@@ -721,9 +711,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         area.GapFromMainPanel = EditorGUILayout.FloatField("Gap From Main Panel", area.GapFromMainPanel);
         DrawSizeField("Width", area.Width);
         DrawSizeField("Height", area.Height);
-        area.BasePartitionCount = EditorGUILayout.IntSlider("Base Partitions", area.BasePartitionCount, 1, 3);
-        area.OverflowEnabled = EditorGUILayout.Toggle("Overflow Enabled", area.OverflowEnabled);
-        area.RowOrColumnGap = EditorGUILayout.FloatField("Overflow Gap", area.RowOrColumnGap);
+        area.PartitionLevel = EditorGUILayout.IntSlider("Partition Level", area.PartitionLevel, 0, 1);
         area.InterSlotSpacing = EditorGUILayout.FloatField("Inter-Slot Spacing", area.InterSlotSpacing);
         area.ZLayer = EditorGUILayout.IntSlider("Z Layer", area.ZLayer, -10, 10);
         DrawBackgroundStyle(area.Background);
@@ -738,9 +726,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         if (slot == null) return;
         slot.DisplayName = EditorGUILayout.TextField("Display Name", slot.DisplayName);
         slot.Enabled = EditorGUILayout.Toggle("Enabled", slot.Enabled);
-        DrawSizeField("Width", slot.Width);
-        DrawSizeField("Height", slot.Height);
-        DrawPaddingField("Padding", slot.Padding);
+        EditorGUILayout.HelpBox(
+            "Slots are the final partition pieces. They cannot be partitioned further and inherit their parent region's visual settings. Use this view to manage the slot's contained dialogue components.",
+            MessageType.None);
         EditorGUILayout.Space(6f);
         GUILayout.Label("Components", EditorStyles.boldLabel);
         if (slot.Components != null)
@@ -775,6 +763,38 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         if (GUILayout.Button("Add Text Panel")) AddComponentToSelectedSlot(DialogueComponentType.TextPanel);
         if (GUILayout.Button("Add Name Panel")) AddComponentToSelectedSlot(DialogueComponentType.NamePanel);
         if (GUILayout.Button("Add Image Panel")) AddComponentToSelectedSlot(DialogueComponentType.ImagePanel);
+    }
+
+    void DrawInnerRegionInspector()
+    {
+        DialogueInnerRegionDefinition region = layoutAsset != null && layoutAsset.MainPanel != null
+            ? layoutAsset.MainPanel.InnerRegion : null;
+        if (region == null) return;
+
+        region.DisplayName = EditorGUILayout.TextField("Display Name", region.DisplayName);
+        region.Enabled = EditorGUILayout.Toggle("Enabled", region.Enabled);
+        DrawSizeField("Width", region.Width);
+        DrawSizeField("Height", region.Height);
+        region.Offset = EditorGUILayout.Vector2Field("Offset", region.Offset);
+        region.PartitionLevel = EditorGUILayout.IntSlider("Partition Level", region.PartitionLevel, 0, 1);
+        region.InterSlotSpacing = EditorGUILayout.FloatField("Inter-Slot Spacing", region.InterSlotSpacing);
+        region.ZLayer = EditorGUILayout.IntSlider("Z Layer", region.ZLayer, -10, 10);
+        DrawBackgroundStyle(region.Background);
+        DrawBorderStyle(region.Border);
+        DrawShadowStyle(region.Shadow);
+        DrawOpacity(region.Opacity);
+    }
+
+    int GetVisibleSlotCount(ResolvedDialogueAreaKind kind)
+    {
+        if (layoutAsset == null) return 0;
+        if (kind == ResolvedDialogueAreaKind.MainInner)
+        {
+            DialogueInnerRegionDefinition region = layoutAsset.MainPanel != null ? layoutAsset.MainPanel.InnerRegion : null;
+            return region != null ? 1 + Mathf.Clamp(region.PartitionLevel, 0, 1) : 1;
+        }
+        DialogueAttachedAreaDefinition area = DialogueVisualEditorUtility.GetArea(layoutAsset, kind);
+        return area != null ? 1 + Mathf.Clamp(area.PartitionLevel, 0, 1) : 1;
     }
 
     void DrawComponentInspector()

@@ -230,10 +230,18 @@ public sealed class DialogueInnerRegionDefinition
 
     public Vector2 Offset;
 
-    [Range(1, 3)] public int BasePartitionCount = 1;
-    public bool OverflowEnabled;
-    public float RowGap = 8f;
+    [Range(0, 1)] public int PartitionLevel = 0;
     public float InterSlotSpacing = 8f;
+
+    public DialogueBackgroundStyle Background =
+        new DialogueBackgroundStyle();
+    public DialogueBorderStyle Border =
+        new DialogueBorderStyle();
+    public DialogueShadowStyle Shadow =
+        new DialogueShadowStyle();
+    public DialogueOpacitySettings Opacity =
+        new DialogueOpacitySettings();
+    [Range(-10, 10)] public int ZLayer;
 
     public List<DialogueSlotDefinition> Slots =
         BuildDefaultSlots();
@@ -272,9 +280,7 @@ public sealed class DialogueAttachedAreaDefinition
 
     public float GapFromMainPanel = 8f;
 
-    [Range(1, 3)] public int BasePartitionCount = 1;
-    public bool OverflowEnabled;
-    public float RowOrColumnGap = 8f;
+    [Range(0, 1)] public int PartitionLevel = 0;
     public float InterSlotSpacing = 8f;
 
     public DialogueBackgroundStyle Background =
