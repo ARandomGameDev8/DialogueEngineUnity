@@ -571,6 +571,11 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     // the runtime changed can leak back into the source layout.
     public const string RUNTIME_UXML_PATH = "Assets/Scripts/Dialogue_Presets/dialogue_runtime_copy.uxml";
 
+    // True while playing with a visual layout asset: the runtime UXML was built
+    // straight from the asset's resolved geometry, so the engine must not
+    // restyle the box/portraits from its own approximated fields.
+    bool visualLayoutRuntimeActive;
+
     // ─── Preset ───────────────────────────────────────────────────────────────
     [Header("Preset")]
     [Tooltip("Name of a preset UXML file inside Dialogue_Presets (without extension). Leave empty to use the fields below (generated layout).")]
@@ -1229,11 +1234,30 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
 
         string contents;
         string presetPath = ResolvePresetPath();
+        visualLayoutRuntimeActive = false;
         try
         {
-            contents = presetPath != null
-                ? File.ReadAllText(presetPath)
-                : GenerateUxml(this);
+            if (presetPath != null)
+            {
+                // An explicit preset is the user's hand-authored layout.
+                contents = File.ReadAllText(presetPath);
+            }
+            else if (useVisualLayoutAsset && visualLayoutAsset != null)
+            {
+                // EXACT reproduction: build the play-mode UXML directly from the
+                // visual editor's resolved layout (same rects, styles, slots and
+                // components the editor canvas draws) rather than approximating
+                // it through the inspector fields.
+                Vector2 canvas = panelSettings != null
+                    ? new Vector2(panelSettings.referenceResolution.x, panelSettings.referenceResolution.y)
+                    : new Vector2(1920f, 1080f);
+                visualLayoutRuntimeActive = true;
+                contents = DialogueVisualLayoutRuntimeUxml.Generate(visualLayoutAsset, this, canvas);
+            }
+            else
+            {
+                contents = GenerateUxml(this);
+            }
         }
         catch (Exception ex)
         {
@@ -3080,6 +3104,9 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             bool characterSlot = slot.wrapper == charLeftWrapper || slot.wrapper == charRightWrapper;
             float defaultWidth = portraitShape == PortraitShape.Rectangle
                 ? portraitSize * 1.3f : portraitSize;
+            // Visual-layout runtime: every wrapper was generated at the exact
+            // component rects — only reset visibility/paint, never the sizes.
+            bool preserveGeometry = visualLayoutRuntimeActive;
             if (slot.frame != null)
             {
                 if (characterSlot)
@@ -3087,7 +3114,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                     slot.frame.style.width = Length.Percent(100);
                     slot.frame.style.height = Length.Percent(100);
                 }
-                else
+                else if (!preserveGeometry)
                 {
                     slot.frame.style.width = defaultWidth;
                     slot.frame.style.height = portraitSize;
@@ -3095,7 +3122,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                 slot.frame.style.display = DisplayStyle.None;
                 slot.frame.style.opacity = 1f;
             }
-            if (slot.portrait != null && !characterSlot)
+            if (slot.portrait != null && !characterSlot && !preserveGeometry)
             {
                 slot.portrait.style.width = defaultWidth;
                 slot.portrait.style.height = portraitSize;
@@ -3204,7 +3231,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         // Character image sections use the custom colour only when there is no
         // user-provided image. A real portrait normally gets a transparent
         // panel so its own silhouette/shape is not boxed by an extra backdrop.
-        if (portraitPlacement == PortraitPlacement.CharacterPanel)
+        if (portraitPlacement == PortraitPlacement.CharacterPanel && !visualLayoutRuntimeActive)
         {
             VisualElement imagePanel = slot.wrapper == charRightWrapper
                 ? charRightImagePanel : charLeftImagePanel;
@@ -3254,6 +3281,10 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     void ApplyPortraitFrame(SlotRefs slot)
     {
         if (slot.frame == null || slot.portrait == null) return;
+        // Visual-layout runtime: the frame styling comes straight from the
+        // image component definition in the generated UXML (exact per-side
+        // borders and per-corner radii); do not overwrite it.
+        if (visualLayoutRuntimeActive) return;
 
         // Radius is derived from the inspector settings (not measured layout)
         // so it is correct even before the element's first layout pass.
@@ -3585,6 +3616,9 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     // ─── Name layout (position + distance relative to the portrait) ───────────
     void ApplyNameLayout(SlotRefs slot)
     {
+        // Visual-layout runtime: the name element is absolutely positioned at
+        // the name-panel component rect; the flex re-flow here would destroy it.
+        if (visualLayoutRuntimeActive) return;
         if (slot.wrapper == null || slot.host == null || slot.name == null) return;
 
         // Character figure panels manage their own structure (image panel +
@@ -3711,9 +3745,50 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     // ══════════════════════════════════════════════════════════════════════════
     // RUNTIME LAYOUT — sizes, image layers, shapes, positions
     // ══════════════════════════════════════════════════════════════════════════
+    void ApplyVisualRuntimeTextAnchoring()
+    {
+        if (textScroll != null)
+        {
+            var cc = textScroll.contentContainer;
+            if (cc != null)
+            {
+                // flexGrow makes the content container at least viewport-sized,
+                // so justify-content can center short text and scroll long text.
+                cc.style.flexGrow = textVAnchor == TextVAnchor.Top ? 0f : 1f;
+                cc.style.justifyContent =
+                    textVAnchor == TextVAnchor.Center ? Justify.Center :
+                    textVAnchor == TextVAnchor.Bottom ? Justify.FlexEnd : Justify.FlexStart;
+            }
+        }
+        if (dialogueTextLabel != null)
+            dialogueTextLabel.style.unityTextAlign =
+                textHAnchor == TextHAnchor.Left   ? TextAnchor.MiddleLeft :
+                textHAnchor == TextHAnchor.Center ? TextAnchor.MiddleCenter : TextAnchor.MiddleRight;
+    }
+
     void ApplyRuntimeLayout()
     {
         if (box == null) return;
+
+        if (visualLayoutRuntimeActive)
+        {
+            // The visual-layout runtime UXML already carries the exact panel
+            // geometry and styling from the editor; restyle only the parts the
+            // generator does not own (text anchoring, hint, toolbar).
+            ApplyVisualRuntimeTextAnchoring();
+            if (advanceHintLabel != null)
+            {
+                advanceHintLabel.style.display = showAdvanceHint ? DisplayStyle.Flex : DisplayStyle.None;
+                advanceHintLabel.text = advanceHintText;
+                advanceHintLabel.style.color = new StyleColor(hintColour);
+                advanceHintLabel.style.fontSize = hintFontSize;
+            }
+            if (toolbarToggleButton != null) toolbarToggleButton.style.display = showToolbar ? DisplayStyle.Flex : DisplayStyle.None;
+            if (settingsButton != null) settingsButton.style.display = showSettingsButton ? DisplayStyle.Flex : DisplayStyle.None;
+            if (toolbarPanel != null)
+                toolbarPanel.style.display = showToolbar && toolbarVisible ? DisplayStyle.Flex : DisplayStyle.None;
+            return;
+        }
 
         // ── Panel size & position ─────────────────────────────────────────────
         if (rowContainer != null)
@@ -3771,23 +3846,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         ApplyBorderLayerPosition();
 
         // ── Text anchoring (VN-style, default: vertically centered, left-aligned) ──
-        if (textScroll != null)
-        {
-            var cc = textScroll.contentContainer;
-            if (cc != null)
-            {
-                // flexGrow makes the content container at least viewport-sized,
-                // so justify-content can center short text and scroll long text.
-                cc.style.flexGrow = textVAnchor == TextVAnchor.Top ? 0f : 1f;
-                cc.style.justifyContent =
-                    textVAnchor == TextVAnchor.Center ? Justify.Center :
-                    textVAnchor == TextVAnchor.Bottom ? Justify.FlexEnd : Justify.FlexStart;
-            }
-        }
-        if (dialogueTextLabel != null)
-            dialogueTextLabel.style.unityTextAlign =
-                textHAnchor == TextHAnchor.Left   ? TextAnchor.MiddleLeft :
-                textHAnchor == TextHAnchor.Center ? TextAnchor.MiddleCenter : TextAnchor.MiddleRight;
+        ApplyVisualRuntimeTextAnchoring();
 
         // ── Advance hint ──────────────────────────────────────────────────────
         if (advanceHintLabel != null)
@@ -3816,6 +3875,9 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
 
     void ApplyCharacterPanelDecorations()
     {
+        // Visual-layout runtime: the figure/name partitions carry their exact
+        // styles from the asset; skip the engine-default decoration pass.
+        if (visualLayoutRuntimeActive) return;
         float outerBorder = characterPanelShowBorder ? characterPanelBorderWidth : 0f;
         foreach (VisualElement figure in new[] { charLeftFigure, charRightFigure })
         {

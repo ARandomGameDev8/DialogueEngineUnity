@@ -100,3 +100,34 @@ The runtime never modifies the source UXML:
 
 `Tools/Dialogue/Build Layout` (edit time) still writes the real
 `dialogue_generated.uxml` source file.
+
+## 8. Exact runtime reproduction (visual layout asset)
+
+When the engine has **Engine Uses This Layout** enabled and a
+`DialogueLayoutAsset` assigned, Play no longer approximates the layout through
+the engine's inspector fields. Instead `DialogueVisualLayoutRuntimeUxml`
+builds the play-mode UXML **directly from the resolved layout** — the same
+geometry the editor canvas draws:
+
+- the main panel at its resolved rect with its exact background, per-side
+  borders, per-corner radii and opacity,
+- every attached area, slot and component at its resolved rect with its exact
+  styles,
+- the first text panel becomes the live dialogue text, the first name panel
+  the live speaker name, the first image panel the live portrait (icon or
+  character figure) — the engine keeps writing all text, names and images,
+- while this mode is active the engine suppresses its own restyling passes
+  (panel resize, portrait frame, name re-flow, character-panel decoration) so
+  nothing overwrites the edited layout.
+
+The design canvas is the Panel Settings reference resolution, so keep the
+panel's aspect ratio in mind when matching the editor preview 1:1. An
+explicitly selected preset still wins over the asset.
+
+## 9. Undo / redo
+
+Every gesture in the visual editor (canvas drag, add/remove, inspector edit)
+is recorded as ONE undo group covering both the layout asset and the bridged
+engine fields — a single Ctrl+Z reverts the whole gesture everywhere, and
+Ctrl+Z / Ctrl+Shift+Z repaint the canvas and re-sync the engine automatically.
+

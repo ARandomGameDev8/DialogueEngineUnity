@@ -94,6 +94,49 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     Rect canvasRect;
     ResolvedDialogueLayout resolved;
 
+    // Undo bookkeeping: one undo group per gesture (drag, button, field mouse-grab).
+    int undoMergeGroup = -1;
+
+    void OnEnable()
+    {
+        // Repaint after every Ctrl+Z / Ctrl+Shift+Z and re-sync the engine so the
+        // canvas, the asset and the runtime preview never disagree.
+        Undo.undoRedoPerformed += HandleUndoRedoPerformed;
+    }
+
+    void OnDestroy()
+    {
+        Undo.undoRedoPerformed -= HandleUndoRedoPerformed;
+    }
+
+    void HandleUndoRedoPerformed()
+    {
+        if (layoutAsset != null)
+            DialogueVisualEditorUtility.EnsureSlotArrays(layoutAsset);
+        // Re-apply the (restored) asset onto the engine without recording — this
+        // is a re-sync of an undo action, not a new user change.
+        if (layoutAsset != null && engine != null && autoApplyToEngine)
+            DialogueVisualLayoutBridge.ApplyToEngine(engine, layoutAsset);
+        Repaint();
+    }
+
+    /// <summary>
+    /// Records BOTH the layout asset and the bridged engine in the same undo
+    /// group, so one Ctrl+Z reverts the whole gesture (canvas + engine fields).
+    /// Must be called once at the START of a gesture, before any mutation.
+    /// </summary>
+    void RecordLayoutAndEngine(string actionName)
+    {
+        if (layoutAsset == null) return;
+        Undo.RecordObject(layoutAsset, actionName);
+        EditorUtility.SetDirty(layoutAsset);
+        if (engine != null && autoApplyToEngine)
+        {
+            Undo.RecordObject(engine, actionName);
+            EditorUtility.SetDirty(engine);
+        }
+    }
+
     [MenuItem("Tools/Dialogue Editor")]
     static void OpenWindow()
     {
@@ -111,6 +154,17 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
     void OnGUI()
     {
+        // Collapse everything that happened during one mouse press (a whole
+        // canvas drag, one slider grab, one field edit) into ONE undo step.
+        UnityEngine.Event evt = UnityEngine.Event.current;
+        if (evt.type == EventType.MouseDown && evt.button == 0)
+            undoMergeGroup = Undo.GetCurrentGroup();
+        else if (evt.type == EventType.MouseUp && evt.button == 0 && undoMergeGroup > 0)
+        {
+            Undo.CollapseUndoOperations(undoMergeGroup);
+            undoMergeGroup = -1;
+        }
+
         DrawToolbar();
 
         EditorGUILayout.BeginHorizontal();
@@ -232,6 +286,14 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             return;
         }
 
+        // EnsureSlotArrays can mutate the asset (fill missing slots); record so
+        // that mutation is undoable instead of silently diverging from snapshots.
+        if (dragMode == DragMode.None)
+        {
+            Undo.RecordObject(layoutAsset, "Ensure Layout Slots");
+            if (engine != null && autoApplyToEngine)
+                Undo.RecordObject(engine, "Ensure Layout Slots");
+        }
         DialogueVisualEditorUtility.EnsureSlotArrays(layoutAsset);
         Rect padded = new Rect(canvasRect.x + 12f, canvasRect.y + 12f,
             canvasRect.width - 24f, canvasRect.height - 24f);
@@ -257,9 +319,14 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         }
 
         // Recording during an active canvas drag would snapshot mid-drag state after
-        // the canvas already mutated the asset, corrupting the undo entry.
+        // the canvas already mutated the asset, corrupting the undo entry. Asset and
+        // engine are recorded together so the bridged writes undo atomically.
         if (dragMode == DragMode.None)
+        {
             Undo.RecordObject(layoutAsset, "Dialogue Layout Change");
+            if (engine != null && autoApplyToEngine)
+                Undo.RecordObject(engine, "Dialogue Layout Change");
+        }
         inspectorScroll = EditorGUILayout.BeginScrollView(inspectorScroll, GUILayout.ExpandHeight(true));
 
         switch (selection.Kind)
@@ -680,7 +747,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         dragStartRect = currentRect;
         dragParentRect = GetSelectedParentRect();
         CaptureDragStartSelectionOffset();
-        DialogueVisualEditorUtility.RecordChange(layoutAsset, "Move Selection");
+        RecordLayoutAndEngine("Move Selection");
     }
 
     void BeginSizedDrag(DragMode mode, Rect currentRect, Rect parentRect, string actionName)
@@ -690,7 +757,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         dragStartRect = currentRect;
         dragParentRect = parentRect;
         CaptureDragStartSelectionOffset();
-        DialogueVisualEditorUtility.RecordChange(layoutAsset, actionName);
+        RecordLayoutAndEngine(actionName);
     }
 
     void CaptureDragStartSelectionOffset()
@@ -735,7 +802,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         dragStartMouse = UnityEngine.Event.current.mousePosition;
         dragStartGapValue = area.GapFromMainPanel;
         selection.AreaKind = kind;
-        DialogueVisualEditorUtility.RecordChange(layoutAsset, "Adjust Area Gap");
+        RecordLayoutAndEngine("Adjust Area Gap");
     }
 
     void DragSelection(Vector2 delta)
@@ -975,6 +1042,10 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         {
             engine.useVisualLayoutAsset = EditorGUILayout.Toggle("Engine Uses This Layout", engine.useVisualLayoutAsset);
             engine.visualLayoutAsset = (DialogueLayoutAsset)EditorGUILayout.ObjectField("Engine Layout Asset", engine.visualLayoutAsset, typeof(DialogueLayoutAsset), false);
+            if (engine.visualLayoutAsset != null && !engine.useVisualLayoutAsset)
+                EditorGUILayout.HelpBox(
+                    "Enable 'Engine Uses This Layout' so Play builds the runtime UI exactly from this asset — otherwise the engine falls back to its own inspector fields.",
+                    MessageType.Warning);
         }
 
         EditorGUILayout.Space(8f);
@@ -1076,7 +1147,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         if (DialogueVisualEditorUtility.TryGetOppositeAreaKind(selection.AreaKind, out oppositeAreaKind) &&
             GUILayout.Button("Copy This Area To " + DialogueVisualEditorUtility.GetAreaKindDisplayName(oppositeAreaKind), GUILayout.Height(22f)))
         {
-            DialogueVisualEditorUtility.RecordChange(layoutAsset, "Copy Area To Opposite Side");
+            RecordLayoutAndEngine("Copy Area To Opposite Side");
             DialogueVisualEditorUtility.CopyAreaToOpposite(layoutAsset, selection.AreaKind);
             CommitLayoutMutation();
             return;
@@ -1111,7 +1182,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             DialogueVisualEditorUtility.TryGetOppositeAreaKind(selection.AreaKind, out oppositeSlotAreaKind) &&
             GUILayout.Button("Copy This Slot To Matching Slot On " + DialogueVisualEditorUtility.GetAreaKindDisplayName(oppositeSlotAreaKind), GUILayout.Height(22f)))
         {
-            DialogueVisualEditorUtility.RecordChange(layoutAsset, "Copy Slot To Opposite Side");
+            RecordLayoutAndEngine("Copy Slot To Opposite Side");
             DialogueVisualEditorUtility.CopySlotToOpposite(layoutAsset, selection.AreaKind, selection.SlotIndex);
             CommitLayoutMutation();
             return;
@@ -1405,7 +1476,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     void AddArea(ResolvedDialogueAreaKind kind)
     {
         if (layoutAsset == null || kind == ResolvedDialogueAreaKind.MainInner) return;
-        DialogueVisualEditorUtility.RecordChange(layoutAsset, "Enable Attached Area");
+        RecordLayoutAndEngine("Enable Attached Area");
         DialogueVisualEditorUtility.SetAreaEnabled(layoutAsset, kind, true);
         selection = new SelectionState { Kind = SelectionKind.Area, AreaKind = kind, SlotIndex = -1, ComponentIndex = -1 };
         CommitLayoutMutation();
@@ -1414,7 +1485,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     void RemoveSelectedArea()
     {
         if (layoutAsset == null || selection.Kind != SelectionKind.Area || selection.AreaKind == ResolvedDialogueAreaKind.MainInner) return;
-        DialogueVisualEditorUtility.RecordChange(layoutAsset, "Disable Attached Area");
+        RecordLayoutAndEngine("Disable Attached Area");
         DialogueVisualEditorUtility.SetAreaEnabled(layoutAsset, selection.AreaKind, false);
         selection = SelectionState.None;
         CommitLayoutMutation();
@@ -1431,7 +1502,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         DialogueSlotDefinition slot = DialogueVisualEditorUtility.GetSlot(layoutAsset,
             slotSelection.AreaKind, slotSelection.SlotIndex);
         if (slot == null) return;
-        DialogueVisualEditorUtility.RecordChange(layoutAsset, "Add Dialogue Component");
+        RecordLayoutAndEngine("Add Dialogue Component");
         DialogueComponentDefinition component = DialogueVisualEditorUtility.CreateComponent(type);
         slot.Components.Add(component);
         selection = new SelectionState
@@ -1451,7 +1522,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             selection.AreaKind, selection.SlotIndex);
         if (slot == null || slot.Components == null ||
             selection.ComponentIndex < 0 || selection.ComponentIndex >= slot.Components.Count) return;
-        DialogueVisualEditorUtility.RecordChange(layoutAsset, "Remove Dialogue Component");
+        RecordLayoutAndEngine("Remove Dialogue Component");
         slot.Components.RemoveAt(selection.ComponentIndex);
         selection = SelectionState.None;
         CommitLayoutMutation();
