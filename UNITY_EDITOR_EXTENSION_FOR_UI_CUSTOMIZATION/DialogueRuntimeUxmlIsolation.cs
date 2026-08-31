@@ -37,17 +37,26 @@ public static class DialogueRuntimeUxmlIsolation
     static void DiscardRuntimeUxmlCopy()
     {
         string path = Dialogue_Engine.RUNTIME_UXML_PATH;
-        if (!File.Exists(path)) return;
+        bool removed = false;
 
-        // AssetDatabase.DeleteAsset removes the asset and its .meta in one go.
-        if (!AssetDatabase.DeleteAsset(path))
+        // The runtime copy plus its inspection dumps (.txt / .invalid.txt).
+        string[] artifacts = { path, path + ".txt", path + ".invalid.txt" };
+        foreach (string artifact in artifacts)
         {
-            File.Delete(path);
-            string meta = path + ".meta";
-            if (File.Exists(meta)) File.Delete(meta);
+            if (!File.Exists(artifact)) continue;
+            if (!AssetDatabase.DeleteAsset(artifact))
+            {
+                File.Delete(artifact);
+                string meta = artifact + ".meta";
+                if (File.Exists(meta)) File.Delete(meta);
+            }
+            removed = true;
         }
-        AssetDatabase.Refresh();
-        Debug.Log("DialogueRuntimeUxmlIsolation: Runtime UXML copy discarded — the source layout was never touched during play.");
+        if (removed)
+        {
+            AssetDatabase.Refresh();
+            Debug.Log("DialogueRuntimeUxmlIsolation: Runtime UXML copy discarded — the source layout was never touched during play.");
+        }
     }
 
     static void ClearDialogueUiStates()

@@ -131,3 +131,8 @@ is recorded as ONE undo group covering both the layout asset and the bridged
 engine fields — a single Ctrl+Z reverts the whole gesture everywhere, and
 Ctrl+Z / Ctrl+Shift+Z repaint the canvas and re-sync the engine automatically.
 
+
+If Play ever logs a UXML validation error, the raw generated XML is dumped to
+`dialogue_runtime_copy.invalid.txt` and the console prints the offending
+lines; the engine then falls back to a working layout instead of leaving the
+scene without a UI.

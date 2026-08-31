@@ -1232,44 +1232,127 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         // The visual layout asset wins when assigned, exactly like edit-time.
         ApplyVisualLayoutAssetIfAssigned();
 
-        string contents;
-        string presetPath = ResolvePresetPath();
         visualLayoutRuntimeActive = false;
-        try
+        string contents = null;
+        string source = "engine layout";
+
+        // 1) The visual layout asset is an explicit opt-in: reproduce the
+        //    edited layout EXACTLY from the resolved asset. Beats presets.
+        if (useVisualLayoutAsset && visualLayoutAsset != null)
         {
-            if (presetPath != null)
+            try
             {
-                // An explicit preset is the user's hand-authored layout.
-                contents = File.ReadAllText(presetPath);
-            }
-            else if (useVisualLayoutAsset && visualLayoutAsset != null)
-            {
-                // EXACT reproduction: build the play-mode UXML directly from the
-                // visual editor's resolved layout (same rects, styles, slots and
-                // components the editor canvas draws) rather than approximating
-                // it through the inspector fields.
                 Vector2 canvas = panelSettings != null
                     ? new Vector2(panelSettings.referenceResolution.x, panelSettings.referenceResolution.y)
                     : new Vector2(1920f, 1080f);
-                visualLayoutRuntimeActive = true;
-                contents = DialogueVisualLayoutRuntimeUxml.Generate(visualLayoutAsset, this, canvas);
+                string generated = DialogueVisualLayoutRuntimeUxml.Generate(visualLayoutAsset, this, canvas);
+                source = "visual layout asset '" + visualLayoutAsset.name + "'";
+                if (ValidateRuntimeUxml(generated, source))
+                {
+                    contents = generated;
+                    visualLayoutRuntimeActive = true;
+                }
             }
-            else
+            catch (Exception ex)
             {
-                contents = GenerateUxml(this);
+                Debug.LogError($"Dialogue_Engine: Visual layout UXML generation failed ({ex.Message}). Falling back.");
             }
         }
-        catch (Exception ex)
+
+        // 2) A saved preset, if one is selected.
+        if (contents == null)
         {
-            Debug.LogError($"Dialogue_Engine: Failed to produce the runtime UXML copy ({ex.Message}).");
-            return null;
+            string presetPath = ResolvePresetPath();
+            if (presetPath != null)
+            {
+                try
+                {
+                    contents = File.ReadAllText(presetPath);
+                    source = "preset " + presetPath;
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"Dialogue_Engine: Failed to read preset '{presetPath}' ({ex.Message}).");
+                    contents = null;
+                }
+                if (contents != null && !ValidateRuntimeUxml(contents, source))
+                    contents = null;
+            }
+        }
+
+        // 3) Classic generator from the inspector fields — always expected to work.
+        if (contents == null)
+        {
+            contents = GenerateUxml(this);
+            source = "engine layout";
+            ValidateRuntimeUxml(contents, source);
         }
 
         string dir = Path.GetDirectoryName(RUNTIME_UXML_PATH);
         if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
+        // Drop any stale asset first so the importer can never resurrect a
+        // cached older version of the runtime copy.
+        if (File.Exists(RUNTIME_UXML_PATH) && !AssetDatabase.DeleteAsset(RUNTIME_UXML_PATH))
+        {
+            File.Delete(RUNTIME_UXML_PATH);
+            string staleMeta = RUNTIME_UXML_PATH + ".meta";
+            if (File.Exists(staleMeta)) File.Delete(staleMeta);
+        }
         File.WriteAllText(RUNTIME_UXML_PATH, contents);
+
+        // Plain-text twin so the exact generated XML is always inspectable.
+        try { File.WriteAllText(RUNTIME_UXML_PATH + ".txt", contents); } catch { }
+
         AssetDatabase.ImportAsset(RUNTIME_UXML_PATH, ImportAssetOptions.ForceUpdate);
-        return AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(RUNTIME_UXML_PATH);
+        VisualTreeAsset imported = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(RUNTIME_UXML_PATH);
+        if (imported == null)
+        {
+            Debug.LogError($"Dialogue_Engine: runtime UXML copy failed to import (source: {source}). Raw output was dumped to {RUNTIME_UXML_PATH}.txt");
+            visualLayoutRuntimeActive = false;
+        }
+        return imported;
+    }
+
+    /// <summary>
+    /// Validates the runtime UXML before it ever reaches the AssetDatabase.
+    /// On failure the exact parser error plus the offending lines are logged,
+    /// the raw output is dumped to '.invalid.txt', and the caller falls back
+    /// to a working layout so Play Mode is never left without a UI.
+    /// </summary>
+    bool ValidateRuntimeUxml(string contents, string source)
+    {
+        if (string.IsNullOrEmpty(contents))
+        {
+            Debug.LogError("Dialogue_Engine: runtime UXML from " + source + " is empty.");
+            return false;
+        }
+        try
+        {
+            System.Xml.Linq.XDocument.Parse(contents);
+            return true;
+        }
+        catch (System.Xml.XmlException ex)
+        {
+            string dumpPath = RUNTIME_UXML_PATH + ".invalid.txt";
+            try { File.WriteAllText(dumpPath, contents); } catch { }
+            Debug.LogError(
+                "Dialogue_Engine: runtime UXML from " + source + " is not valid XML — " + ex.Message +
+                "\nAround the reported line:\n" + DescribeXmlLines(contents, ex.LineNumber) +
+                "\nFull raw output dumped to " + dumpPath + " — falling back to a working layout.");
+            return false;
+        }
+    }
+
+    static string DescribeXmlLines(string contents, int lineNumber)
+    {
+        if (string.IsNullOrEmpty(contents) || lineNumber <= 0) return "(unknown)";
+        string[] lines = contents.Split('\n');
+        int target = lineNumber - 1;
+        var sb = new System.Text.StringBuilder();
+        for (int i = Mathf.Max(0, target - 2); i <= Mathf.Min(lines.Length - 1, target + 1); i++)
+            sb.Append(i + 1).Append(": ").Append(lines[i].TrimEnd('\r')).Append('\n');
+        return sb.ToString();
     }
     #endif
 
