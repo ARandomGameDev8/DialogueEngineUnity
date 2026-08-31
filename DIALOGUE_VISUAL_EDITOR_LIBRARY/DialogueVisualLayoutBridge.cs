@@ -21,7 +21,8 @@ public static class DialogueVisualLayoutBridge
         ApplyMainPanel(engine, asset.MainPanel);
         ApplyTextPanels(engine, asset);
         ApplyNamePanels(engine, asset);
-        ApplyImageLayoutHints(engine, asset);
+        ApplyImagePanels(engine, asset);
+        ApplySpeakerEmphasis(engine, asset);
     }
 
     static void ApplyMainPanel(Dialogue_Engine engine,
@@ -75,45 +76,166 @@ public static class DialogueVisualLayoutBridge
         }
     }
 
+    // ─── Text panels ──────────────────────────────────────────────────────────
     static void ApplyTextPanels(Dialogue_Engine engine, DialogueLayoutAsset asset)
     {
         DialogueTextPanelDefinition text = FindFirstComponent<DialogueTextPanelDefinition>(asset);
-        if (text == null || text.TextStyle == null) return;
+        if (text == null) return;
 
-        engine.textFontSize = Mathf.RoundToInt(text.TextStyle.FontSize);
-        engine.textColour = text.TextStyle.Color;
-        engine.textHAnchor = ToTextHAnchor(text.TextStyle.HorizontalAlignment);
-        engine.textVAnchor = ToTextVAnchor(text.TextStyle.VerticalAlignment);
+        if (text.TextStyle != null)
+        {
+            engine.textFontSize = Mathf.RoundToInt(Mathf.Clamp(text.TextStyle.FontSize, 8f, 64f));
+            engine.textColour = text.TextStyle.Color;
+            engine.textHAnchor = ToTextHAnchor(text.TextStyle.HorizontalAlignment);
+            engine.textVAnchor = ToTextVAnchor(text.TextStyle.VerticalAlignment);
+            engine.textLetterSpacing = Mathf.Clamp(text.TextStyle.LetterSpacing, -8f, 32f);
+            Font font = ResolveFont(text.TextStyle.FontSourceKey);
+            if (font != null) engine.textFont = font;
+        }
+
         engine.enableTypewriter = text.TypewriterEnabled;
-        engine.typewriterSpeed = text.CharactersPerSecond > 0f
-            ? Mathf.Clamp(1f / text.CharactersPerSecond, 0.005f, 0.1f)
-            : engine.typewriterSpeed;
+        if (text.CharactersPerSecond > 0f)
+            engine.typewriterSpeed = Mathf.Clamp(1f / text.CharactersPerSecond, 0.005f, 0.1f);
+        engine.typewriterStartDelay = Mathf.Clamp(text.StartDelay, 0f, 5f);
+
+        ApplyLetterEffect(engine, text.LetterEffect, text.BaseAnimationProfile, false);
     }
 
+    // ─── Name panels ──────────────────────────────────────────────────────────
     static void ApplyNamePanels(Dialogue_Engine engine, DialogueLayoutAsset asset)
     {
         DialogueNamePanelDefinition name = FindFirstComponent<DialogueNamePanelDefinition>(asset);
-        if (name == null || name.TextStyle == null) return;
+        if (name == null) return;
 
-        engine.nameFontSize = Mathf.RoundToInt(name.TextStyle.FontSize);
-        engine.nameColour = name.TextStyle.Color;
+        // The name panel renders through the engine's speaker-name element;
+        // make sure the portrait slot hosting it is not switched off.
+        engine.showPortrait = true;
+
+        if (name.TextStyle != null)
+        {
+            engine.nameFontSize = Mathf.RoundToInt(Mathf.Clamp(name.TextStyle.FontSize, 8f, 64f));
+            engine.nameColour = name.TextStyle.Color;
+            engine.nameLetterSpacing = Mathf.Clamp(name.TextStyle.LetterSpacing, -8f, 32f);
+            Font font = ResolveFont(name.TextStyle.FontSourceKey);
+            if (font != null) engine.nameFont = font;
+        }
+
+        engine.nameUppercase = name.Uppercase;
+        ApplyLetterEffect(engine, name.LetterEffect, name.BaseAnimationProfile, true);
     }
 
-    static void ApplyImageLayoutHints(Dialogue_Engine engine, DialogueLayoutAsset asset)
+    /// <summary>
+    /// Maps the per-letter behaviour of a text/name panel onto the engine's
+    /// letter renderer. An assigned TextAnimationProfile overrides the inline
+    /// LetterEffect values.
+    /// </summary>
+    static void ApplyLetterEffect(Dialogue_Engine engine,
+        DialogueLetterEffectSettings effect, TextAnimationProfile profile, bool isName)
+    {
+        DialogueTextEffectType type = profile != null
+            ? profile.EffectType
+            : effect != null ? effect.EffectType : DialogueTextEffectType.None;
+        float amplitude = profile != null ? profile.Amplitude
+            : effect != null ? effect.Amplitude : 6f;
+        float frequency = profile != null ? profile.Frequency
+            : effect != null ? effect.Frequency : 0.6f;
+        float phase = effect != null ? effect.PhaseOffset : 0f;
+        float animSpeed = effect != null ? effect.AnimationSpeed : 2f;
+
+        if (isName)
+        {
+            engine.nameLetterMode = ToLetterMode(type);
+            engine.nameLetterAmplitude = Mathf.Clamp(amplitude, 0f, 48f);
+            engine.nameLetterFrequency = Mathf.Clamp(frequency, 0.05f, 3f);
+            engine.nameLetterPhase = Mathf.Clamp(phase, 0f, 6.28f);
+            engine.nameLetterAnimationSpeed = Mathf.Clamp(animSpeed, 0.1f, 8f);
+        }
+        else
+        {
+            engine.textLetterMode = ToLetterMode(type);
+            engine.textLetterAmplitude = Mathf.Clamp(amplitude, 0f, 48f);
+            engine.textLetterFrequency = Mathf.Clamp(frequency, 0.05f, 3f);
+            engine.textLetterPhase = Mathf.Clamp(phase, 0f, 6.28f);
+            engine.textLetterAnimationSpeed = Mathf.Clamp(animSpeed, 0.1f, 8f);
+        }
+    }
+
+    // ─── Image panels (icon / character figure) ───────────────────────────────
+    static void ApplyImagePanels(Dialogue_Engine engine, DialogueLayoutAsset asset)
     {
         DialogueImagePanelDefinition image = FindFirstComponent<DialogueImagePanelDefinition>(asset);
         if (image == null) return;
 
         engine.showPortrait = true;
+        engine.portraitFlipHorizontal = image.FlipHorizontal;
+
         if (image.Mode == DialogueImagePanelMode.CharacterFigure)
         {
+            // Figure: a panel that hugs the loaded image, paints nothing while
+            // empty, and never grows past its parent container.
             engine.portraitPlacement = PortraitPlacement.CharacterPanel;
-            engine.showPortraitWhenEmpty = false;
+            engine.portraitDisplayType = PortraitDisplayType.Figure;
+            engine.showPortraitWhenEmpty = !image.HideWhenEmpty;
+            engine.dynamicPortraitSize = image.FitToImage;
+            engine.maxPortraitSize = Mathf.Clamp(512f * Mathf.Clamp01(image.MaxSizePercent / 100f), 48f, 512f);
+            engine.portraitFillMode = image.FigureScaleMode == DialogueFigureScaleMode.Fill
+                ? PortraitFillMode.FillCrop
+                : PortraitFillMode.Fit;
+            if (image.FitToImage)
+            {
+                // Content sizing lets the figure panel shrink around the image
+                // instead of reserving a fixed partition.
+                engine.characterPanelWidthMode = CharacterPanelSizeMode.Content;
+                engine.characterPanelHeightMode = CharacterPanelSizeMode.Content;
+            }
         }
         else
         {
+            // Icon: a geometric shape with a customizable border, fitted to the image.
             engine.portraitPlacement = PortraitPlacement.Outside;
+            engine.portraitDisplayType = PortraitDisplayType.Icon;
+            engine.portraitShape = ToPortraitShape(image.Shape);
+            engine.portraitSize = Mathf.Clamp(96f * Mathf.Max(0.1f, image.UniformScale), 48f, 512f);
+            engine.showPortraitWhenEmpty = !image.HideWhenEmpty;
+            engine.portraitFillMode = PortraitFillMode.FillCrop;
         }
+
+        if (image.Border != null)
+        {
+            engine.showPortraitBorder = image.Border.Enabled;
+            engine.portraitBorderWidth = Mathf.Clamp(Mathf.Max(
+                image.Border.LeftThickness,
+                image.Border.RightThickness,
+                image.Border.TopThickness,
+                image.Border.BottomThickness), 0f, 8f);
+            Color borderColour = image.Border.BorderColor;
+            borderColour.a = 1f;
+            engine.portraitBorderColour = borderColour;
+            engine.portraitBorderRadius = Mathf.Clamp(
+                (image.Border.CornerRadiusTopLeft + image.Border.CornerRadiusTopRight +
+                 image.Border.CornerRadiusBottomLeft + image.Border.CornerRadiusBottomRight) * 0.25f, 0f, 32f);
+        }
+    }
+
+    // ─── Speaker emphasis ─────────────────────────────────────────────────────
+    static void ApplySpeakerEmphasis(Dialogue_Engine engine, DialogueLayoutAsset asset)
+    {
+        DialogueSpeakerEmphasisSettings emphasis = asset.SpeakerEmphasis;
+        if (emphasis == null) return;
+
+        if (emphasis.GreyOutPastSpeakers && engine.showPortrait)
+            engine.portraitMode = PortraitMode.Dual;
+
+        engine.activePortraitOpacity = emphasis.ActiveOpacity;
+        engine.inactivePortraitOpacity = emphasis.InactiveOpacity;
+        engine.inactiveTintColour = emphasis.InactiveTint;
+    }
+
+    // ─── Shared helpers ───────────────────────────────────────────────────────
+    static Font ResolveFont(string sourceKey)
+    {
+        if (string.IsNullOrEmpty(sourceKey)) return null;
+        return Resources.Load<Font>(sourceKey);
     }
 
     static T FindFirstComponent<T>(DialogueLayoutAsset asset)
@@ -171,6 +293,33 @@ public static class DialogueVisualLayoutBridge
             case DialogueVerticalAlignment.Top: return TextVAnchor.Top;
             case DialogueVerticalAlignment.Bottom: return TextVAnchor.Bottom;
             default: return TextVAnchor.Center;
+        }
+    }
+
+    static LetterMode ToLetterMode(DialogueTextEffectType effect)
+    {
+        switch (effect)
+        {
+            case DialogueTextEffectType.Wave: return LetterMode.Wave;
+            case DialogueTextEffectType.Zigzag: return LetterMode.Zigzag;
+            case DialogueTextEffectType.Staircase: return LetterMode.Staircase;
+            case DialogueTextEffectType.Shake: return LetterMode.Shake;
+            case DialogueTextEffectType.FadeIn: return LetterMode.FadeIn;
+            case DialogueTextEffectType.Bounce: return LetterMode.Bounce;
+            default: return LetterMode.Normal;
+        }
+    }
+
+    static PortraitShape ToPortraitShape(DialogueIconShape shape)
+    {
+        switch (shape)
+        {
+            case DialogueIconShape.Circle: return PortraitShape.Circle;
+            case DialogueIconShape.Square: return PortraitShape.Square;
+            case DialogueIconShape.RoundedRectangle: return PortraitShape.Rounded;
+            case DialogueIconShape.Diamond:
+            case DialogueIconShape.Hexagon:
+            default: return PortraitShape.Rounded;
         }
     }
 }

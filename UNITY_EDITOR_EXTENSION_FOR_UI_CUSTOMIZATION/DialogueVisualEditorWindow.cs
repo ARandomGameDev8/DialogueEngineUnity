@@ -976,6 +976,30 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             engine.useVisualLayoutAsset = EditorGUILayout.Toggle("Engine Uses This Layout", engine.useVisualLayoutAsset);
             engine.visualLayoutAsset = (DialogueLayoutAsset)EditorGUILayout.ObjectField("Engine Layout Asset", engine.visualLayoutAsset, typeof(DialogueLayoutAsset), false);
         }
+
+        EditorGUILayout.Space(8f);
+        DrawSpeakerEmphasisInspector();
+    }
+
+    void DrawSpeakerEmphasisInspector()
+    {
+        DialogueSpeakerEmphasisSettings emphasis = layoutAsset.SpeakerEmphasis;
+        if (emphasis == null)
+        {
+            emphasis = new DialogueSpeakerEmphasisSettings();
+            layoutAsset.SpeakerEmphasis = emphasis;
+        }
+
+        GUILayout.Label("Speaker Emphasis", EditorStyles.boldLabel);
+        EditorGUILayout.HelpBox(
+            "The current speaker's name and image stay fully visible. When a new speaker interrupts, the previous one stays on screen greyed out.",
+            MessageType.None);
+        emphasis.GreyOutPastSpeakers = EditorGUILayout.Toggle(
+            new GUIContent("Grey Out Past Speakers", "Keep the most recently interrupted speaker visible, greyed out."),
+            emphasis.GreyOutPastSpeakers);
+        emphasis.ActiveOpacity = EditorGUILayout.Slider("Active Opacity", emphasis.ActiveOpacity, 0f, 1f);
+        emphasis.InactiveOpacity = EditorGUILayout.Slider("Greyed Opacity", emphasis.InactiveOpacity, 0f, 1f);
+        emphasis.InactiveTint = EditorGUILayout.ColorField("Greyed Tint", emphasis.InactiveTint);
     }
 
     void DrawMainPanelInspector()
@@ -1208,6 +1232,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         component.StartDelay = EditorGUILayout.FloatField("Start Delay", component.StartDelay);
         component.CharacterAudioKey = EditorGUILayout.TextField("Character Audio Key", component.CharacterAudioKey);
         DrawTextStyle(component.TextStyle);
+        DrawLetterEffectField("Letter Behaviour", component.LetterEffect, component.BaseAnimationProfile);
         component.BaseAnimationProfile = (TextAnimationProfile)EditorGUILayout.ObjectField("Base Animation Profile", component.BaseAnimationProfile, typeof(TextAnimationProfile), false);
         component.OverlayAnimationProfile = (TextAnimationProfile)EditorGUILayout.ObjectField("Overlay Animation Profile", component.OverlayAnimationProfile, typeof(TextAnimationProfile), false);
     }
@@ -1218,7 +1243,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         component.TypewriterEnabled = EditorGUILayout.Toggle("Typewriter Enabled", component.TypewriterEnabled);
         component.CharactersPerSecond = EditorGUILayout.FloatField("Characters Per Second", component.CharactersPerSecond);
         component.StartDelay = EditorGUILayout.FloatField("Start Delay", component.StartDelay);
+        component.Uppercase = EditorGUILayout.Toggle("Uppercase", component.Uppercase);
         DrawTextStyle(component.TextStyle);
+        DrawLetterEffectField("Letter Behaviour", component.LetterEffect, component.BaseAnimationProfile);
         component.BaseAnimationProfile = (TextAnimationProfile)EditorGUILayout.ObjectField("Base Animation Profile", component.BaseAnimationProfile, typeof(TextAnimationProfile), false);
         component.OverlayAnimationProfile = (TextAnimationProfile)EditorGUILayout.ObjectField("Overlay Animation Profile", component.OverlayAnimationProfile, typeof(TextAnimationProfile), false);
     }
@@ -1230,16 +1257,48 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         if (component.Mode == DialogueImagePanelMode.Icon)
         {
             component.Shape = (DialogueIconShape)EditorGUILayout.EnumPopup("Shape", component.Shape);
-            component.UniformScale = EditorGUILayout.FloatField("Uniform Scale", component.UniformScale);
+            component.UniformScale = EditorGUILayout.Slider("Uniform Scale", component.UniformScale, 0.25f, 4f);
             component.InnerPadding = EditorGUILayout.FloatField("Inner Padding", component.InnerPadding);
+            component.HideWhenEmpty = EditorGUILayout.Toggle(
+                new GUIContent("Hide When Empty", "Hide the shape frame entirely while no image is loaded."),
+                component.HideWhenEmpty);
             DrawImageStyle(component.ImageStyle);
         }
         else
         {
+            EditorGUILayout.HelpBox(
+                "Character Figure: the panel hugs the loaded image (never larger than its parent container) and is invisible while no image is loaded.",
+                MessageType.None);
             component.FigureScaleMode = (DialogueFigureScaleMode)EditorGUILayout.EnumPopup("Scale Mode", component.FigureScaleMode);
             component.FlipHorizontal = EditorGUILayout.Toggle("Flip Horizontal", component.FlipHorizontal);
+            component.FitToImage = EditorGUILayout.Toggle(
+                new GUIContent("Fit To Image", "Size the panel to the image's aspect ratio instead of a fixed square."),
+                component.FitToImage);
+            component.HideWhenEmpty = EditorGUILayout.Toggle("Hide When Empty", component.HideWhenEmpty);
+            component.MaxSizePercent = EditorGUILayout.Slider(
+                new GUIContent("Max Size % Of Parent", "Upper bound as a percentage of the parent container."),
+                component.MaxSizePercent, 10f, 100f);
             component.ImageSourceKey = EditorGUILayout.TextField("Image Source Key", component.ImageSourceKey);
         }
+    }
+
+    void DrawLetterEffectField(string label, DialogueLetterEffectSettings effect,
+        TextAnimationProfile profileOverride)
+    {
+        if (effect == null) return;
+        GUILayout.Label(label, EditorStyles.boldLabel);
+        effect.EffectType = (DialogueTextEffectType)EditorGUILayout.EnumPopup("Effect", effect.EffectType);
+        if (profileOverride != null)
+            EditorGUILayout.HelpBox(
+                "A Base Animation Profile is assigned and overrides these inline values at runtime.",
+                MessageType.Info);
+        if (effect.EffectType == DialogueTextEffectType.None) return;
+
+        effect.Amplitude = EditorGUILayout.Slider("Amplitude", effect.Amplitude, 0f, 48f);
+        effect.Frequency = EditorGUILayout.Slider("Frequency", effect.Frequency, 0.05f, 3f);
+        effect.PhaseOffset = EditorGUILayout.Slider("Phase Offset", effect.PhaseOffset, 0f, 6.28f);
+        effect.AnimationSpeed = EditorGUILayout.Slider("Animation Speed", effect.AnimationSpeed, 0.1f, 8f);
+        effect.Loop = EditorGUILayout.Toggle("Loop", effect.Loop);
     }
 
     void DrawTextStyle(DialogueTextStyle style)

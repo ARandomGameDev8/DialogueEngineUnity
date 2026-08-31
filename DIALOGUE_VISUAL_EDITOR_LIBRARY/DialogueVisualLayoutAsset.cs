@@ -45,6 +45,10 @@ public sealed class DialogueLayoutAsset : ScriptableObject
             Side = DialogueAttachedAreaSide.Right,
             DisplayName = "Right Area"
         };
+
+    // How the current speaker is emphasized against recently interrupted ones.
+    public DialogueSpeakerEmphasisSettings SpeakerEmphasis =
+        new DialogueSpeakerEmphasisSettings();
 }
 
 public enum DialogueAnchorPreset
@@ -396,6 +400,7 @@ public sealed class DialogueTextPanelDefinition : DialogueComponentDefinition
     public float CharactersPerSecond = 30f;
     public float StartDelay;
     public string CharacterAudioKey = "";
+    public DialogueLetterEffectSettings LetterEffect = new DialogueLetterEffectSettings();
     public TextAnimationProfile BaseAnimationProfile;
     public TextAnimationProfile OverlayAnimationProfile;
 
@@ -413,6 +418,8 @@ public sealed class DialogueNamePanelDefinition : DialogueComponentDefinition
     public bool TypewriterEnabled;
     public float CharactersPerSecond = 30f;
     public float StartDelay;
+    public bool Uppercase = true;
+    public DialogueLetterEffectSettings LetterEffect = new DialogueLetterEffectSettings();
     public TextAnimationProfile BaseAnimationProfile;
     public TextAnimationProfile OverlayAnimationProfile;
 
@@ -435,6 +442,12 @@ public sealed class DialogueImagePanelDefinition : DialogueComponentDefinition
 
     public DialogueFigureScaleMode FigureScaleMode = DialogueFigureScaleMode.Fit;
     public bool FlipHorizontal;
+
+    // Character-figure behavior: the panel hugs the loaded image (up to the
+    // parent container size) and paints nothing while no image is loaded.
+    public bool FitToImage = true;
+    public bool HideWhenEmpty = true;
+    [Range(10f, 100f)] public float MaxSizePercent = 100f;
     public string ImageSourceKey = "";
 
     public DialogueImagePanelDefinition()
@@ -442,6 +455,36 @@ public sealed class DialogueImagePanelDefinition : DialogueComponentDefinition
         ComponentType = DialogueComponentType.ImagePanel;
         DisplayName = "Image Panel";
     }
+}
+
+/// <summary>
+/// Per-letter behaviour of a text/name panel: how each letter in a word is laid
+/// out or animated (wave, zigzag, staircase, shake, fade-in, bounce).
+/// A TextAnimationProfile assigned to the component overrides these inline values.
+/// </summary>
+[Serializable]
+public sealed class DialogueLetterEffectSettings
+{
+    public DialogueTextEffectType EffectType = DialogueTextEffectType.None;
+    [Range(0f, 48f)] public float Amplitude = 6f;
+    [Range(0.05f, 3f)] public float Frequency = 0.6f;
+    [Range(0f, 6.28f)] public float PhaseOffset;
+    [Range(0.1f, 8f)] public float AnimationSpeed = 2f;
+    public bool Loop = true;
+}
+
+/// <summary>
+/// Speaker emphasis: the current speaker is fully visible while the most
+/// recent interrupted speaker stays on screen greyed out.
+/// </summary>
+[Serializable]
+public sealed class DialogueSpeakerEmphasisSettings
+{
+    [Tooltip("Keep the previously interrupted speaker visible next to the current speaker, greyed out.")]
+    public bool GreyOutPastSpeakers = true;
+    [Range(0f, 1f)] public float ActiveOpacity = 1f;
+    [Range(0f, 1f)] public float InactiveOpacity = 0.4f;
+    public Color InactiveTint = new Color(0.5f, 0.5f, 0.5f, 1f);
 }
 
 [Serializable]

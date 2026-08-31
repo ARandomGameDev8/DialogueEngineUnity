@@ -26,7 +26,7 @@ public enum BackgroundMode       { Colour, Image }
 public enum ImageScaleMode       { Stretch, Tile }           // how an image fills its area
 public enum TiledAnimDirection   { None, Left, Right, Up, Down }
 public enum NamePosition         { Above, Below, Left, Right } // name relative to the portrait image
-public enum LetterMode           { Normal, Wave, Zigzag, Staircase }
+public enum LetterMode           { Normal, Wave, Zigzag, Staircase, Shake, FadeIn, Bounce }
 public enum TextVAnchor           { Top, Center, Bottom }
 public enum TextHAnchor           { Left, Center, Right }
 public enum PortraitDisplayType  { Figure, Icon }            // Figure = whole image fitted, Icon = image fills the shape
@@ -111,15 +111,18 @@ public class DialoguePresetDTO
     public int    namePosition;               public float nameDistance = 6f;
     public int    nameLetterMode;             public float nameLetterAmplitude = 6f;
     public float  nameLetterFrequency = 0.6f; public float nameLetterSpacing = 0f;
+    public float  nameLetterPhase;            public float nameLetterAnimationSpeed = 2f;
 
     // Dialogue text
     public Color  textColour;                 public int  textFontSize = 15;
     public string textFontGuid = "";
     public int    textLetterMode;             public float textLetterAmplitude = 6f;
     public float  textLetterFrequency = 0.6f; public float textLetterSpacing = 0f;
+    public float  textLetterPhase;            public float textLetterAnimationSpeed = 2f;
 
     // Typewriter
     public bool  enableTypewriter = true;     public float typewriterSpeed = 0.03f;
+    public float typewriterStartDelay;
 
     // Portrait
     public bool  showPortrait = true;         public int portraitMode;
@@ -127,6 +130,7 @@ public class DialoguePresetDTO
     public int   portraitDisplayType;         public int portraitFillMode;
     public float portraitSize = 96f;          public bool dynamicPortraitSize;
     public float maxPortraitSize = 256f;      public float portraitOffsetX, portraitOffsetY;
+    public bool  portraitFlipHorizontal;
     public bool  showPortraitWhenEmpty;
     public Color portraitBorderColour;        public bool  showPortraitBorder = true;
     public float portraitBorderWidth = 1f;    public float portraitBorderRadius = 8f;
@@ -562,6 +566,10 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     public const string PRESETS_PATH = "Assets/Scripts/Dialogue_Presets";
     public const string UXML_PATH    = "Assets/Scripts/Dialogue_Presets/dialogue_generated.uxml";
     public const string GENERATED_FILE_NAME = "dialogue_generated";
+    // Play-mode isolation: the runtime only ever instantiates this disposable
+    // copy of the current UXML. It is deleted when play mode ends, so nothing
+    // the runtime changed can leak back into the source layout.
+    public const string RUNTIME_UXML_PATH = "Assets/Scripts/Dialogue_Presets/dialogue_runtime_copy.uxml";
 
     // ─── Preset ───────────────────────────────────────────────────────────────
     [Header("Preset")]
@@ -620,6 +628,8 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     [Range(0f, 48f)] public float nameLetterAmplitude = 6f;
     [Range(0.05f, 3f)] public float nameLetterFrequency = 0.6f;
     [Range(-8f, 32f)] public float nameLetterSpacing = 0f;
+    [Range(0f, 6.28f)] public float nameLetterPhase = 0f;
+    [Range(0.1f, 8f)] public float nameLetterAnimationSpeed = 2f;
 
     // ─── Dialogue Text ────────────────────────────────────────────────────────
     [Header("Dialogue Text")]
@@ -635,11 +645,14 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     [Range(0f, 48f)] public float textLetterAmplitude = 6f;
     [Range(0.05f, 3f)] public float textLetterFrequency = 0.6f;
     [Range(-8f, 32f)] public float textLetterSpacing = 0f;
+    [Range(0f, 6.28f)] public float textLetterPhase = 0f;
+    [Range(0.1f, 8f)] public float textLetterAnimationSpeed = 2f;
 
     // ─── Typewriter ───────────────────────────────────────────────────────────
     [Header("Typewriter")]
     public bool enableTypewriter = true;
     [Range(0.005f, 0.1f)] public float typewriterSpeed = 0.03f;
+    [Range(0f, 5f)] public float typewriterStartDelay = 0f;
 
     // ─── Portrait ─────────────────────────────────────────────────────────────
     [Header("Portrait")]
@@ -658,6 +671,8 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     [Tooltip("Extra offset of the portrait relative to its parent container (px).")]
     [Range(-300f, 300f)] public float portraitOffsetX = 0f;
     [Range(-300f, 300f)] public float portraitOffsetY = 0f;
+    [Tooltip("Mirror the portrait image horizontally (e.g. a character figure facing the panel).")]
+    public bool portraitFlipHorizontal = false;
     [Tooltip("When there is no image, show an empty framed box instead of hiding the portrait.")]
     public bool showPortraitWhenEmpty = false;
 
@@ -968,6 +983,10 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
 
+        // Every play session starts from a clean dialogue state — no leftover
+        // speaker, section, typewriter or history from a previous session.
+        ClearDialogueUiRuntimeState();
+
         Debug.Log("Dialogue_Engine: Awake started.");
 
         foreach (var old in GetComponents<UIDocument>())
@@ -980,35 +999,16 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
 
         document.panelSettings = panelSettings;
 
-        // ── Resolve which UXML to attach: a saved preset or the generated one ──
-        string uxmlPath = null;
-
+        // ── Resolve which UXML to attach: the disposable play-mode copy ────────
         #if UNITY_EDITOR
-        uxmlPath = ResolvePresetPath();
-        if (uxmlPath == null)
-        {
-            // No preset selected → (re)generate the layout from the current
-            // inspector fields so edits are always reflected on play. The file
-            // is only rewritten (and re-imported) when something changed.
-            uxmlPath = UXML_PATH;
-            string desired = GenerateUxml(this);
-            bool changed = !File.Exists(uxmlPath) || File.ReadAllText(uxmlPath) != desired;
-            if (changed)
-            {
-                string dir = Path.GetDirectoryName(uxmlPath);
-                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                File.WriteAllText(uxmlPath, desired);
-                AssetDatabase.ImportAsset(uxmlPath, ImportAssetOptions.ForceUpdate);
-            }
-        }
-        var uxml = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(uxmlPath);
+        var uxml = LoadRuntimeUxmlCopy();
         #else
         // In builds the generated layout must live inside a Resources folder.
         var uxml = Resources.Load<VisualTreeAsset>("Dialogue_Presets/dialogue_generated");
         #endif
 
         if (uxml == null)
-        { Debug.LogError($"Dialogue_Engine: UXML not found at {(uxmlPath ?? "Resources/Dialogue_Presets/dialogue_generated")}. Build the layout first."); return; }
+        { Debug.LogError($"Dialogue_Engine: Runtime UXML copy could not be created at {RUNTIME_UXML_PATH}. Build the layout first."); return; }
 
         document.visualTreeAsset = uxml;
 
@@ -1214,7 +1214,84 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         }
         return fullPath;
     }
+
+    /// <summary>
+    /// Play-mode UI isolation. The source UXML (generated file or preset) is
+    /// never written during play. Instead the engine writes the *current*
+    /// layout into a disposable runtime copy and instantiates that copy — the
+    /// runtime may change it freely, and the whole file is discarded when
+    /// play mode ends (DialogueRuntimeUxmlIsolation deletes it).
+    /// </summary>
+    VisualTreeAsset LoadRuntimeUxmlCopy()
+    {
+        // The visual layout asset wins when assigned, exactly like edit-time.
+        ApplyVisualLayoutAssetIfAssigned();
+
+        string contents;
+        string presetPath = ResolvePresetPath();
+        try
+        {
+            contents = presetPath != null
+                ? File.ReadAllText(presetPath)
+                : GenerateUxml(this);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"Dialogue_Engine: Failed to produce the runtime UXML copy ({ex.Message}).");
+            return null;
+        }
+
+        string dir = Path.GetDirectoryName(RUNTIME_UXML_PATH);
+        if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+        File.WriteAllText(RUNTIME_UXML_PATH, contents);
+        AssetDatabase.ImportAsset(RUNTIME_UXML_PATH, ImportAssetOptions.ForceUpdate);
+        return AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(RUNTIME_UXML_PATH);
+    }
     #endif
+
+    /// <summary>
+    /// Clears every dialogue-UI-carried state (current speaker, section,
+    /// traversal stack, typewriter, history, suspended dialogues, portrait
+    /// slot ownership). Called when play starts and when play mode ends so no
+    /// speaker/section state survives a play session.
+    /// Pure state — safe to call when no UI exists (e.g. after exiting play).
+    /// </summary>
+    public void ClearDialogueUiRuntimeState()
+    {
+        if (typewriterCoroutine != null)
+        {
+            // Safe in edit mode (post-play cleanup) as well as during play.
+            if (Application.isPlaying && isActiveAndEnabled)
+                StopCoroutine(typewriterCoroutine);
+            typewriterCoroutine = null;
+        }
+        isTyping = false;
+        isOpen = false;
+        currentFullText = "";
+        shownText = "";
+        currentTextName = "";
+        currentServiceText = "";
+        currentDialogueId = "";
+        currentDialoguePath = "";
+        lastEmittedEvent = "";
+        currentSection = null;
+        currentIndex = 0;
+        sectionStack.Clear();
+        currentCharacterToken = null;
+        currentChoiceToken = null;
+        currentDialogueInterruptible = false;
+        currentDialogueSaveState = false;
+        suspendedDialogues.Clear();
+        slotOwner[0] = null;
+        slotOwner[1] = null;
+        slotTokens[0] = null;
+        slotTokens[1] = null;
+        history.Clear();
+        choiceButtons.Clear();
+        choiceOptions.Clear();
+        choiceHighlight = -1;
+        SetRuntimeStatus(DialogueRuntimeStatus.Idle, "Not playing");
+    }
 
     // ─── Preset helpers ────────────────────────────────────────────────────────
     public void ApplyPreset(DialoguePresetDTO d)
@@ -1247,6 +1324,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         namePosition = (NamePosition)d.namePosition; nameDistance = d.nameDistance;
         nameLetterMode = (LetterMode)d.nameLetterMode; nameLetterAmplitude = d.nameLetterAmplitude;
         nameLetterFrequency = d.nameLetterFrequency; nameLetterSpacing = d.nameLetterSpacing;
+        nameLetterPhase = d.nameLetterPhase; nameLetterAnimationSpeed = d.nameLetterAnimationSpeed;
 
         textColour = d.textColour; textFontSize = d.textFontSize;
         #if UNITY_EDITOR
@@ -1254,16 +1332,19 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         #endif
         textLetterMode = (LetterMode)d.textLetterMode; textLetterAmplitude = d.textLetterAmplitude;
         textLetterFrequency = d.textLetterFrequency; textLetterSpacing = d.textLetterSpacing;
+        textLetterPhase = d.textLetterPhase; textLetterAnimationSpeed = d.textLetterAnimationSpeed;
         textVAnchor = (TextVAnchor)d.textVAnchor;
         textHAnchor = (TextHAnchor)d.textHAnchor;
 
         enableTypewriter = d.enableTypewriter; typewriterSpeed = d.typewriterSpeed;
+        typewriterStartDelay = d.typewriterStartDelay;
 
         showPortrait = d.showPortrait; portraitMode = (PortraitMode)d.portraitMode;
         portraitPlacement = (PortraitPlacement)d.portraitPlacement; portraitShape = (PortraitShape)d.portraitShape;
         portraitDisplayType = (PortraitDisplayType)d.portraitDisplayType; portraitFillMode = (PortraitFillMode)d.portraitFillMode;
         portraitSize = d.portraitSize; dynamicPortraitSize = d.dynamicPortraitSize; maxPortraitSize = d.maxPortraitSize;
         portraitOffsetX = d.portraitOffsetX; portraitOffsetY = d.portraitOffsetY;
+        portraitFlipHorizontal = d.portraitFlipHorizontal;
         showPortraitWhenEmpty = d.showPortraitWhenEmpty;
         portraitBorderColour = d.portraitBorderColour; showPortraitBorder = d.showPortraitBorder;
         portraitBorderWidth = d.portraitBorderWidth; portraitBorderRadius = d.portraitBorderRadius;
@@ -1366,6 +1447,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         d.namePosition = (int)namePosition; d.nameDistance = nameDistance;
         d.nameLetterMode = (int)nameLetterMode; d.nameLetterAmplitude = nameLetterAmplitude;
         d.nameLetterFrequency = nameLetterFrequency; d.nameLetterSpacing = nameLetterSpacing;
+        d.nameLetterPhase = nameLetterPhase; d.nameLetterAnimationSpeed = nameLetterAnimationSpeed;
 
         d.textColour = textColour; d.textFontSize = textFontSize;
         #if UNITY_EDITOR
@@ -1373,16 +1455,19 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         #endif
         d.textLetterMode = (int)textLetterMode; d.textLetterAmplitude = textLetterAmplitude;
         d.textLetterFrequency = textLetterFrequency; d.textLetterSpacing = textLetterSpacing;
+        d.textLetterPhase = textLetterPhase; d.textLetterAnimationSpeed = textLetterAnimationSpeed;
         d.textVAnchor = (int)textVAnchor;
         d.textHAnchor = (int)textHAnchor;
 
         d.enableTypewriter = enableTypewriter; d.typewriterSpeed = typewriterSpeed;
+        d.typewriterStartDelay = typewriterStartDelay;
 
         d.showPortrait = showPortrait; d.portraitMode = (int)portraitMode;
         d.portraitPlacement = (int)portraitPlacement; d.portraitShape = (int)portraitShape;
         d.portraitDisplayType = (int)portraitDisplayType; d.portraitFillMode = (int)portraitFillMode;
         d.portraitSize = portraitSize; d.dynamicPortraitSize = dynamicPortraitSize; d.maxPortraitSize = maxPortraitSize;
         d.portraitOffsetX = portraitOffsetX; d.portraitOffsetY = portraitOffsetY;
+        d.portraitFlipHorizontal = portraitFlipHorizontal;
         d.showPortraitWhenEmpty = showPortraitWhenEmpty;
         d.portraitBorderColour = portraitBorderColour; d.showPortraitBorder = showPortraitBorder;
         d.portraitBorderWidth = portraitBorderWidth; d.portraitBorderRadius = portraitBorderRadius;
@@ -2369,6 +2454,8 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         isTyping = true;
         StartCaretBlink();
         RenderDialogueText("");
+        if (typewriterStartDelay > 0f)
+            yield return new WaitForSeconds(typewriterStartDelay);
         for (int i = 0; i <= text.Length; i++)
         {
             RenderDialogueText(text.Substring(0, i));
@@ -2426,7 +2513,8 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             dialogueTextLabel.style.display = DisplayStyle.None;
             content.Clear();
             BuildLetterRows(content, display, textLetterMode, textLetterAmplitude,
-                            textLetterFrequency, textLetterSpacing, textColour, textFontSize, textFont);
+                            textLetterFrequency, textLetterSpacing, textColour, textFontSize, textFont,
+                            textLetterPhase, textLetterAnimationSpeed, true);
             textScroll.mode = ScrollViewMode.VerticalAndHorizontal;
         }
         ScrollToBottom();
@@ -2435,6 +2523,15 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     void BuildLetterRows(VisualElement container, string text, LetterMode mode,
                          float amplitude, float frequency, float spacing,
                          Color colour, int fontSize, Font font)
+    {
+        BuildLetterRows(container, text, mode, amplitude, frequency, spacing,
+            colour, fontSize, font, 0f, 2f, true);
+    }
+
+    void BuildLetterRows(VisualElement container, string text, LetterMode mode,
+                         float amplitude, float frequency, float spacing,
+                         Color colour, int fontSize, Font font,
+                         float phaseOffset, float animSpeed, bool loop)
     {
         if (string.IsNullOrEmpty(text)) return;
         Justify j = textHAnchor == TextHAnchor.Center ? Justify.Center :
@@ -2458,7 +2555,8 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                     row.Add(space);
                     continue;
                 }
-                row.Add(MakeLetterLabel(ch.ToString(), letterIndex, mode, amplitude, frequency, spacing, colour, fontSize, font));
+                row.Add(MakeLetterLabel(ch.ToString(), letterIndex, mode, amplitude,
+                    frequency, spacing, colour, fontSize, font, phaseOffset, animSpeed, loop));
                 letterIndex++;
             }
             container.Add(row);
@@ -2469,10 +2567,19 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                           float amplitude, float frequency, float spacing,
                           Color colour, int fontSize, Font font)
     {
+        return MakeLetterLabel(letter, index, mode, amplitude, frequency, spacing,
+            colour, fontSize, font, 0f, 2f, true);
+    }
+
+    Label MakeLetterLabel(string letter, int index, LetterMode mode,
+                          float amplitude, float frequency, float spacing,
+                          Color colour, int fontSize, Font font,
+                          float phaseOffset, float animSpeed, bool loop)
+    {
         float y = 0f;
         switch (mode)
         {
-            case LetterMode.Wave:      y = Mathf.Sin(index * frequency) * amplitude; break;
+            case LetterMode.Wave:      y = Mathf.Sin(index * frequency + phaseOffset) * amplitude; break;
             case LetterMode.Zigzag:    y = (index % 2 == 0) ? -amplitude : amplitude; break;
             case LetterMode.Staircase: y = index * amplitude; break;
         }
@@ -2483,6 +2590,48 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         lbl.style.translate = new Translate(0, y, 0);
         lbl.style.marginRight = Mathf.Max(0f, spacing);
         lbl.style.whiteSpace = WhiteSpace.NoWrap;
+
+        // Time-driven letter behaviours. Each letter animates itself and stops
+        // as soon as it is detached from the panel (re-render / close / stop).
+        if (mode == LetterMode.Shake || mode == LetterMode.Bounce || mode == LetterMode.FadeIn)
+        {
+            float speed = Mathf.Max(0.05f, animSpeed);
+            bool  loops = loop;
+            float seed  = index * 0.7f;
+            float t0    = Time.unscaledTime;
+            IVisualElementScheduledItem item = null;
+            item = lbl.schedule.Execute(() =>
+            {
+                if (lbl.panel == null) { if (item != null) item.Pause(); return; }
+                float t = (Time.unscaledTime - t0) * speed;
+                switch (mode)
+                {
+                    case LetterMode.Shake:
+                    {
+                        float dx = (Mathf.PerlinNoise(t + seed, 0f) * 2f - 1f) * amplitude * 0.5f;
+                        float dy = (Mathf.PerlinNoise(0f, t + seed) * 2f - 1f) * amplitude * 0.5f;
+                        lbl.style.translate = new Translate(dx, dy, 0);
+                        break;
+                    }
+                    case LetterMode.Bounce:
+                    {
+                        float hop = Mathf.Abs(Mathf.Sin(t * frequency + phaseOffset + seed)) * amplitude;
+                        lbl.style.translate = new Translate(0, -hop, 0);
+                        break;
+                    }
+                    case LetterMode.FadeIn:
+                    {
+                        float a = Mathf.Clamp01(t / Mathf.Max(0.1f, frequency * 2f));
+                        var c = colour; c.a *= a;
+                        lbl.style.color = new StyleColor(c);
+                        if (!loops && a >= 1f && item != null) item.Pause();
+                        break;
+                    }
+                }
+                if (!loops && t > 4f && item != null) item.Pause();
+            }).Every(30);
+        }
+
         return lbl;
     }
 
@@ -2532,7 +2681,8 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                     continue;
                 }
                 row.Add(MakeLetterLabel(ch.ToString(), idx, nameLetterMode, nameLetterAmplitude,
-                                        nameLetterFrequency, nameLetterSpacing, nameColour, nameFontSize, nameFont));
+                                        nameLetterFrequency, nameLetterSpacing, nameColour, nameFontSize, nameFont,
+                                        nameLetterPhase, nameLetterAnimationSpeed, true));
                 idx++;
             }
             nameContainer.Add(row);
@@ -2581,7 +2731,22 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         if (tex == null) return;
         // Character-panel portraits fill their dedicated image section; the
         // root panel's own Default/Custom/Content modes control its dimensions.
-        if (portraitPlacement == PortraitPlacement.CharacterPanel) return;
+        if (portraitPlacement == PortraitPlacement.CharacterPanel)
+        {
+            if (!dynamicPortraitSize) return;
+            // Figure panels hug the loaded image, capped by the host space.
+            ApplyFigureSizeToTexture(slot, tex);
+            // Re-apply once the host has been through a layout pass so the
+            // real parent size can act as the upper bound.
+            SlotRefs captured = slot;
+            Texture capturedTex = tex;
+            slot.portrait.schedule.Execute(() =>
+            {
+                if (captured.portrait == null || captured.portrait.panel == null) return;
+                ApplyFigureSizeToTexture(captured, capturedTex);
+            }).StartingIn(120);
+            return;
+        }
         float w = portraitSize, h = portraitSize;
         if (portraitShape == PortraitShape.Rectangle) { w = portraitSize * 1.3f; h = portraitSize; }
         if (dynamicPortraitSize)
@@ -2591,6 +2756,31 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             h = tex.height * scale;
         }
         SetSlotSizes(slot, w, h);
+    }
+
+    /// <summary>
+    /// Sizes a character-figure portrait to the image's aspect ratio, never
+    /// exceeding the portrait size cap or the host container's resolved size.
+    /// </summary>
+    void ApplyFigureSizeToTexture(SlotRefs slot, Texture tex)
+    {
+        if (slot.portrait == null || tex == null || tex.width <= 0 || tex.height <= 0) return;
+
+        float maxWidth = maxPortraitSize;
+        float maxHeight = maxPortraitSize;
+        if (slot.host != null)
+        {
+            float hostW = slot.host.resolvedStyle.width;
+            float hostH = slot.host.resolvedStyle.height;
+            if (!float.IsNaN(hostW) && hostW > 1f) maxWidth = Mathf.Min(maxWidth, hostW);
+            if (!float.IsNaN(hostH) && hostH > 1f) maxHeight = Mathf.Min(maxHeight, hostH);
+        }
+
+        float scale = Mathf.Min(maxWidth / tex.width, maxHeight / tex.height);
+        slot.portrait.style.width = tex.width * scale;
+        slot.portrait.style.height = tex.height * scale;
+        slot.portrait.style.flexGrow = 0f;
+        slot.portrait.style.alignSelf = Align.Center;
     }
 
     void LoadPortraitFromPath(SlotRefs slot, string path)
@@ -2621,6 +2811,14 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             case PortraitFillMode.FillCrop:  slot.style.backgroundSize = new BackgroundSize(BackgroundSizeType.Cover);   break;
             default:                         slot.style.backgroundSize = new BackgroundSize(Length.Percent(100), Length.Percent(100)); break;
         }
+        ApplyPortraitFlip(slot);
+    }
+
+    void ApplyPortraitFlip(VisualElement portrait)
+    {
+        if (portrait == null) return;
+        portrait.style.scale = new StyleScale(new Scale(new Vector3(
+            portraitFlipHorizontal ? -1f : 1f, 1f, 1f)));
     }
 
     // ─── CloseUI ───────────────────────────────────────────────────────────────
@@ -2877,6 +3075,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                 slot.portrait.style.backgroundSize = new BackgroundSize(BackgroundSizeType.Contain);
                 slot.portrait.style.opacity = 1f;
                 slot.portrait.style.display = DisplayStyle.None;
+                slot.portrait.style.scale = new StyleScale(new Scale(Vector3.one));
             }
             bool characterSlot = slot.wrapper == charLeftWrapper || slot.wrapper == charRightWrapper;
             float defaultWidth = portraitShape == PortraitShape.Rectangle
