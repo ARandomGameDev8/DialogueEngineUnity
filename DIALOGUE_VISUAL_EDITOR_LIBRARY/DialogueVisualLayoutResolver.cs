@@ -73,10 +73,10 @@ public static class DialogueVisualLayoutResolver
         Rect mainInnerRect = ShrinkRect(resolved.MainPanelRect, asset.MainPanel.Padding);
         ResolveInnerRegion(asset.MainPanel.InnerRegion, mainInnerRect, "Main Panel / Inner Region", resolved);
 
-        ResolveOuterArea(asset.TopAreaEnabled ? asset.TopArea : null, resolved.MainPanelRect, canvasRect, resolved);
-        ResolveOuterArea(asset.BottomAreaEnabled ? asset.BottomArea : null, resolved.MainPanelRect, canvasRect, resolved);
-        ResolveOuterArea(asset.LeftAreaEnabled ? asset.LeftArea : null, resolved.MainPanelRect, canvasRect, resolved);
-        ResolveOuterArea(asset.RightAreaEnabled ? asset.RightArea : null, resolved.MainPanelRect, canvasRect, resolved);
+        ResolveOuterArea(ShouldResolveAttachedArea(asset, ResolvedDialogueAreaKind.Top) ? asset.TopArea : null, resolved.MainPanelRect, canvasRect, resolved);
+        ResolveOuterArea(ShouldResolveAttachedArea(asset, ResolvedDialogueAreaKind.Bottom) ? asset.BottomArea : null, resolved.MainPanelRect, canvasRect, resolved);
+        ResolveOuterArea(ShouldResolveAttachedArea(asset, ResolvedDialogueAreaKind.Left) ? asset.LeftArea : null, resolved.MainPanelRect, canvasRect, resolved);
+        ResolveOuterArea(ShouldResolveAttachedArea(asset, ResolvedDialogueAreaKind.Right) ? asset.RightArea : null, resolved.MainPanelRect, canvasRect, resolved);
 
         return resolved;
     }
@@ -110,6 +110,7 @@ public static class DialogueVisualLayoutResolver
 
         float x = canvas.center.x - width * 0.5f;
         float y = canvas.center.y - height * 0.5f;
+        Vector2 anchorOffset = GetStandardAnchorOffset(def);
 
         switch (anchor)
         {
@@ -153,6 +154,12 @@ public static class DialogueVisualLayoutResolver
                 x = ResolveCustomX(def != null ? def.CustomAnchor : null, canvas, width);
                 y = ResolveCustomY(def != null ? def.CustomAnchor : null, canvas, height);
                 break;
+        }
+
+        if (anchor != DialogueAnchorPreset.Custom)
+        {
+            x += anchorOffset.x;
+            y += anchorOffset.y;
         }
 
         return new Rect(x, y, width, height);
@@ -506,6 +513,79 @@ public static class DialogueVisualLayoutResolver
             case DialogueAttachedAreaSide.Left: return ResolvedDialogueAreaKind.Left;
             default: return ResolvedDialogueAreaKind.Right;
         }
+    }
+
+    static bool ShouldResolveAttachedArea(DialogueLayoutAsset asset,
+        ResolvedDialogueAreaKind kind)
+    {
+        if (asset == null)
+            return false;
+
+        bool enabled = false;
+        switch (kind)
+        {
+            case ResolvedDialogueAreaKind.Top:
+                enabled = asset.TopAreaEnabled && asset.TopArea != null && asset.TopArea.Enabled;
+                break;
+            case ResolvedDialogueAreaKind.Bottom:
+                enabled = asset.BottomAreaEnabled && asset.BottomArea != null && asset.BottomArea.Enabled;
+                break;
+            case ResolvedDialogueAreaKind.Left:
+                enabled = asset.LeftAreaEnabled && asset.LeftArea != null && asset.LeftArea.Enabled;
+                break;
+            case ResolvedDialogueAreaKind.Right:
+                enabled = asset.RightAreaEnabled && asset.RightArea != null && asset.RightArea.Enabled;
+                break;
+        }
+
+        return enabled && !IsAreaSuppressedByMainPanelAnchor(asset, kind);
+    }
+
+    public static bool IsAreaSuppressedByMainPanelAnchor(DialogueLayoutAsset asset,
+        ResolvedDialogueAreaKind kind)
+    {
+        if (asset == null || asset.MainPanel == null)
+            return false;
+
+        return IsAreaSuppressedByMainPanelAnchor(asset.MainPanel.AnchorPreset, kind);
+    }
+
+    public static bool IsAreaSuppressedByMainPanelAnchor(DialogueAnchorPreset anchor,
+        ResolvedDialogueAreaKind kind)
+    {
+        switch (anchor)
+        {
+            case DialogueAnchorPreset.TopLeft:
+                return kind == ResolvedDialogueAreaKind.Top ||
+                       kind == ResolvedDialogueAreaKind.Left;
+            case DialogueAnchorPreset.Top:
+                return kind == ResolvedDialogueAreaKind.Top;
+            case DialogueAnchorPreset.TopRight:
+                return kind == ResolvedDialogueAreaKind.Top ||
+                       kind == ResolvedDialogueAreaKind.Right;
+            case DialogueAnchorPreset.Left:
+                return kind == ResolvedDialogueAreaKind.Left;
+            case DialogueAnchorPreset.Right:
+                return kind == ResolvedDialogueAreaKind.Right;
+            case DialogueAnchorPreset.BottomLeft:
+                return kind == ResolvedDialogueAreaKind.Bottom ||
+                       kind == ResolvedDialogueAreaKind.Left;
+            case DialogueAnchorPreset.Bottom:
+                return kind == ResolvedDialogueAreaKind.Bottom;
+            case DialogueAnchorPreset.BottomRight:
+                return kind == ResolvedDialogueAreaKind.Bottom ||
+                       kind == ResolvedDialogueAreaKind.Right;
+            default:
+                return false;
+        }
+    }
+
+    static Vector2 GetStandardAnchorOffset(DialogueMainPanelDefinition def)
+    {
+        if (def == null || def.CustomAnchor == null)
+            return Vector2.zero;
+
+        return new Vector2(def.CustomAnchor.OffsetX, def.CustomAnchor.OffsetY);
     }
 
     static float ResolveCustomX(DialogueCustomAnchorDefinition custom, Rect canvas, float width)

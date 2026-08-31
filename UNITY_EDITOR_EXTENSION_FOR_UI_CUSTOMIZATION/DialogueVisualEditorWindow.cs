@@ -13,6 +13,16 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         AddImagePanel
     }
 
+    enum EditTool
+    {
+        Select,
+        MoveRoot,
+        ScaleRoot,
+        Width,
+        Height,
+        Size
+    }
+
     enum SelectionKind
     {
         None,
@@ -25,12 +35,14 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     enum DragMode
     {
         None,
-        MoveMainCustom,
-        ResizeMain,
-        ResizeArea,
-        AdjustAreaGap,
-        MoveComponent,
-        ResizeComponent
+        MoveMainAnchored,
+        ScaleMainSymmetric,
+        ResizeWidthLeft,
+        ResizeWidthRight,
+        ResizeHeightTop,
+        ResizeHeightBottom,
+        ResizeSymmetric,
+        AdjustAreaGap
     }
 
     struct SelectionState
@@ -67,15 +79,14 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     bool showComponents = true;
 
     ToolMode toolMode = ToolMode.Select;
+    EditTool editTool = EditTool.Select;
     SelectionState selection = SelectionState.None;
     DragMode dragMode = DragMode.None;
     Vector2 dragStartMouse;
-    DialogueSizeUnit dragStartWidthUnit;
-    DialogueSizeUnit dragStartHeightUnit;
-    float dragStartWidthValue;
-    float dragStartHeightValue;
     float dragStartGapValue;
-    Vector2 dragStartOffset;
+    Rect dragStartRect;
+    Rect dragParentRect;
+    Vector2 dragHandleDirection = Vector2.one;
 
     Rect canvasRect;
     ResolvedDialogueLayout resolved;
@@ -108,6 +119,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
     void DrawToolbar()
     {
+        EditorGUILayout.BeginVertical();
+
         EditorGUILayout.BeginHorizontal(EditorStyles.toolbar);
         engine = (Dialogue_Engine)EditorGUILayout.ObjectField(engine, typeof(Dialogue_Engine), true, GUILayout.Width(220f));
         if (engine != null && layoutAsset == null)
@@ -121,11 +134,6 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         showComponents = GUILayout.Toggle(showComponents, "Components", EditorStyles.toolbarButton, GUILayout.Width(90f));
         autoApplyToEngine = GUILayout.Toggle(autoApplyToEngine, "Auto Apply", EditorStyles.toolbarButton, GUILayout.Width(82f));
 
-        GUILayout.Space(10f);
-        toolMode = (ToolMode)GUILayout.Toolbar((int)toolMode,
-            new[] { "Select", "Add Text", "Add Name", "Add Image" },
-            EditorStyles.toolbarButton, GUILayout.Width(320f));
-
         GUILayout.FlexibleSpace();
 
         GUI.enabled = engine != null && layoutAsset != null;
@@ -137,6 +145,21 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         GUI.enabled = true;
 
         EditorGUILayout.EndHorizontal();
+
+        EditorGUILayout.BeginHorizontal(EditorStyles.toolbar);
+        GUILayout.Label("Edit", GUILayout.Width(28f));
+        editTool = (EditTool)GUILayout.Toolbar((int)editTool,
+            new[] { "Select", "Move Root", "Scale Root", "Width", "Height", "Size" },
+            EditorStyles.toolbarButton, GUILayout.Width(470f));
+        GUILayout.Space(8f);
+        GUILayout.Label("Add", GUILayout.Width(28f));
+        toolMode = (ToolMode)GUILayout.Toolbar((int)toolMode,
+            new[] { "Select", "Add Text", "Add Name", "Add Image" },
+            EditorStyles.toolbarButton, GUILayout.Width(320f));
+        GUILayout.FlexibleSpace();
+        EditorGUILayout.EndHorizontal();
+
+        EditorGUILayout.EndVertical();
     }
 
     void DrawLeftSidebar()
@@ -146,7 +169,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
         GUILayout.Label("Palette", EditorStyles.boldLabel);
         EditorGUILayout.HelpBox(
-            "Phase 3 MVP: select objects, add attached areas, add components to slots, resize or move selected elements, and edit the current selection on the right.",
+            "Keep the current visual workflow: Move Root drags only the main panel and automatically updates its anchor, Scale Root symmetrically scales only the main panel, Width/Height/Size resize the current selection, and attached areas on the same edge as the main-panel anchor are auto-hidden until that anchor changes.",
             MessageType.None);
 
         EditorGUILayout.BeginHorizontal();
@@ -403,27 +426,49 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
     void DrawSelectionHandles(ResolvedDialogueLayout layout)
     {
+        Rect selectedRect;
+        if (!TryGetSelectedRect(layout, out selectedRect))
+            return;
+
         const float handle = 10f;
-        switch (selection.Kind)
+        Color sizeHandleColor = new Color(0.9f, 0.9f, 0.2f, 1f);
+        Color moveHandleColor = new Color(0.2f, 1f, 1f, 1f);
+
+        switch (editTool)
         {
-            case SelectionKind.MainPanel:
-                DrawHandleBox(GetResizeHandle(layout.MainPanelRect, handle), new Color(0.9f, 0.9f, 0.2f, 1f));
+            case EditTool.MoveRoot:
+                if (selection.Kind == SelectionKind.MainPanel)
+                    DrawHandleBox(GetMoveHandle(selectedRect, handle), moveHandleColor);
                 break;
-            case SelectionKind.Area:
-                ResolvedDialogueArea area = FindSelectedArea(layout);
-                if (area != null)
-                {
-                    DrawHandleBox(GetResizeHandle(area.Rect, handle), new Color(0.9f, 0.9f, 0.2f, 1f));
-                    Rect gap = GetAreaGapHandle(area.Rect, layout.MainPanelRect, area.Side);
-                    DrawHandleBox(gap, new Color(0.2f, 1f, 1f, 1f));
-                }
+
+            case EditTool.ScaleRoot:
+                if (selection.Kind == SelectionKind.MainPanel)
+                    DrawCornerHandles(selectedRect, handle, sizeHandleColor);
                 break;
-            case SelectionKind.Component:
-                ResolvedDialogueComponentRect component = FindSelectedComponent(layout);
-                if (component != null)
+
+            case EditTool.Width:
+                DrawHandleBox(GetLeftEdgeHandle(selectedRect, handle), sizeHandleColor);
+                DrawHandleBox(GetRightEdgeHandle(selectedRect, handle), sizeHandleColor);
+                break;
+
+            case EditTool.Height:
+                DrawHandleBox(GetTopEdgeHandle(selectedRect, handle), sizeHandleColor);
+                DrawHandleBox(GetBottomEdgeHandle(selectedRect, handle), sizeHandleColor);
+                break;
+
+            case EditTool.Size:
+                DrawCornerHandles(selectedRect, handle, sizeHandleColor);
+                break;
+
+            default:
+                if (selection.Kind == SelectionKind.Area && selection.AreaKind != ResolvedDialogueAreaKind.MainInner)
                 {
-                    DrawHandleBox(GetResizeHandle(component.Rect, handle), new Color(0.9f, 0.9f, 0.2f, 1f));
-                    DrawHandleBox(GetMoveHandle(component.Rect, handle), new Color(0.2f, 1f, 1f, 1f));
+                    ResolvedDialogueArea area = FindSelectedArea(layout);
+                    if (area != null)
+                    {
+                        Rect gap = GetAreaGapHandle(area.Rect, layout.MainPanelRect, area.Side);
+                        DrawHandleBox(gap, moveHandleColor);
+                    }
                 }
                 break;
         }
@@ -435,19 +480,21 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
         if (evt.type == EventType.MouseDown && evt.button == 0 && paddedCanvas.Contains(evt.mousePosition))
         {
+            SelectionState hit = HitTest(evt.mousePosition);
+            if (toolMode != ToolMode.Select && hit.Kind == SelectionKind.Slot)
+            {
+                AddComponentAtSlot(hit, ModeToComponent(toolMode));
+                evt.Use();
+                return;
+            }
+
+            selection = hit;
             if (editMode && TryBeginDrag(evt.mousePosition))
             {
                 evt.Use();
                 return;
             }
 
-            SelectionState hit = HitTest(evt.mousePosition);
-            if (toolMode == ToolMode.Select)
-                selection = hit;
-            else if (hit.Kind == SelectionKind.Slot)
-                AddComponentAtSlot(hit, ModeToComponent(toolMode));
-            else
-                selection = hit;
             Repaint();
             evt.Use();
             return;
@@ -471,93 +518,103 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     bool TryBeginDrag(Vector2 mouse)
     {
         const float size = 10f;
-        if (selection.Kind == SelectionKind.MainPanel)
-        {
-            if (GetResizeHandle(resolved.MainPanelRect, size).Contains(mouse))
-            {
-                BeginMainResize();
-                return true;
-            }
-            if (layoutAsset != null && layoutAsset.MainPanel != null &&
-                layoutAsset.MainPanel.AnchorPreset == DialogueAnchorPreset.Custom &&
-                resolved.MainPanelRect.Contains(mouse))
-            {
-                BeginMainMove();
-                return true;
-            }
-        }
+        Rect selectedRect;
+        if (!TryGetSelectedRect(resolved, out selectedRect))
+            return false;
 
-        if (selection.Kind == SelectionKind.Area)
+        switch (editTool)
         {
-            ResolvedDialogueArea area = FindSelectedArea(resolved);
-            if (area != null)
-            {
-                if (GetAreaGapHandle(area.Rect, resolved.MainPanelRect, area.Side).Contains(mouse))
+            case EditTool.MoveRoot:
+                if (selection.Kind == SelectionKind.MainPanel && selectedRect.Contains(mouse))
                 {
-                    BeginAreaGapDrag(area.AreaKind);
+                    BeginMainMove(selectedRect);
                     return true;
                 }
-                if (GetResizeHandle(area.Rect, size).Contains(mouse))
-                {
-                    BeginAreaResize(area.AreaKind);
-                    return true;
-                }
-            }
-        }
+                break;
 
-        if (selection.Kind == SelectionKind.Component)
-        {
-            ResolvedDialogueComponentRect component = FindSelectedComponent(resolved);
-            if (component != null)
-            {
-                if (GetResizeHandle(component.Rect, size).Contains(mouse))
+            case EditTool.ScaleRoot:
+                if (selection.Kind == SelectionKind.MainPanel)
                 {
-                    BeginComponentResize(component);
+                    if (TryHitCornerHandle(selectedRect, mouse, size, out dragHandleDirection))
+                    {
+                        BeginSizedDrag(DragMode.ScaleMainSymmetric, selectedRect, GetSelectedParentRect(), "Scale Main Panel");
+                        return true;
+                    }
+                }
+                break;
+
+            case EditTool.Width:
+                if (GetLeftEdgeHandle(selectedRect, size).Contains(mouse))
+                {
+                    BeginSizedDrag(DragMode.ResizeWidthLeft, selectedRect, GetSelectedParentRect(), "Adjust Width");
                     return true;
                 }
-                if (GetMoveHandle(component.Rect, size).Contains(mouse))
+                if (GetRightEdgeHandle(selectedRect, size).Contains(mouse))
                 {
-                    BeginComponentMove(component);
+                    BeginSizedDrag(DragMode.ResizeWidthRight, selectedRect, GetSelectedParentRect(), "Adjust Width");
                     return true;
                 }
-            }
+                break;
+
+            case EditTool.Height:
+                if (GetTopEdgeHandle(selectedRect, size).Contains(mouse))
+                {
+                    BeginSizedDrag(DragMode.ResizeHeightTop, selectedRect, GetSelectedParentRect(), "Adjust Height");
+                    return true;
+                }
+                if (GetBottomEdgeHandle(selectedRect, size).Contains(mouse))
+                {
+                    BeginSizedDrag(DragMode.ResizeHeightBottom, selectedRect, GetSelectedParentRect(), "Adjust Height");
+                    return true;
+                }
+                break;
+
+            case EditTool.Size:
+                if (TryHitCornerHandle(selectedRect, mouse, size, out dragHandleDirection))
+                {
+                    BeginSizedDrag(DragMode.ResizeSymmetric, selectedRect, GetSelectedParentRect(), "Adjust Size");
+                    return true;
+                }
+                break;
+
+            default:
+                if (selection.Kind == SelectionKind.Area && selection.AreaKind != ResolvedDialogueAreaKind.MainInner)
+                {
+                    ResolvedDialogueArea area = FindSelectedArea(resolved);
+                    if (area != null && GetAreaGapHandle(area.Rect, resolved.MainPanelRect, area.Side).Contains(mouse))
+                    {
+                        BeginAreaGapDrag(area.AreaKind);
+                        return true;
+                    }
+                }
+                break;
         }
 
         return false;
     }
 
-    void BeginMainResize()
+    void BeginMainMove(Rect currentRect)
     {
-        dragMode = DragMode.ResizeMain;
-        dragStartMouse = UnityEngine.Event.current.mousePosition;
-        dragStartWidthUnit = layoutAsset.MainPanel.Width.Unit;
-        dragStartHeightUnit = layoutAsset.MainPanel.Height.Unit;
-        dragStartWidthValue = layoutAsset.MainPanel.Width.Value;
-        dragStartHeightValue = layoutAsset.MainPanel.Height.Value;
-        DialogueVisualEditorUtility.RecordChange(layoutAsset, "Resize Main Panel");
-    }
+        if (layoutAsset == null || layoutAsset.MainPanel == null)
+            return;
 
-    void BeginMainMove()
-    {
-        dragMode = DragMode.MoveMainCustom;
+        if (layoutAsset.MainPanel.CustomAnchor == null)
+            layoutAsset.MainPanel.CustomAnchor = new DialogueCustomAnchorDefinition();
+
+        dragMode = DragMode.MoveMainAnchored;
         dragStartMouse = UnityEngine.Event.current.mousePosition;
-        dragStartOffset = new Vector2(layoutAsset.MainPanel.CustomAnchor.OffsetX,
-            layoutAsset.MainPanel.CustomAnchor.OffsetY);
+        dragStartRect = currentRect;
+        dragParentRect = GetSelectedParentRect();
         DialogueVisualEditorUtility.RecordChange(layoutAsset, "Move Main Panel");
     }
 
-    void BeginAreaResize(ResolvedDialogueAreaKind kind)
+    void BeginSizedDrag(DragMode mode, Rect currentRect, Rect parentRect, string actionName)
     {
-        DialogueAttachedAreaDefinition area = DialogueVisualEditorUtility.GetArea(layoutAsset, kind);
-        if (area == null) return;
-        dragMode = DragMode.ResizeArea;
+        dragMode = mode;
         dragStartMouse = UnityEngine.Event.current.mousePosition;
-        dragStartWidthUnit = area.Width.Unit;
-        dragStartHeightUnit = area.Height.Unit;
-        dragStartWidthValue = area.Width.Value;
-        dragStartHeightValue = area.Height.Value;
-        selection.AreaKind = kind;
-        DialogueVisualEditorUtility.RecordChange(layoutAsset, "Resize Attached Area");
+        dragStartRect = currentRect;
+        dragParentRect = parentRect;
+        DialogueVisualEditorUtility.RecordChange(layoutAsset, actionName);
     }
 
     void BeginAreaGapDrag(ResolvedDialogueAreaKind kind)
@@ -571,54 +628,49 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         DialogueVisualEditorUtility.RecordChange(layoutAsset, "Adjust Area Gap");
     }
 
-    void BeginComponentMove(ResolvedDialogueComponentRect component)
-    {
-        DialogueComponentDefinition def = DialogueVisualEditorUtility.GetComponent(layoutAsset,
-            component.AreaKind, component.SlotIndex, component.ComponentIndex);
-        if (def == null) return;
-        dragMode = DragMode.MoveComponent;
-        dragStartMouse = UnityEngine.Event.current.mousePosition;
-        dragStartOffset = def.Offset;
-        DialogueVisualEditorUtility.RecordChange(layoutAsset, "Move Component");
-    }
-
-    void BeginComponentResize(ResolvedDialogueComponentRect component)
-    {
-        DialogueComponentDefinition def = DialogueVisualEditorUtility.GetComponent(layoutAsset,
-            component.AreaKind, component.SlotIndex, component.ComponentIndex);
-        if (def == null) return;
-        dragMode = DragMode.ResizeComponent;
-        dragStartMouse = UnityEngine.Event.current.mousePosition;
-        dragStartWidthUnit = def.Width.Unit;
-        dragStartHeightUnit = def.Height.Unit;
-        dragStartWidthValue = def.Width.Value;
-        dragStartHeightValue = def.Height.Value;
-        DialogueVisualEditorUtility.RecordChange(layoutAsset, "Resize Component");
-    }
-
     void DragSelection(Vector2 delta)
     {
         switch (dragMode)
         {
-            case DragMode.MoveMainCustom:
-                if (layoutAsset.MainPanel != null && layoutAsset.MainPanel.CustomAnchor != null)
-                {
-                    layoutAsset.MainPanel.CustomAnchor.OffsetX = dragStartOffset.x + delta.x;
-                    layoutAsset.MainPanel.CustomAnchor.OffsetY = dragStartOffset.y + delta.y;
-                }
+            case DragMode.MoveMainAnchored:
+                ApplyMainPanelRect(ClampRectInside(new Rect(
+                    dragStartRect.x + delta.x,
+                    dragStartRect.y + delta.y,
+                    dragStartRect.width,
+                    dragStartRect.height), dragParentRect), false);
                 break;
-            case DragMode.ResizeMain:
-                SetSizeAsPixels(layoutAsset.MainPanel.Width, dragStartWidthValue + delta.x);
-                SetSizeAsPixels(layoutAsset.MainPanel.Height, dragStartHeightValue + delta.y);
+
+            case DragMode.ScaleMainSymmetric:
+            case DragMode.ResizeSymmetric:
+                ApplyRectToCurrentSelection(ClampRectInside(
+                    CreateSymmetricResizedRect(dragStartRect, delta, dragHandleDirection),
+                    dragParentRect));
                 break;
-            case DragMode.ResizeArea:
-                DialogueAttachedAreaDefinition area = DialogueVisualEditorUtility.GetArea(layoutAsset, selection.AreaKind);
-                if (area != null)
-                {
-                    SetSizeAsPixels(area.Width, dragStartWidthValue + delta.x);
-                    SetSizeAsPixels(area.Height, dragStartHeightValue + delta.y);
-                }
+
+            case DragMode.ResizeWidthLeft:
+                ApplyRectToCurrentSelection(ClampRectInside(
+                    CreateWidthAdjustedRect(dragStartRect, delta.x, true),
+                    dragParentRect));
                 break;
+
+            case DragMode.ResizeWidthRight:
+                ApplyRectToCurrentSelection(ClampRectInside(
+                    CreateWidthAdjustedRect(dragStartRect, delta.x, false),
+                    dragParentRect));
+                break;
+
+            case DragMode.ResizeHeightTop:
+                ApplyRectToCurrentSelection(ClampRectInside(
+                    CreateHeightAdjustedRect(dragStartRect, delta.y, true),
+                    dragParentRect));
+                break;
+
+            case DragMode.ResizeHeightBottom:
+                ApplyRectToCurrentSelection(ClampRectInside(
+                    CreateHeightAdjustedRect(dragStartRect, delta.y, false),
+                    dragParentRect));
+                break;
+
             case DragMode.AdjustAreaGap:
                 DialogueAttachedAreaDefinition gapArea = DialogueVisualEditorUtility.GetArea(layoutAsset, selection.AreaKind);
                 if (gapArea != null)
@@ -626,19 +678,6 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                     float axisDelta = (selection.AreaKind == ResolvedDialogueAreaKind.Left || selection.AreaKind == ResolvedDialogueAreaKind.Right)
                         ? Mathf.Abs(delta.x) : Mathf.Abs(delta.y);
                     gapArea.GapFromMainPanel = Mathf.Max(0f, dragStartGapValue + axisDelta * Mathf.Sign(ProjectGapSign(selection.AreaKind, delta)));
-                }
-                break;
-            case DragMode.MoveComponent:
-                DialogueComponentDefinition comp = GetSelectedComponentDefinition();
-                if (comp != null)
-                    comp.Offset = dragStartOffset + delta;
-                break;
-            case DragMode.ResizeComponent:
-                DialogueComponentDefinition resizeComp = GetSelectedComponentDefinition();
-                if (resizeComp != null)
-                {
-                    SetSizeAsPixels(resizeComp.Width, dragStartWidthValue + delta.x);
-                    SetSizeAsPixels(resizeComp.Height, dragStartHeightValue + delta.y);
                 }
                 break;
         }
@@ -671,9 +710,14 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     void DrawHierarchyArea(ResolvedDialogueAreaKind kind, string name)
     {
         bool enabled = DialogueVisualEditorUtility.IsAreaEnabled(layoutAsset, kind);
-        string label = enabled ? name : name + " (disabled)";
+        bool autoHidden = enabled && DialogueVisualLayoutResolver.IsAreaSuppressedByMainPanelAnchor(layoutAsset, kind);
+        string label = !enabled
+            ? name + " (disabled)"
+            : autoHidden
+                ? name + " (auto-hidden by main anchor)"
+                : name;
         DrawHierarchyButton(label, SelectionKind.Area, kind, -1, -1, 1);
-        if (enabled) DrawHierarchySlots(kind, 2);
+        if (enabled && !autoHidden) DrawHierarchySlots(kind, 2);
     }
 
     void DrawHierarchySlots(ResolvedDialogueAreaKind kind, int indent)
@@ -753,9 +797,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         {
             panel.CustomAnchor.HorizontalReference = (DialogueAnchorReferenceEdge)EditorGUILayout.EnumPopup("Horizontal Reference", panel.CustomAnchor.HorizontalReference);
             panel.CustomAnchor.VerticalReference = (DialogueAnchorReferenceEdge)EditorGUILayout.EnumPopup("Vertical Reference", panel.CustomAnchor.VerticalReference);
-            panel.CustomAnchor.OffsetX = EditorGUILayout.FloatField("Offset X", panel.CustomAnchor.OffsetX);
-            panel.CustomAnchor.OffsetY = EditorGUILayout.FloatField("Offset Y", panel.CustomAnchor.OffsetY);
         }
+        panel.CustomAnchor.OffsetX = EditorGUILayout.FloatField("Anchor Offset X", panel.CustomAnchor.OffsetX);
+        panel.CustomAnchor.OffsetY = EditorGUILayout.FloatField("Anchor Offset Y", panel.CustomAnchor.OffsetY);
 
         EditorGUILayout.Space(8f);
         GUILayout.Label("Main Panel Style", EditorStyles.boldLabel);
@@ -768,6 +812,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         EditorGUILayout.HelpBox(
             "Inner Region is edited directly by selecting 'Inner Region' in the hierarchy or canvas. Partition level 0 keeps one slot, level 1 creates two slots, and level 2 creates three slots. Slots are terminal containers and cannot be partitioned further.",
             MessageType.None);
+        EditorGUILayout.HelpBox(
+            "Attached areas that share the same screen edge as the main-panel anchor are auto-hidden in the editor preview and come back automatically when the anchor changes.",
+            MessageType.None);
     }
 
     void DrawAreaInspector()
@@ -779,6 +826,10 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         }
         DialogueAttachedAreaDefinition area = DialogueVisualEditorUtility.GetArea(layoutAsset, selection.AreaKind);
         if (area == null) return;
+        if (DialogueVisualLayoutResolver.IsAreaSuppressedByMainPanelAnchor(layoutAsset, selection.AreaKind))
+            EditorGUILayout.HelpBox(
+                "This attached area is currently auto-hidden because the main panel is anchored to the same screen edge. Change the main-panel anchor and it will reappear automatically.",
+                MessageType.Warning);
         area.DisplayName = EditorGUILayout.TextField("Display Name", area.DisplayName);
         area.Enabled = EditorGUILayout.Toggle("Enabled", area.Enabled);
         DialogueVisualEditorUtility.SetAreaEnabled(layoutAsset, selection.AreaKind, area.Enabled);
@@ -1197,8 +1248,15 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     ResolvedDialogueArea FindSelectedArea(ResolvedDialogueLayout layout)
     {
         if (layout == null || selection.Kind != SelectionKind.Area) return null;
+        return FindAreaByKind(layout, selection.AreaKind);
+    }
+
+    ResolvedDialogueArea FindAreaByKind(ResolvedDialogueLayout layout,
+        ResolvedDialogueAreaKind areaKind)
+    {
+        if (layout == null) return null;
         for (int i = 0; i < layout.Areas.Count; i++)
-            if (layout.Areas[i].AreaKind == selection.AreaKind)
+            if (layout.Areas[i].AreaKind == areaKind)
                 return layout.Areas[i];
         return null;
     }
@@ -1238,6 +1296,376 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                selection.ComponentIndex == component.ComponentIndex;
     }
 
+    ResolvedDialogueSlot FindSelectedSlot(ResolvedDialogueLayout layout)
+    {
+        if (layout == null || selection.Kind != SelectionKind.Slot)
+            return null;
+
+        for (int i = 0; i < layout.Slots.Count; i++)
+        {
+            ResolvedDialogueSlot slot = layout.Slots[i];
+            if (slot.AreaKind == selection.AreaKind && slot.SlotIndex == selection.SlotIndex)
+                return slot;
+        }
+
+        return null;
+    }
+
+    ResolvedDialogueSlot FindResolvedSlot(ResolvedDialogueLayout layout,
+        ResolvedDialogueAreaKind areaKind, int slotIndex)
+    {
+        if (layout == null)
+            return null;
+
+        for (int i = 0; i < layout.Slots.Count; i++)
+        {
+            ResolvedDialogueSlot slot = layout.Slots[i];
+            if (slot.AreaKind == areaKind && slot.SlotIndex == slotIndex)
+                return slot;
+        }
+
+        return null;
+    }
+
+    bool TryGetSelectedRect(ResolvedDialogueLayout layout, out Rect rect)
+    {
+        rect = new Rect();
+        if (layout == null)
+            return false;
+
+        switch (selection.Kind)
+        {
+            case SelectionKind.MainPanel:
+                rect = layout.MainPanelRect;
+                return rect.width > 0f && rect.height > 0f;
+
+            case SelectionKind.Area:
+                ResolvedDialogueArea area = FindSelectedArea(layout);
+                if (area == null) return false;
+                rect = area.Rect;
+                return true;
+
+            case SelectionKind.Slot:
+                ResolvedDialogueSlot slot = FindSelectedSlot(layout);
+                if (slot == null) return false;
+                rect = slot.Rect;
+                return true;
+
+            case SelectionKind.Component:
+                ResolvedDialogueComponentRect component = FindSelectedComponent(layout);
+                if (component == null) return false;
+                rect = component.Rect;
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    Rect GetSelectedParentRect()
+    {
+        if (resolved == null)
+            return new Rect(0f, 0f, 1f, 1f);
+
+        switch (selection.Kind)
+        {
+            case SelectionKind.MainPanel:
+                return resolved.CanvasRect;
+
+            case SelectionKind.Area:
+                if (selection.AreaKind == ResolvedDialogueAreaKind.MainInner)
+                    return DialogueVisualLayoutResolver.ShrinkRect(resolved.MainPanelRect,
+                        layoutAsset != null && layoutAsset.MainPanel != null ? layoutAsset.MainPanel.Padding : null);
+                return resolved.CanvasRect;
+
+            case SelectionKind.Slot:
+                ResolvedDialogueArea slotArea = FindAreaByKind(resolved, selection.AreaKind);
+                return slotArea != null ? slotArea.Rect : resolved.CanvasRect;
+
+            case SelectionKind.Component:
+                ResolvedDialogueSlot slot = FindResolvedSlot(resolved, selection.AreaKind, selection.SlotIndex);
+                if (slot == null)
+                    return resolved.CanvasRect;
+                DialogueSlotDefinition slotDef = DialogueVisualEditorUtility.GetSlot(layoutAsset, selection.AreaKind, selection.SlotIndex);
+                Rect slotContent = DialogueVisualLayoutResolver.ShrinkRect(slot.Rect, slotDef != null ? slotDef.Padding : null);
+                DialogueComponentDefinition component = GetSelectedComponentDefinition();
+                return DialogueVisualLayoutResolver.ShrinkRect(slotContent, component != null ? component.Padding : null);
+
+            default:
+                return resolved.CanvasRect;
+        }
+    }
+
+    void ApplyRectToCurrentSelection(Rect targetRect)
+    {
+        switch (selection.Kind)
+        {
+            case SelectionKind.MainPanel:
+                ApplyMainPanelRect(targetRect, true);
+                break;
+            case SelectionKind.Area:
+                if (selection.AreaKind == ResolvedDialogueAreaKind.MainInner)
+                    ApplyInnerRegionRect(targetRect);
+                else
+                    ApplyAttachedAreaRect(targetRect);
+                break;
+            case SelectionKind.Slot:
+                ApplySlotRect(targetRect);
+                break;
+            case SelectionKind.Component:
+                ApplyComponentRect(targetRect);
+                break;
+        }
+    }
+
+    void ApplyMainPanelRect(Rect targetRect, bool forceFixedFillMode)
+    {
+        if (layoutAsset == null || layoutAsset.MainPanel == null || resolved == null)
+            return;
+
+        DialogueMainPanelDefinition panel = layoutAsset.MainPanel;
+        if (panel.CustomAnchor == null)
+            panel.CustomAnchor = new DialogueCustomAnchorDefinition();
+
+        targetRect = ClampRectInside(targetRect, resolved.CanvasRect);
+        float anchorWidth = targetRect.width;
+        float anchorHeight = targetRect.height;
+
+        bool rewriteSize = forceFixedFillMode || panel.FillMode != DialoguePanelFillMode.Fixed;
+        if (rewriteSize)
+        {
+            panel.FillMode = DialoguePanelFillMode.Fixed;
+            SetSizeAsPixels(panel.Width, targetRect.width, resolved.CanvasRect.width);
+            SetSizeAsPixels(panel.Height, targetRect.height, resolved.CanvasRect.height);
+            anchorWidth = panel.Width != null ? panel.Width.Value : targetRect.width;
+            anchorHeight = panel.Height != null ? panel.Height.Value : targetRect.height;
+        }
+
+        DialogueAnchorPreset bestAnchor = ResolveBestAnchorPreset(targetRect, resolved.CanvasRect);
+        Rect baseRect = GetMainPanelBaseRect(bestAnchor, resolved.CanvasRect,
+            anchorWidth,
+            anchorHeight);
+
+        panel.AnchorPreset = bestAnchor;
+        panel.CustomAnchor.OffsetX = targetRect.x - baseRect.x;
+        panel.CustomAnchor.OffsetY = targetRect.y - baseRect.y;
+    }
+
+    void ApplyInnerRegionRect(Rect targetRect)
+    {
+        if (layoutAsset == null || layoutAsset.MainPanel == null || layoutAsset.MainPanel.InnerRegion == null)
+            return;
+
+        DialogueInnerRegionDefinition region = layoutAsset.MainPanel.InnerRegion;
+        Rect parentRect = DialogueVisualLayoutResolver.ShrinkRect(resolved.MainPanelRect,
+            layoutAsset.MainPanel.Padding);
+        targetRect = ClampRectInside(targetRect, parentRect);
+
+        SetSizeAsPixels(region.Width, targetRect.width, parentRect.width);
+        SetSizeAsPixels(region.Height, targetRect.height, parentRect.height);
+        region.Offset = targetRect.center - parentRect.center;
+    }
+
+    void ApplyAttachedAreaRect(Rect targetRect)
+    {
+        DialogueAttachedAreaDefinition area = DialogueVisualEditorUtility.GetArea(layoutAsset, selection.AreaKind);
+        if (area == null)
+            return;
+
+        targetRect = ClampRectInside(targetRect, resolved.CanvasRect);
+        SetSizeAsPixels(area.Width, targetRect.width, resolved.CanvasRect.width);
+        SetSizeAsPixels(area.Height, targetRect.height, resolved.CanvasRect.height);
+    }
+
+    void ApplySlotRect(Rect targetRect)
+    {
+        DialogueSlotDefinition slot = DialogueVisualEditorUtility.GetSlot(layoutAsset, selection.AreaKind, selection.SlotIndex);
+        if (slot == null)
+            return;
+
+        Rect parentRect = GetSelectedParentRect();
+        targetRect = ClampRectInside(targetRect, parentRect);
+        SetSizeAsPixels(slot.Width, targetRect.width, parentRect.width);
+        SetSizeAsPixels(slot.Height, targetRect.height, parentRect.height);
+    }
+
+    void ApplyComponentRect(Rect targetRect)
+    {
+        DialogueComponentDefinition component = GetSelectedComponentDefinition();
+        if (component == null)
+            return;
+
+        Rect parentRect = GetSelectedParentRect();
+        targetRect = ClampRectInside(targetRect, parentRect);
+
+        if (component.HorizontalAlignment == DialogueHorizontalAlignment.Stretch &&
+            targetRect.width < parentRect.width - 0.01f)
+            component.HorizontalAlignment = DialogueHorizontalAlignment.Left;
+        if (component.VerticalAlignment == DialogueVerticalAlignment.Stretch &&
+            targetRect.height < parentRect.height - 0.01f)
+            component.VerticalAlignment = DialogueVerticalAlignment.Top;
+
+        SetSizeAsPixels(component.Width, targetRect.width, parentRect.width);
+        SetSizeAsPixels(component.Height, targetRect.height, parentRect.height);
+
+        Rect alignedRect = ResolveAlignedComponentRect(component, parentRect, targetRect.width, targetRect.height);
+        component.Offset = new Vector2(targetRect.x - alignedRect.x, targetRect.y - alignedRect.y);
+    }
+
+    static DialogueAnchorPreset ResolveBestAnchorPreset(Rect rect, Rect canvas)
+    {
+        float leftBoundary = canvas.xMin + canvas.width / 3f;
+        float rightBoundary = canvas.xMax - canvas.width / 3f;
+        float topBoundary = canvas.yMin + canvas.height / 3f;
+        float bottomBoundary = canvas.yMax - canvas.height / 3f;
+
+        int horizontalZone = rect.center.x < leftBoundary ? -1 : rect.center.x > rightBoundary ? 1 : 0;
+        int verticalZone = rect.center.y < topBoundary ? -1 : rect.center.y > bottomBoundary ? 1 : 0;
+
+        if (verticalZone < 0)
+            return horizontalZone < 0 ? DialogueAnchorPreset.TopLeft
+                : horizontalZone > 0 ? DialogueAnchorPreset.TopRight
+                : DialogueAnchorPreset.Top;
+        if (verticalZone > 0)
+            return horizontalZone < 0 ? DialogueAnchorPreset.BottomLeft
+                : horizontalZone > 0 ? DialogueAnchorPreset.BottomRight
+                : DialogueAnchorPreset.Bottom;
+
+        return horizontalZone < 0 ? DialogueAnchorPreset.Left
+            : horizontalZone > 0 ? DialogueAnchorPreset.Right
+            : DialogueAnchorPreset.Center;
+    }
+
+    static Rect GetMainPanelBaseRect(DialogueAnchorPreset anchor, Rect canvas, float width, float height)
+    {
+        float x = canvas.center.x - width * 0.5f;
+        float y = canvas.center.y - height * 0.5f;
+
+        switch (anchor)
+        {
+            case DialogueAnchorPreset.TopLeft:
+                x = canvas.xMin;
+                y = canvas.yMin;
+                break;
+            case DialogueAnchorPreset.Top:
+                x = canvas.center.x - width * 0.5f;
+                y = canvas.yMin;
+                break;
+            case DialogueAnchorPreset.TopRight:
+                x = canvas.xMax - width;
+                y = canvas.yMin;
+                break;
+            case DialogueAnchorPreset.Left:
+                x = canvas.xMin;
+                y = canvas.center.y - height * 0.5f;
+                break;
+            case DialogueAnchorPreset.Right:
+                x = canvas.xMax - width;
+                y = canvas.center.y - height * 0.5f;
+                break;
+            case DialogueAnchorPreset.BottomLeft:
+                x = canvas.xMin;
+                y = canvas.yMax - height;
+                break;
+            case DialogueAnchorPreset.Bottom:
+                x = canvas.center.x - width * 0.5f;
+                y = canvas.yMax - height;
+                break;
+            case DialogueAnchorPreset.BottomRight:
+                x = canvas.xMax - width;
+                y = canvas.yMax - height;
+                break;
+        }
+
+        return new Rect(x, y, width, height);
+    }
+
+    static Rect ResolveAlignedComponentRect(DialogueComponentDefinition component,
+        Rect parentRect, float width, float height)
+    {
+        float x = parentRect.xMin;
+        switch (component.HorizontalAlignment)
+        {
+            case DialogueHorizontalAlignment.Center:
+                x = parentRect.center.x - width * 0.5f;
+                break;
+            case DialogueHorizontalAlignment.Right:
+                x = parentRect.xMax - width;
+                break;
+            case DialogueHorizontalAlignment.Stretch:
+                x = parentRect.xMin;
+                width = parentRect.width;
+                break;
+        }
+
+        float y = parentRect.yMin;
+        switch (component.VerticalAlignment)
+        {
+            case DialogueVerticalAlignment.Center:
+                y = parentRect.center.y - height * 0.5f;
+                break;
+            case DialogueVerticalAlignment.Bottom:
+                y = parentRect.yMax - height;
+                break;
+            case DialogueVerticalAlignment.Stretch:
+                y = parentRect.yMin;
+                height = parentRect.height;
+                break;
+        }
+
+        return new Rect(x, y, width, height);
+    }
+
+    static Rect ClampRectInside(Rect rect, Rect parentRect)
+    {
+        if (parentRect.width <= 0f || parentRect.height <= 0f)
+            return rect;
+
+        rect.width = Mathf.Clamp(rect.width, 1f, parentRect.width);
+        rect.height = Mathf.Clamp(rect.height, 1f, parentRect.height);
+        rect.x = Mathf.Clamp(rect.x, parentRect.xMin, parentRect.xMax - rect.width);
+        rect.y = Mathf.Clamp(rect.y, parentRect.yMin, parentRect.yMax - rect.height);
+        return rect;
+    }
+
+    static Rect CreateWidthAdjustedRect(Rect startRect, float deltaX, bool adjustMinSide)
+    {
+        const float minSize = 1f;
+        if (adjustMinSide)
+        {
+            float newX = Mathf.Min(startRect.xMax - minSize, startRect.x + deltaX);
+            return new Rect(newX, startRect.y, Mathf.Max(minSize, startRect.xMax - newX), startRect.height);
+        }
+
+        float newWidth = Mathf.Max(minSize, startRect.width + deltaX);
+        return new Rect(startRect.x, startRect.y, newWidth, startRect.height);
+    }
+
+    static Rect CreateHeightAdjustedRect(Rect startRect, float deltaY, bool adjustMinSide)
+    {
+        const float minSize = 1f;
+        if (adjustMinSide)
+        {
+            float newY = Mathf.Min(startRect.yMax - minSize, startRect.y + deltaY);
+            return new Rect(startRect.x, newY, startRect.width, Mathf.Max(minSize, startRect.yMax - newY));
+        }
+
+        float newHeight = Mathf.Max(minSize, startRect.height + deltaY);
+        return new Rect(startRect.x, startRect.y, startRect.width, newHeight);
+    }
+
+    static Rect CreateSymmetricResizedRect(Rect startRect, Vector2 delta, Vector2 handleDirection)
+    {
+        const float minSize = 1f;
+        float width = Mathf.Max(minSize, startRect.width + delta.x * handleDirection.x * 2f);
+        float height = Mathf.Max(minSize, startRect.height + delta.y * handleDirection.y * 2f);
+        return new Rect(
+            startRect.center.x - width * 0.5f,
+            startRect.center.y - height * 0.5f,
+            width,
+            height);
+    }
+
     void ApplyBridge()
     {
         if (engine == null || layoutAsset == null) return;
@@ -1254,21 +1682,91 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         Repaint();
     }
 
-    static void SetSizeAsPixels(DialogueSizeValue size, float value)
+    static void SetSizeAsPixels(DialogueSizeValue size, float value, float maxValue)
     {
         if (size == null) return;
         size.Unit = DialogueSizeUnit.Pixels;
-        size.Value = Mathf.Max(0f, value);
-    }
-
-    static Rect GetResizeHandle(Rect rect, float size)
-    {
-        return new Rect(rect.xMax - size, rect.yMax - size, size, size);
+        size.Value = Mathf.Clamp(value, 1f, Mathf.Max(1f, maxValue));
     }
 
     static Rect GetMoveHandle(Rect rect, float size)
     {
         return new Rect(rect.center.x - size * 0.5f, rect.center.y - size * 0.5f, size, size);
+    }
+
+    static Rect GetLeftEdgeHandle(Rect rect, float size)
+    {
+        return new Rect(rect.xMin - size * 0.5f, rect.center.y - size * 0.5f, size, size);
+    }
+
+    static Rect GetRightEdgeHandle(Rect rect, float size)
+    {
+        return new Rect(rect.xMax - size * 0.5f, rect.center.y - size * 0.5f, size, size);
+    }
+
+    static Rect GetTopEdgeHandle(Rect rect, float size)
+    {
+        return new Rect(rect.center.x - size * 0.5f, rect.yMin - size * 0.5f, size, size);
+    }
+
+    static Rect GetBottomEdgeHandle(Rect rect, float size)
+    {
+        return new Rect(rect.center.x - size * 0.5f, rect.yMax - size * 0.5f, size, size);
+    }
+
+    static Rect GetTopLeftCornerHandle(Rect rect, float size)
+    {
+        return new Rect(rect.xMin - size * 0.5f, rect.yMin - size * 0.5f, size, size);
+    }
+
+    static Rect GetTopRightCornerHandle(Rect rect, float size)
+    {
+        return new Rect(rect.xMax - size * 0.5f, rect.yMin - size * 0.5f, size, size);
+    }
+
+    static Rect GetBottomLeftCornerHandle(Rect rect, float size)
+    {
+        return new Rect(rect.xMin - size * 0.5f, rect.yMax - size * 0.5f, size, size);
+    }
+
+    static Rect GetBottomRightCornerHandle(Rect rect, float size)
+    {
+        return new Rect(rect.xMax - size * 0.5f, rect.yMax - size * 0.5f, size, size);
+    }
+
+    static bool TryHitCornerHandle(Rect rect, Vector2 mouse, float size, out Vector2 direction)
+    {
+        if (GetTopLeftCornerHandle(rect, size).Contains(mouse))
+        {
+            direction = new Vector2(-1f, -1f);
+            return true;
+        }
+        if (GetTopRightCornerHandle(rect, size).Contains(mouse))
+        {
+            direction = new Vector2(1f, -1f);
+            return true;
+        }
+        if (GetBottomLeftCornerHandle(rect, size).Contains(mouse))
+        {
+            direction = new Vector2(-1f, 1f);
+            return true;
+        }
+        if (GetBottomRightCornerHandle(rect, size).Contains(mouse))
+        {
+            direction = new Vector2(1f, 1f);
+            return true;
+        }
+
+        direction = Vector2.one;
+        return false;
+    }
+
+    static void DrawCornerHandles(Rect rect, float size, Color color)
+    {
+        DrawHandleBox(GetTopLeftCornerHandle(rect, size), color);
+        DrawHandleBox(GetTopRightCornerHandle(rect, size), color);
+        DrawHandleBox(GetBottomLeftCornerHandle(rect, size), color);
+        DrawHandleBox(GetBottomRightCornerHandle(rect, size), color);
     }
 
     static Rect GetAreaGapHandle(Rect areaRect, Rect mainRect, DialogueAttachedAreaSide side)
