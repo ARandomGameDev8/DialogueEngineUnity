@@ -87,6 +87,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     Rect dragStartRect;
     Rect dragParentRect;
     Vector2 dragHandleDirection = Vector2.one;
+    Vector2 dragStartSelectionOffset;
+
+    static readonly int CanvasInputControlHash = "DialogueVisualEditorCanvasInput".GetHashCode();
 
     Rect canvasRect;
     ResolvedDialogueLayout resolved;
@@ -253,7 +256,10 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             return;
         }
 
-        Undo.RecordObject(layoutAsset, "Dialogue Layout Change");
+        // Recording during an active canvas drag would snapshot mid-drag state after
+        // the canvas already mutated the asset, corrupting the undo entry.
+        if (dragMode == DragMode.None)
+            Undo.RecordObject(layoutAsset, "Dialogue Layout Change");
         inspectorScroll = EditorGUILayout.BeginScrollView(inspectorScroll, GUILayout.ExpandHeight(true));
 
         switch (selection.Kind)
@@ -447,11 +453,13 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 break;
 
             case EditTool.Width:
+                DrawEdgeBars(selectedRect, true, sizeHandleColor);
                 DrawHandleBox(GetLeftEdgeHandle(selectedRect, handle), sizeHandleColor);
                 DrawHandleBox(GetRightEdgeHandle(selectedRect, handle), sizeHandleColor);
                 break;
 
             case EditTool.Height:
+                DrawEdgeBars(selectedRect, false, sizeHandleColor);
                 DrawHandleBox(GetTopEdgeHandle(selectedRect, handle), sizeHandleColor);
                 DrawHandleBox(GetBottomEdgeHandle(selectedRect, handle), sizeHandleColor);
                 break;
@@ -478,10 +486,29 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     {
         if (evt == null || layoutAsset == null || resolved == null) return;
 
-        if (evt.type == EventType.MouseDown && evt.button == 0 && paddedCanvas.Contains(evt.mousePosition))
+        int controlId = GUIUtility.GetControlID(CanvasInputControlHash, FocusType.Passive);
+        bool dragActive = dragMode != DragMode.None;
+
+        if (evt.type == EventType.Repaint && editMode && toolMode == ToolMode.Select)
+            UpdateCanvasCursor();
+
+        if (evt.type == EventType.MouseDown)
         {
+            // Safety net: a press that never saw its mouse-up leaves a stale drag behind.
+            if (dragActive && evt.button == 0)
+                EndCanvasDrag();
+
+            // Use the full canvas rect (not the padded one): the edge drag zones of a
+            // rect sitting on the canvas border stick out past the padding.
+            if (evt.button != 0 || !canvasRect.Contains(evt.mousePosition)) return;
+
             if (editMode && toolMode == ToolMode.Select && TryBeginDrag(evt.mousePosition))
             {
+                // Capture the mouse so scroll views / other windows cannot steal the
+                // drag events, and so the release is always delivered to this window.
+                GUIUtility.hotControl = controlId;
+                GUIUtility.keyboardControl = 0;
+                EditorGUIUtility.SetWantsMouseJumping(1);
                 evt.Use();
                 return;
             }
@@ -500,18 +527,64 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             return;
         }
 
-        if (evt.type == EventType.MouseDrag && evt.button == 0 && dragMode != DragMode.None)
+        if (evt.type == EventType.MouseDrag)
         {
+            if (!dragActive || evt.button != 0) return;
+            // The drag keeps running no matter where the cursor travels, and the
+            // geometry is always derived from the fixed drag-start snapshot, so the
+            // result is identical for every pixel along the way.
             DragSelection(evt.mousePosition - dragStartMouse);
             evt.Use();
             return;
         }
 
-        if (evt.type == EventType.MouseUp && evt.button == 0 && dragMode != DragMode.None)
+        if (evt.type == EventType.MouseUp)
         {
-            dragMode = DragMode.None;
-            evt.Use();
+            if (dragActive || GUIUtility.hotControl == controlId)
+            {
+                EndCanvasDrag();
+                evt.Use();
+            }
             return;
+        }
+    }
+
+    void EndCanvasDrag()
+    {
+        if (dragMode == DragMode.None && GUIUtility.hotControl == 0) return;
+        dragMode = DragMode.None;
+        GUIUtility.hotControl = 0;
+        EditorGUIUtility.SetWantsMouseJumping(0);
+        Repaint();
+    }
+
+    void UpdateCanvasCursor()
+    {
+        Rect selectedRect;
+        if (!TryGetSelectedRect(resolved, out selectedRect)) return;
+
+        const float size = 10f;
+        switch (editTool)
+        {
+            case EditTool.Width:
+                EditorGUIUtility.AddCursorRect(GetLeftEdgeDragZone(selectedRect, size), MouseCursor.ResizeHorizontal);
+                EditorGUIUtility.AddCursorRect(GetRightEdgeDragZone(selectedRect, size), MouseCursor.ResizeHorizontal);
+                break;
+
+            case EditTool.Height:
+                EditorGUIUtility.AddCursorRect(GetTopEdgeDragZone(selectedRect, size), MouseCursor.ResizeVertical);
+                EditorGUIUtility.AddCursorRect(GetBottomEdgeDragZone(selectedRect, size), MouseCursor.ResizeVertical);
+                break;
+
+            case EditTool.Size:
+            case EditTool.ScaleRoot:
+                if (editTool == EditTool.ScaleRoot && selection.Kind != SelectionKind.MainPanel)
+                    return;
+                EditorGUIUtility.AddCursorRect(GetTopRightCornerHandle(selectedRect, size), MouseCursor.ResizeUpRight);
+                EditorGUIUtility.AddCursorRect(GetBottomLeftCornerHandle(selectedRect, size), MouseCursor.ResizeUpRight);
+                EditorGUIUtility.AddCursorRect(GetTopLeftCornerHandle(selectedRect, size), MouseCursor.ResizeUpLeft);
+                EditorGUIUtility.AddCursorRect(GetBottomRightCornerHandle(selectedRect, size), MouseCursor.ResizeUpLeft);
+                break;
         }
     }
 
@@ -606,6 +679,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         dragStartMouse = UnityEngine.Event.current.mousePosition;
         dragStartRect = currentRect;
         dragParentRect = GetSelectedParentRect();
+        CaptureDragStartSelectionOffset();
         DialogueVisualEditorUtility.RecordChange(layoutAsset, "Move Selection");
     }
 
@@ -615,7 +689,42 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         dragStartMouse = UnityEngine.Event.current.mousePosition;
         dragStartRect = currentRect;
         dragParentRect = parentRect;
+        CaptureDragStartSelectionOffset();
         DialogueVisualEditorUtility.RecordChange(layoutAsset, actionName);
+    }
+
+    void CaptureDragStartSelectionOffset()
+    {
+        dragStartSelectionOffset = Vector2.zero;
+        if (layoutAsset == null) return;
+
+        switch (selection.Kind)
+        {
+            case SelectionKind.Area:
+                if (selection.AreaKind == ResolvedDialogueAreaKind.MainInner)
+                {
+                    DialogueInnerRegionDefinition region = layoutAsset.MainPanel != null
+                        ? layoutAsset.MainPanel.InnerRegion : null;
+                    if (region != null) dragStartSelectionOffset = region.Offset;
+                }
+                else
+                {
+                    DialogueAttachedAreaDefinition area = DialogueVisualEditorUtility.GetArea(layoutAsset, selection.AreaKind);
+                    if (area != null) dragStartSelectionOffset = area.Offset;
+                }
+                break;
+
+            case SelectionKind.Slot:
+                DialogueSlotDefinition slot = DialogueVisualEditorUtility.GetSlot(layoutAsset,
+                    selection.AreaKind, selection.SlotIndex);
+                if (slot != null) dragStartSelectionOffset = slot.Offset;
+                break;
+
+            case SelectionKind.Component:
+                DialogueComponentDefinition component = GetSelectedComponentDefinition();
+                if (component != null) dragStartSelectionOffset = component.Offset;
+                break;
+        }
     }
 
     void BeginAreaGapDrag(ResolvedDialogueAreaKind kind)
@@ -698,6 +807,92 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             case ResolvedDialogueAreaKind.Bottom: return delta.y;
             case ResolvedDialogueAreaKind.Left: return -delta.x;
             default: return delta.x;
+        }
+    }
+
+    // Axis locking: a Width drag may only change horizontal geometry and a Height drag
+    // may only change vertical geometry. Nothing else in the drag pipeline is allowed
+    // to move or resize the perpendicular axis.
+    static bool DragChangesWidth(DragMode mode)
+    {
+        switch (mode)
+        {
+            case DragMode.MoveSelection:
+            case DragMode.ScaleMainSymmetric:
+            case DragMode.ResizeSymmetric:
+            case DragMode.ResizeWidthLeft:
+            case DragMode.ResizeWidthRight:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    static bool DragChangesHeight(DragMode mode)
+    {
+        switch (mode)
+        {
+            case DragMode.MoveSelection:
+            case DragMode.ScaleMainSymmetric:
+            case DragMode.ResizeSymmetric:
+            case DragMode.ResizeHeightTop:
+            case DragMode.ResizeHeightBottom:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // Partitioned regions/areas derive their size from their visible slots, so a parent
+    // resize must scale the explicit slot sizes along with it. Otherwise the resolver
+    // ignores the size the handle wrote and the drag degrades into a slide. Scaling is
+    // incremental (current resolved size -> target size) so repeated drag events can
+    // never compound.
+    static void ScalePartitionedSlotsForParentResize(List<DialogueSlotDefinition> slots,
+        int visibleCount, bool horizontalParent, float defaultSpacing,
+        float currentPrimary, float targetPrimary,
+        float currentSecondary, float targetSecondary)
+    {
+        if (slots == null || visibleCount <= 1) return;
+        int visible = Mathf.Min(visibleCount, slots.Count);
+
+        float gapTotal = 0f;
+        for (int i = 0; i < visible; i++)
+        {
+            DialogueSlotDefinition slot = slots[i];
+            if (slot == null) continue;
+            if (i < visible - 1)
+                gapTotal += slot.GapAfter >= 0f ? slot.GapAfter : defaultSpacing;
+        }
+
+        float currentPrimarySpan = currentPrimary - gapTotal;
+        if (!Mathf.Approximately(targetPrimary, currentPrimary) && currentPrimarySpan > 1f)
+        {
+            float primaryScale = Mathf.Max(0f, (targetPrimary - gapTotal) / currentPrimarySpan);
+            for (int i = 0; i < visible; i++)
+            {
+                DialogueSlotDefinition slot = slots[i];
+                if (slot == null || !slot.Enabled) continue;
+                DialogueSizeValue primary = horizontalParent ? slot.Width : slot.Height;
+                if (primary != null && primary.Unit == DialogueSizeUnit.Pixels && primary.Value > 0f)
+                    primary.Value = Mathf.Max(1f, primary.Value * primaryScale);
+            }
+        }
+
+        if (!Mathf.Approximately(targetSecondary, currentSecondary) && currentSecondary > 1f)
+        {
+            float secondaryScale = Mathf.Clamp(targetSecondary / currentSecondary, 0f, 4f);
+            if (secondaryScale < 0.999f || secondaryScale > 1.001f)
+            {
+                for (int i = 0; i < visible; i++)
+                {
+                    DialogueSlotDefinition slot = slots[i];
+                    if (slot == null || !slot.Enabled) continue;
+                    DialogueSizeValue secondary = horizontalParent ? slot.Height : slot.Width;
+                    if (secondary != null && secondary.Unit == DialogueSizeUnit.Pixels && secondary.Value > 0f)
+                        secondary.Value = Mathf.Max(1f, Mathf.Min(targetSecondary, secondary.Value * secondaryScale));
+                }
+            }
         }
     }
 
@@ -1458,6 +1653,10 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             panel.CustomAnchor = new DialogueCustomAnchorDefinition();
 
         targetRect = ClampRectInside(targetRect, resolved.CanvasRect);
+        // Apply the same min/max clamping the resolver will apply before the anchor
+        // offsets are derived; otherwise the dragged edge stops tracking the cursor
+        // and the panel appears to drift or slide once a min/max limit is hit.
+        targetRect = ConstrainRectToPanelMinMax(targetRect);
         float anchorWidth = targetRect.width;
         float anchorHeight = targetRect.height;
 
@@ -1484,9 +1683,48 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         panel.CustomAnchor.OffsetY = targetRect.y - baseRect.y;
     }
 
+    Rect ConstrainRectToPanelMinMax(Rect rect)
+    {
+        DialogueMainPanelDefinition panel = layoutAsset != null ? layoutAsset.MainPanel : null;
+        if (panel == null || panel.MinMax == null) return rect;
+
+        DialogueMinMaxSize minMax = panel.MinMax;
+        float minWidth = minMax.MinWidth > 0f ? minMax.MinWidth : 0f;
+        float minHeight = minMax.MinHeight > 0f ? minMax.MinHeight : 0f;
+        float maxWidth = Mathf.Max(minWidth, minMax.MaxWidth > 0f ? minMax.MaxWidth : 100000f);
+        float maxHeight = Mathf.Max(minHeight, minMax.MaxHeight > 0f ? minMax.MaxHeight : 100000f);
+
+        float width = Mathf.Clamp(rect.width, minWidth, maxWidth);
+        float height = Mathf.Clamp(rect.height, minHeight, maxHeight);
+        if (Mathf.Approximately(width, rect.width) && Mathf.Approximately(height, rect.height))
+            return rect;
+
+        // Keep the stationary edge pinned while the size sits at its limit so a clamped
+        // drag can never turn into a slide.
+        float x = rect.x;
+        float y = rect.y;
+        switch (dragMode)
+        {
+            case DragMode.ResizeWidthLeft:
+                x = Mathf.Min(rect.x, rect.xMax - width);
+                break;
+            case DragMode.ResizeHeightTop:
+                y = Mathf.Min(rect.y, rect.yMax - height);
+                break;
+            case DragMode.ScaleMainSymmetric:
+            case DragMode.ResizeSymmetric:
+                x = rect.center.x - width * 0.5f;
+                y = rect.center.y - height * 0.5f;
+                break;
+        }
+
+        return new Rect(x, y, width, height);
+    }
+
     void ApplyInnerRegionRect(Rect targetRect)
     {
-        if (layoutAsset == null || layoutAsset.MainPanel == null || layoutAsset.MainPanel.InnerRegion == null)
+        if (layoutAsset == null || layoutAsset.MainPanel == null || layoutAsset.MainPanel.InnerRegion == null ||
+            resolved == null)
             return;
 
         DialogueInnerRegionDefinition region = layoutAsset.MainPanel.InnerRegion;
@@ -1494,9 +1732,35 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             layoutAsset.MainPanel.Padding);
         targetRect = ClampRectInside(targetRect, parentRect);
 
-        SetSizeAsPixels(region.Width, targetRect.width, parentRect.width);
-        SetSizeAsPixels(region.Height, targetRect.height, parentRect.height);
-        region.Offset = targetRect.center - parentRect.center;
+        bool changeWidth = DragChangesWidth(dragMode);
+        bool changeHeight = DragChangesHeight(dragMode);
+
+        // Partitioned regions size themselves from their slots; scale the visible
+        // slots with the drag so resizing the region resizes it instead of sliding it.
+        if (region.PartitionLevel > 0)
+        {
+            ResolvedDialogueArea currentArea = FindAreaByKind(resolved, ResolvedDialogueAreaKind.MainInner);
+            Rect currentRect = currentArea != null ? currentArea.Rect : dragStartRect;
+            ScalePartitionedSlotsForParentResize(region.Slots,
+                DialogueVisualEditorUtility.GetVisibleSlotCount(region), true,
+                region.InterSlotSpacing,
+                currentRect.width, targetRect.width,
+                currentRect.height, targetRect.height);
+        }
+
+        if (changeWidth)
+            SetSizeAsPixels(region.Width, targetRect.width, parentRect.width);
+        if (changeHeight)
+            SetSizeAsPixels(region.Height, targetRect.height, parentRect.height);
+
+        // Axis locked: a width-only drag never shifts the region vertically and a
+        // height-only drag never shifts it horizontally.
+        Vector2 offset = dragStartSelectionOffset;
+        if (changeWidth)
+            offset.x = targetRect.center.x - parentRect.center.x;
+        if (changeHeight)
+            offset.y = targetRect.center.y - parentRect.center.y;
+        region.Offset = offset;
     }
 
     void ApplyAttachedAreaRect(Rect targetRect)
@@ -1515,51 +1779,91 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             ? Mathf.Max(1f, GetAvailableAttachedAreaSpace(area.Side, resolved.MainPanelRect, resolved.CanvasRect, gap))
             : resolved.CanvasRect.height;
 
+        bool changeWidth = DragChangesWidth(dragMode);
+        bool changeHeight = DragChangesHeight(dragMode);
+
         float clampedWidth = Mathf.Clamp(targetRect.width, 1f, maxWidth);
         float clampedHeight = Mathf.Clamp(targetRect.height, 1f, maxHeight);
-        SetSizeAsPixels(area.Width, clampedWidth, maxWidth);
-        SetSizeAsPixels(area.Height, clampedHeight, maxHeight);
+
+        // Partitioned areas size themselves from their slots once those have explicit
+        // sizes; scale the visible slots with the drag so the resize really applies.
+        if (area.PartitionLevel > 0)
+        {
+            ResolvedDialogueArea currentArea = FindAreaByKind(resolved, selection.AreaKind);
+            Rect currentRect = currentArea != null ? currentArea.Rect : dragStartRect;
+            ScalePartitionedSlotsForParentResize(area.Slots,
+                DialogueVisualEditorUtility.GetVisibleSlotCount(area), horizontal,
+                area.InterSlotSpacing,
+                currentRect.width, clampedWidth,
+                currentRect.height, clampedHeight);
+        }
+
+        if (changeWidth)
+            SetSizeAsPixels(area.Width, clampedWidth, maxWidth);
+        if (changeHeight)
+            SetSizeAsPixels(area.Height, clampedHeight, maxHeight);
 
         Rect baseRect = GetAttachedAreaBaseRect(area.Side, resolved.MainPanelRect,
             clampedWidth, clampedHeight, gap);
+        Vector2 slide = dragStartSelectionOffset;
 
         if (horizontal)
         {
-            float currentHorizontalSlide = area.Offset.x;
-            switch (dragMode)
+            // Only a drag that changes horizontal geometry may move the area along its
+            // side; height-only drags keep the slide offset exactly as it was.
+            if (changeWidth)
             {
-                case DragMode.MoveSelection:
-                case DragMode.ResizeWidthLeft:
-                case DragMode.ResizeWidthRight:
-                case DragMode.ResizeSymmetric:
-                    float desiredX = Mathf.Clamp(targetRect.x, resolved.CanvasRect.xMin,
-                        resolved.CanvasRect.xMax - clampedWidth);
-                    area.Offset.x = desiredX - baseRect.x;
-                    break;
-                default:
-                    area.Offset.x = currentHorizontalSlide;
-                    break;
+                float pinnedX;
+                switch (dragMode)
+                {
+                    case DragMode.ResizeWidthRight:
+                        pinnedX = dragStartRect.x;
+                        break;
+                    case DragMode.ResizeSymmetric:
+                    case DragMode.ScaleMainSymmetric:
+                        pinnedX = dragStartRect.center.x - clampedWidth * 0.5f;
+                        break;
+                    case DragMode.ResizeWidthLeft:
+                        // The right edge stays put; a clamped width must not slide it.
+                        pinnedX = Mathf.Min(targetRect.x, dragStartRect.xMax - clampedWidth);
+                        break;
+                    default:
+                        pinnedX = targetRect.x;
+                        break;
+                }
+                slide.x = Mathf.Clamp(pinnedX, resolved.CanvasRect.xMin,
+                    Mathf.Max(resolved.CanvasRect.xMin, resolved.CanvasRect.xMax - clampedWidth)) - baseRect.x;
             }
-            area.Offset.y = 0f;
-            return;
+            slide.y = 0f;
         }
-
-        float currentVerticalSlide = area.Offset.y;
-        switch (dragMode)
+        else
         {
-            case DragMode.MoveSelection:
-            case DragMode.ResizeHeightTop:
-            case DragMode.ResizeHeightBottom:
-            case DragMode.ResizeSymmetric:
-                float desiredY = Mathf.Clamp(targetRect.y, resolved.CanvasRect.yMin,
-                    resolved.CanvasRect.yMax - clampedHeight);
-                area.Offset.y = desiredY - baseRect.y;
-                break;
-            default:
-                area.Offset.y = currentVerticalSlide;
-                break;
+            if (changeHeight)
+            {
+                float pinnedY;
+                switch (dragMode)
+                {
+                    case DragMode.ResizeHeightBottom:
+                        pinnedY = dragStartRect.y;
+                        break;
+                    case DragMode.ResizeSymmetric:
+                    case DragMode.ScaleMainSymmetric:
+                        pinnedY = dragStartRect.center.y - clampedHeight * 0.5f;
+                        break;
+                    case DragMode.ResizeHeightTop:
+                        // The bottom edge stays put; a clamped height must not slide it.
+                        pinnedY = Mathf.Min(targetRect.y, dragStartRect.yMax - clampedHeight);
+                        break;
+                    default:
+                        pinnedY = targetRect.y;
+                        break;
+                }
+                slide.y = Mathf.Clamp(pinnedY, resolved.CanvasRect.yMin,
+                    Mathf.Max(resolved.CanvasRect.yMin, resolved.CanvasRect.yMax - clampedHeight)) - baseRect.y;
+            }
+            slide.x = 0f;
         }
-        area.Offset.x = 0f;
+        area.Offset = slide;
     }
 
     static float GetAvailableAttachedAreaSpace(DialogueAttachedAreaSide side,
@@ -1621,17 +1925,29 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     void ApplySlotRect(Rect targetRect)
     {
         DialogueSlotDefinition slot = DialogueVisualEditorUtility.GetSlot(layoutAsset, selection.AreaKind, selection.SlotIndex);
-        if (slot == null)
+        if (slot == null || resolved == null)
             return;
-
-        ResolvedDialogueSlot resolvedSlot = FindSelectedSlot(resolved);
-        Vector2 currentPosition = resolvedSlot != null ? resolvedSlot.Rect.position : targetRect.position;
 
         Rect parentRect = GetSelectedParentRect();
         targetRect = ClampRectInside(targetRect, parentRect);
-        SetSizeAsPixels(slot.Width, targetRect.width, parentRect.width);
-        SetSizeAsPixels(slot.Height, targetRect.height, parentRect.height);
-        slot.Offset += targetRect.position - currentPosition;
+
+        bool changeWidth = DragChangesWidth(dragMode);
+        bool changeHeight = DragChangesHeight(dragMode);
+        if (changeWidth)
+            SetSizeAsPixels(slot.Width, targetRect.width, parentRect.width);
+        if (changeHeight)
+            SetSizeAsPixels(slot.Height, targetRect.height, parentRect.height);
+
+        // The offset is applied absolutely from the slot's flow position inside its row
+        // (captured at drag start). Accumulating deltas against the live, clamped
+        // resolved position made offsets run away and slots teleport mid-drag.
+        Vector2 flowBase = dragStartRect.position - dragStartSelectionOffset;
+        Vector2 offset = dragStartSelectionOffset;
+        if (changeWidth)
+            offset.x = targetRect.x - flowBase.x;
+        if (changeHeight)
+            offset.y = targetRect.y - flowBase.y;
+        slot.Offset = offset;
     }
 
     void ApplyComponentRect(Rect targetRect)
@@ -1643,18 +1959,28 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         Rect parentRect = GetSelectedParentRect();
         targetRect = ClampRectInside(targetRect, parentRect);
 
-        if (component.HorizontalAlignment == DialogueHorizontalAlignment.Stretch &&
-            targetRect.width < parentRect.width - 0.01f)
+        bool changeWidth = DragChangesWidth(dragMode);
+        bool changeHeight = DragChangesHeight(dragMode);
+
+        // Stretch overrides explicit sizes, so release stretch on the axis being
+        // resized only; the other alignment is left untouched.
+        if (changeWidth && component.HorizontalAlignment == DialogueHorizontalAlignment.Stretch)
             component.HorizontalAlignment = DialogueHorizontalAlignment.Left;
-        if (component.VerticalAlignment == DialogueVerticalAlignment.Stretch &&
-            targetRect.height < parentRect.height - 0.01f)
+        if (changeHeight && component.VerticalAlignment == DialogueVerticalAlignment.Stretch)
             component.VerticalAlignment = DialogueVerticalAlignment.Top;
 
-        SetSizeAsPixels(component.Width, targetRect.width, parentRect.width);
-        SetSizeAsPixels(component.Height, targetRect.height, parentRect.height);
+        if (changeWidth)
+            SetSizeAsPixels(component.Width, targetRect.width, parentRect.width);
+        if (changeHeight)
+            SetSizeAsPixels(component.Height, targetRect.height, parentRect.height);
 
         Rect alignedRect = ResolveAlignedComponentRect(component, parentRect, targetRect.width, targetRect.height);
-        component.Offset = new Vector2(targetRect.x - alignedRect.x, targetRect.y - alignedRect.y);
+        Vector2 offset = component.Offset;
+        if (changeWidth)
+            offset.x = targetRect.x - alignedRect.x;
+        if (changeHeight)
+            offset.y = targetRect.y - alignedRect.y;
+        component.Offset = offset;
     }
 
     static DialogueAnchorPreset ResolveBestAnchorPreset(Rect rect, Rect canvas)
@@ -1901,6 +2227,23 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     static Rect GetBottomEdgeHandle(Rect rect, float size)
     {
         return new Rect(rect.center.x - size * 0.5f, rect.yMax - size * 0.5f, size, size);
+    }
+
+    // The whole edge is a live drag zone, so draw it as a visible grip bar rather than
+    // just the little centre square.
+    static void DrawEdgeBars(Rect rect, bool verticalEdges, Color color)
+    {
+        const float thickness = 4f;
+        const float inset = 6f;
+        Rect bar = verticalEdges
+            ? new Rect(rect.xMin - thickness * 0.5f, rect.yMin + inset, thickness, Mathf.Max(4f, rect.height - inset * 2f))
+            : new Rect(rect.xMin + inset, rect.yMin - thickness * 0.5f, Mathf.Max(4f, rect.width - inset * 2f), thickness);
+        EditorGUI.DrawRect(bar, color * new Color(1f, 1f, 1f, 0.55f));
+
+        Rect bar2 = verticalEdges
+            ? new Rect(rect.xMax - thickness * 0.5f, rect.yMin + inset, thickness, Mathf.Max(4f, rect.height - inset * 2f))
+            : new Rect(rect.xMin + inset, rect.yMax - thickness * 0.5f, Mathf.Max(4f, rect.width - inset * 2f), thickness);
+        EditorGUI.DrawRect(bar2, color * new Color(1f, 1f, 1f, 0.55f));
     }
 
     static Rect GetLeftEdgeDragZone(Rect rect, float size)

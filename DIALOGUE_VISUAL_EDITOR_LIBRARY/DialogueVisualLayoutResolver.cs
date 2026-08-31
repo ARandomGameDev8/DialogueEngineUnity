@@ -173,7 +173,10 @@ public static class DialogueVisualLayoutResolver
         float width = ResolveSize(def.Width, parentRect.width, parentRect.width);
         float height = ResolveSize(def.Height, parentRect.height, parentRect.height);
         int slotCount = GetPartitionSlotCount(def.PartitionLevel);
-        if (slotCount > 1)
+        // Only let the slots drive the region size when they actually override it
+        // (explicit sizes or gaps). Otherwise the region's own Width/Height is
+        // authoritative, matching how attached areas behave.
+        if (slotCount > 1 && HasPartitionedSlotOverrides(def.Slots, true, slotCount))
             ResolvePartitionedParentSize(def.Slots, true, slotCount, def.InterSlotSpacing,
                 width, height, out width, out height);
         width = Mathf.Min(width, parentRect.width);
