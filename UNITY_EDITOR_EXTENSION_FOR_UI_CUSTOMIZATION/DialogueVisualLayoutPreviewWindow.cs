@@ -33,6 +33,21 @@ public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
 
         Rect canvas = GUILayoutUtility.GetRect(position.width - 24f, 420f,
             GUILayout.ExpandWidth(true));
+
+        // Match the runtime design canvas: Play resolves the layout against the
+        // Panel Settings reference resolution, so the preview uses the same
+        // aspect ratio instead of this window's arbitrary shape.
+        if (engine != null && engine.panelSettings != null)
+        {
+            Vector2 reference = engine.panelSettings.referenceResolution;
+            if (reference.x > 1f && reference.y > 1f)
+            {
+                float desiredHeight = Mathf.Clamp(
+                    (position.width - 24f) * (reference.y / reference.x), 240f, 760f);
+                canvas = GUILayoutUtility.GetRect(position.width - 24f, desiredHeight,
+                    GUILayout.ExpandWidth(true));
+            }
+        }
         EditorGUI.DrawRect(canvas, new Color(0.10f, 0.10f, 0.11f, 1f));
 
         if (layoutAsset == null)
@@ -55,7 +70,7 @@ public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
         if (engine != null)
         {
             EditorGUILayout.HelpBox(
-                "This phase-2 preview is read-only. It resolves the DialogueLayoutAsset into screen rectangles and shows the resulting main panel, attached areas, slots, and components. Use 'Apply Layout Asset To Runtime Fields' on the Dialogue_Engine inspector to bridge supported fields into the current runtime UI.",
+                "This preview resolves the DialogueLayoutAsset exactly like Play Mode does — the runtime UI (DialogueVisualLayoutRuntimeUxml) is generated from these same resolved rectangles and styles. The canvas aspect follows the Panel Settings reference resolution. Requires 'Engine Uses This Layout' on the engine for Play to use it.",
                 MessageType.None);
         }
 

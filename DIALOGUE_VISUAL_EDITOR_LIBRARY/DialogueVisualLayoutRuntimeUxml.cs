@@ -358,7 +358,7 @@ $@"<ui:Button name=""ToolbarToggle"" class=""dlg-toolbar-button"" text=""Menu"" 
     static string AbsEl(string name, string style, string inner)
     {
         string nameAttr = string.IsNullOrEmpty(name) ? "" : $" name=\"{name}\"";
-        string children = string.IsNullOrEmpty(inner) ? " />" : $"\n{inner}</ui:VisualElement>\n";
+        string children = string.IsNullOrEmpty(inner) ? " />" : $">\n{inner}</ui:VisualElement>\n";
         return $"<ui:VisualElement{nameAttr} style=\"{style}\"{children}";
     }
 
