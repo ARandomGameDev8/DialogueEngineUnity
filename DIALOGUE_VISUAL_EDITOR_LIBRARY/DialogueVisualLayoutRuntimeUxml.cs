@@ -69,13 +69,13 @@ public static class DialogueVisualLayoutRuntimeUxml
         {
             if (liveImage.Mode == DialogueImagePanelMode.CharacterFigure)
             {
-                portraits.Append(FigureStructure(liveImage, imageRect, nameRect, canvas, false, nameSurface));
-                portraits.Append(FigureStructure(liveImage, imageRect, nameRect, canvas, true, nameSurface));
+                portraits.Append(FigureStructure(liveImage, imageRect, nameRect, false, nameSurface));
+                portraits.Append(FigureStructure(liveImage, imageRect, nameRect, true, nameSurface));
             }
             else
             {
-                portraits.Append(IconStructure(liveImage, imageRect, nameRect, canvas, false, nameSurface));
-                portraits.Append(IconStructure(liveImage, imageRect, nameRect, canvas, true, nameSurface));
+                portraits.Append(IconStructure(liveImage, imageRect, nameRect, false, nameSurface));
+                portraits.Append(IconStructure(liveImage, imageRect, nameRect, true, nameSurface));
             }
         }
         else if (liveName != null)
@@ -83,8 +83,8 @@ public static class DialogueVisualLayoutRuntimeUxml
             // Name panel without an image panel: still emit the portrait
             // structure (its name element carries the speaker name; the image
             // parts simply stay hidden because no portrait is ever loaded).
-            portraits.Append(IconStructure(null, nameRect, nameRect, canvas, false, nameSurface));
-            portraits.Append(IconStructure(null, nameRect, nameRect, canvas, true, nameSurface));
+            portraits.Append(IconStructure(null, nameRect, nameRect, false, nameSurface));
+            portraits.Append(IconStructure(null, nameRect, nameRect, true, nameSurface));
         }
 
         var boxEl = new StringBuilder();
@@ -146,7 +146,7 @@ public static class DialogueVisualLayoutRuntimeUxml
                                 string wrapStyle = AbsStyle(r.x, r.y, r.width, r.height) +
                                     SurfaceStyle(comp.Background, comp.Border, comp.Opacity) + " overflow: hidden;";
                                 slotEl.Append("<ui:VisualElement style=\"" + wrapStyle + "\">\n" +
-                                    TextScrollLocal(engine) +
+                                    TextScrollLocal(comp as DialogueTextPanelDefinition) +
                                     "</ui:VisualElement>\n");
                                 continue;
                             }
@@ -218,24 +218,38 @@ public static class DialogueVisualLayoutRuntimeUxml
     }
 
     // ─── Live text ─────────────────────────────────────────────────────────────
-    static string TextScrollLocal(Dialogue_Engine engine)
+    static string TextScrollLocal(DialogueTextPanelDefinition text)
     {
+        // Colour, size and alignment come from the text panel component itself —
+        // exactly what the visual editor shows.
+        DialogueTextStyle style = text != null ? text.TextStyle : null;
+        Color color = style != null ? style.Color : new Color(0.93f, 0.93f, 0.93f, 1f);
+        float fontSize = style != null ? Mathf.Max(1f, style.FontSize) : 15f;
+        string align = style != null
+            ? TextAlign(style.HorizontalAlignment, style.VerticalAlignment)
+            : "middle-center";
+        float spacing = style != null ? style.LetterSpacing : 0f;
         return "<ui:ScrollView name=\"TextScroll\" mode=\"Vertical\" style=\"position: absolute; left: 0; top: 0; right: 0; bottom: 0; background-color: rgba(0,0,0,0);\">\n" +
-               "<ui:Label name=\"DialogueText\" style=\"color: " + Rgba(engine.textColour) + "; font-size: " + engine.textFontSize + "px; white-space: normal; -unity-text-align: middle-left;\" />\n" +
+               "<ui:Label name=\"DialogueText\" style=\"color: " + Rgba(color) +
+               "; font-size: " + fontSize.ToString("0.#") + "px; letter-spacing: " + spacing.ToString("0.#") +
+               "px; white-space: normal; -unity-text-align: " + align + ";\" />\n" +
                "</ui:ScrollView>\n";
     }
 
     // ─── Portraits ─────────────────────────────────────────────────────────────
     static string IconStructure(DialogueImagePanelDefinition def,
-        Rect imageRect, Rect nameRect, Vector2 canvas, bool right, string nameSurface)
+        Rect imageRect, Rect nameRect, bool right, string nameSurface)
     {
         string side = right ? "Right" : "Left";
-        Rect rect = right ? Mirror(imageRect, canvas) : imageRect;
-        Rect nRect = right ? Mirror(nameRect, canvas) : nameRect;
+        // EXACT placement: both speaker slots live at the component's own rect
+        // (no mirroring / no invented second position). The current speaker
+        // paints on top; the interrupted one stays greyed out underneath.
+        Rect rect = imageRect;
+        Rect nRect = nameRect;
 
         string frame = FrameStyle(def);
         return
-$@"<ui:VisualElement name=""Outside{side}Wrapper"" style=""position: absolute; left: 0; top: 0; width: 0; height: 0;"">
+$@"<ui:VisualElement name=""Outside{side}Wrapper"" style=""position: absolute; left: 0; top: 0; width: 0; height: 0; display: none;"">
   <ui:VisualElement name=""PortraitHostOutside{side}"" style=""position: absolute; left: {rect.x:0.#}px; top: {rect.y:0.#}px; width: {rect.width:0.#}px; height: {rect.height:0.#}px;"">
     <ui:VisualElement name=""PortraitFrameOutside{side}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0;{frame}"">
       <ui:VisualElement name=""PortraitOutside{side}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; overflow: hidden; background-size: cover;"" />
@@ -248,11 +262,12 @@ $@"<ui:VisualElement name=""Outside{side}Wrapper"" style=""position: absolute; l
     }
 
     static string FigureStructure(DialogueImagePanelDefinition def,
-        Rect imageRect, Rect nameRect, Vector2 canvas, bool right, string nameSurface)
+        Rect imageRect, Rect nameRect, bool right, string nameSurface)
     {
         string side = right ? "Right" : "Left";
-        Rect rect = right ? Mirror(imageRect, canvas) : imageRect;
-        Rect nRect = right ? Mirror(nameRect, canvas) : nameRect;
+        // EXACT placement: both speaker slots live at the component's own rect.
+        Rect rect = imageRect;
+        Rect nRect = nameRect;
 
         // A figure that hides when empty paints nothing itself — the engine
         // gates the portrait's visibility on the loaded image.
@@ -263,7 +278,7 @@ $@"<ui:VisualElement name=""Outside{side}Wrapper"" style=""position: absolute; l
             ? "background-size: cover;" : "background-size: contain;";
 
         return
-$@"<ui:VisualElement name=""CharacterPanel{side}Wrapper"" style=""position: absolute; left: 0; top: 0; width: 0; height: 0;"">
+$@"<ui:VisualElement name=""CharacterPanel{side}Wrapper"" style=""position: absolute; left: 0; top: 0; width: 0; height: 0; display: none;"">
   <ui:VisualElement name=""CharacterFigurePanel{side}"" style=""position: absolute; left: 0; top: 0; width: 0; height: 0;"" />
   <ui:VisualElement name=""CharacterImagePanel{side}"" style=""position: absolute; left: {rect.x:0.#}px; top: {rect.y:0.#}px; width: {rect.width:0.#}px; height: {rect.height:0.#}px; overflow: hidden; {panelStyle}"">
     <ui:VisualElement name=""PortraitHostChar{side}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0;"">
@@ -502,11 +517,6 @@ $@"<ui:Button name=""ToolbarToggle"" class=""dlg-toolbar-button"" text=""Menu"" 
     static Rect Relative(Rect rect, Rect parent)
     {
         return new Rect(rect.x - parent.x, rect.y - parent.y, rect.width, rect.height);
-    }
-
-    static Rect Mirror(Rect rect, Vector2 canvas)
-    {
-        return new Rect(canvas.x - rect.x - rect.width, rect.y, rect.width, rect.height);
     }
 
     static Rect DefaultIconNameRect(Rect icon, Dialogue_Engine engine)

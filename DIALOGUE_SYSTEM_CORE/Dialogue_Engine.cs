@@ -2836,6 +2836,11 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     void ApplySlotSizeFromTexture(SlotRefs slot, Texture tex)
     {
         if (tex == null) return;
+        // Visual-layout runtime: the portrait element was generated at the exact
+        // component rect and must keep filling it — background-size (contain /
+        // cover) does the image fitting. Resizing to the texture here would
+        // shrink the panel away from the edited geometry.
+        if (visualLayoutRuntimeActive) return;
         // Character-panel portraits fill their dedicated image section; the
         // root panel's own Default/Custom/Content modes control its dimensions.
         if (portraitPlacement == PortraitPlacement.CharacterPanel)
