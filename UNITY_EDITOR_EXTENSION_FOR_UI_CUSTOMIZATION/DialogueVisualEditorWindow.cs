@@ -640,7 +640,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                     dragStartRect.width,
                     dragStartRect.height), dragParentRect);
                 if (selection.Kind == SelectionKind.MainPanel)
-                    ApplyMainPanelRect(movedRect, false);
+                    ApplyMainPanelRect(movedRect, false, true);
                 else
                     ApplyRectToCurrentSelection(movedRect);
                 break;
@@ -1430,7 +1430,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         switch (selection.Kind)
         {
             case SelectionKind.MainPanel:
-                ApplyMainPanelRect(targetRect, true);
+                ApplyMainPanelRect(targetRect, true, false);
                 break;
             case SelectionKind.Area:
                 if (selection.AreaKind == ResolvedDialogueAreaKind.MainInner)
@@ -1447,7 +1447,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         }
     }
 
-    void ApplyMainPanelRect(Rect targetRect, bool forceFixedFillMode)
+    void ApplyMainPanelRect(Rect targetRect, bool forceFixedFillMode,
+        bool updateAnchorFromPosition)
     {
         if (layoutAsset == null || layoutAsset.MainPanel == null || resolved == null)
             return;
@@ -1470,12 +1471,15 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             anchorHeight = panel.Height != null ? panel.Height.Value : targetRect.height;
         }
 
-        DialogueAnchorPreset bestAnchor = ResolveBestAnchorPreset(targetRect, resolved.CanvasRect);
-        Rect baseRect = GetMainPanelBaseRect(bestAnchor, resolved.CanvasRect,
-            anchorWidth,
-            anchorHeight);
+        DialogueAnchorPreset anchorPreset = panel.AnchorPreset;
+        if (updateAnchorFromPosition)
+        {
+            anchorPreset = ResolveBestAnchorPreset(targetRect, resolved.CanvasRect);
+            panel.AnchorPreset = anchorPreset;
+        }
 
-        panel.AnchorPreset = bestAnchor;
+        Rect baseRect = GetMainPanelBaseRect(anchorPreset, panel.CustomAnchor,
+            resolved.CanvasRect, anchorWidth, anchorHeight);
         panel.CustomAnchor.OffsetX = targetRect.x - baseRect.x;
         panel.CustomAnchor.OffsetY = targetRect.y - baseRect.y;
     }
@@ -1677,7 +1681,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             : DialogueAnchorPreset.Center;
     }
 
-    static Rect GetMainPanelBaseRect(DialogueAnchorPreset anchor, Rect canvas, float width, float height)
+    static Rect GetMainPanelBaseRect(DialogueAnchorPreset anchor,
+        DialogueCustomAnchorDefinition customAnchor, Rect canvas,
+        float width, float height)
     {
         float x = canvas.center.x - width * 0.5f;
         float y = canvas.center.y - height * 0.5f;
@@ -1700,6 +1706,10 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 x = canvas.xMin;
                 y = canvas.center.y - height * 0.5f;
                 break;
+            case DialogueAnchorPreset.Center:
+                x = canvas.center.x - width * 0.5f;
+                y = canvas.center.y - height * 0.5f;
+                break;
             case DialogueAnchorPreset.Right:
                 x = canvas.xMax - width;
                 y = canvas.center.y - height * 0.5f;
@@ -1716,9 +1726,47 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 x = canvas.xMax - width;
                 y = canvas.yMax - height;
                 break;
+            case DialogueAnchorPreset.Custom:
+                x = ResolveCustomAnchorBaseX(customAnchor, canvas, width);
+                y = ResolveCustomAnchorBaseY(customAnchor, canvas, height);
+                break;
         }
 
         return new Rect(x, y, width, height);
+    }
+
+    static float ResolveCustomAnchorBaseX(DialogueCustomAnchorDefinition custom,
+        Rect canvas, float width)
+    {
+        if (custom == null)
+            return canvas.center.x - width * 0.5f;
+
+        switch (custom.HorizontalReference)
+        {
+            case DialogueAnchorReferenceEdge.Left:
+                return canvas.xMin;
+            case DialogueAnchorReferenceEdge.Right:
+                return canvas.xMax - width;
+            default:
+                return canvas.center.x - width * 0.5f;
+        }
+    }
+
+    static float ResolveCustomAnchorBaseY(DialogueCustomAnchorDefinition custom,
+        Rect canvas, float height)
+    {
+        if (custom == null)
+            return canvas.center.y - height * 0.5f;
+
+        switch (custom.VerticalReference)
+        {
+            case DialogueAnchorReferenceEdge.Top:
+                return canvas.yMin;
+            case DialogueAnchorReferenceEdge.Bottom:
+                return canvas.yMax - height;
+            default:
+                return canvas.center.y - height * 0.5f;
+        }
     }
 
     static Rect ResolveAlignedComponentRect(DialogueComponentDefinition component,
