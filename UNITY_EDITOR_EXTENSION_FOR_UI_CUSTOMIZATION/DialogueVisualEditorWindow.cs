@@ -480,6 +480,12 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
         if (evt.type == EventType.MouseDown && evt.button == 0 && paddedCanvas.Contains(evt.mousePosition))
         {
+            if (editMode && toolMode == ToolMode.Select && TryBeginDrag(evt.mousePosition))
+            {
+                evt.Use();
+                return;
+            }
+
             SelectionState hit = HitTest(evt.mousePosition);
             if (toolMode != ToolMode.Select && hit.Kind == SelectionKind.Slot)
             {
@@ -489,12 +495,6 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             }
 
             selection = hit;
-            if (editMode && TryBeginDrag(evt.mousePosition))
-            {
-                evt.Use();
-                return;
-            }
-
             Repaint();
             evt.Use();
             return;
