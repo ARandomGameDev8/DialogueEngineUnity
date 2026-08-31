@@ -1,11 +1,18 @@
+#if UNITY_EDITOR
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
+using UnityEditor;
 using UnityEngine;
 
 /// <summary>
-/// Builds the play-mode UXML directly from a DialogueLayoutAsset's RESOLVED
-/// layout — the exact same geometry the visual editor canvas draws — instead
-/// of approximating it through the engine's inspector fields.
+/// OWNED BY THE VISUAL EDITOR. Builds THE canonical runtime UXML from a
+/// DialogueLayoutAsset's RESOLVED layout — the exact same geometry the visual
+/// editor canvas draws. There is exactly ONE builder: the editor writes the
+/// canonical file (<asset name>_dialogue_ui.uxml next to the asset), keeps it
+/// current on every edit, and Dialogue_Engine simply instantiates a copy of
+/// that file at Play. Nothing at play time re-derives or approximates the
+/// layout.
 ///
 /// Every panel, attached area, slot and component is emitted at its resolved
 /// rect (percentages of the design canvas for the box, pixel offsets for the
@@ -20,10 +27,44 @@ using UnityEngine;
 /// runtime, so the engine keeps owning text, names, images and speaker
 /// emphasis while reproducing the edited layout exactly.
 /// </summary>
-public static class DialogueVisualLayoutRuntimeUxml
+public static class DialogueVisualEditorUxml
 {
-    // ─── Entry point ───────────────────────────────────────────────────────────
-    public static string Generate(DialogueLayoutAsset asset, Dialogue_Engine engine, Vector2 canvas)
+    // ─── Entry points ──────────────────────────────────────────────────────────
+    /// <summary>Path of the canonical, editor-owned UXML for this asset.</summary>
+    public static string BuildPathFor(DialogueLayoutAsset asset)
+    {
+        if (asset == null) return null;
+        string assetPath = AssetDatabase.GetAssetPath(asset);
+        if (string.IsNullOrEmpty(assetPath))
+            return Path.Combine("Assets/Scripts/Dialogue_Presets", asset.name + "_dialogue_ui.uxml");
+        string folder = Path.GetDirectoryName(assetPath);
+        return Path.Combine(string.IsNullOrEmpty(folder) ? "Assets" : folder,
+            Path.GetFileNameWithoutExtension(assetPath) + "_dialogue_ui.uxml");
+    }
+
+    /// <summary>
+    /// Makes sure the canonical UXML file exists and matches the asset's
+    /// current state (rebuilding only when the content actually changed), and
+    /// returns its path. Used by the editor on every change and by the engine
+    /// at Play — always the same single builder, so the file can never drift
+    /// from the editor.
+    /// </summary>
+    public static string EnsureBuilt(DialogueLayoutAsset asset, Dialogue_Engine engine, Vector2 canvas)
+    {
+        string xml = Build(asset, engine, canvas);
+        string path = BuildPathFor(asset);
+        string dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+        if (!File.Exists(path) || File.ReadAllText(path) != xml)
+        {
+            File.WriteAllText(path, xml);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+        }
+        return path;
+    }
+
+    /// <summary>Builds the canonical UXML text from the resolved layout.</summary>
+    public static string Build(DialogueLayoutAsset asset, Dialogue_Engine engine, Vector2 canvas)
     {
         canvas.x = Mathf.Max(64f, canvas.x);
         canvas.y = Mathf.Max(64f, canvas.y);
@@ -637,3 +678,4 @@ $@"<ui:Button name=""ToolbarToggle"" class=""dlg-toolbar-button"" text=""Menu"" 
         return string.IsNullOrEmpty(s) ? "" : s.Replace("&", "&amp;").Replace("<", "&lt;").Replace("\"", "&quot;");
     }
 }
+#endif

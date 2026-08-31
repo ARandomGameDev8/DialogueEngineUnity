@@ -1,24 +1,26 @@
 #if UNITY_EDITOR
+using System;
+using System.IO;
 using UnityEditor;
+using UnityEditor.UIElements;
 using UnityEngine;
+using UnityEngine.UIElements;
 
+/// <summary>
+/// TRUE runtime preview. This window does not imitate the layout — it clones
+/// the EXACT UXML file the visual editor builds and the engine instantiates at
+/// Play (<see cref="DialogueVisualEditorUxml"/>). What you see here is
+/// byte-for-byte the runtime tree, rendered by UI Toolkit at the Panel
+/// Settings reference resolution, scaled to fit the window.
+/// </summary>
 public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
 {
     Dialogue_Engine engine;
     DialogueLayoutAsset layoutAsset;
-    Vector2 scroll;
-    bool showLabels = true;
-    bool showSlots = true;
-    bool showComponents = true;
 
-    public static void Open(Dialogue_Engine targetEngine)
-    {
-        var window = GetWindow<DialogueVisualLayoutPreviewWindow>("Visual Layout Preview");
-        window.engine = targetEngine;
-        window.layoutAsset = targetEngine != null ? targetEngine.visualLayoutAsset : null;
-        window.minSize = new Vector2(620, 520);
-        window.Show();
-    }
+    VisualElement previewViewport;
+    VisualElement previewStage;
+    DateTime lastBuildWrite;
 
     [MenuItem("Tools/Dialogue/Open Visual Layout Preview")]
     static void OpenFromMenu()
@@ -26,241 +28,198 @@ public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
         Open(Object.FindFirstObjectByType<Dialogue_Engine>());
     }
 
-    void OnGUI()
+    public static void Open(Dialogue_Engine targetEngine)
     {
-        DrawToolbar();
-        scroll = EditorGUILayout.BeginScrollView(scroll);
+        var window = GetWindow<DialogueVisualLayoutPreviewWindow>("True Runtime Preview");
+        window.engine = targetEngine;
+        window.layoutAsset = targetEngine != null ? targetEngine.visualLayoutAsset : null;
+        window.minSize = new Vector2(560, 420);
+        window.Show();
+    }
 
-        Rect canvas = GUILayoutUtility.GetRect(position.width - 24f, 420f,
-            GUILayout.ExpandWidth(true));
+    void OnEnable()
+    {
+        BuildInterface();
+        EditorApplication.delayCall += RefreshPreview;
+    }
 
-        // Match the runtime design canvas: Play resolves the layout against the
-        // Panel Settings reference resolution, so the preview uses the same
-        // aspect ratio instead of this window's arbitrary shape.
-        if (engine != null && engine.panelSettings != null)
+    void OnFocus()
+    {
+        RefreshPreview();
+    }
+
+    void BuildInterface()
+    {
+        var root = rootVisualElement;
+        root.Clear();
+        root.style.backgroundColor = new Color(0.10f, 0.10f, 0.11f, 1f);
+
+        var toolbar = new VisualElement();
+        toolbar.style.flexDirection = FlexDirection.Row;
+        toolbar.style.paddingTop = 4;
+        toolbar.style.paddingBottom = 4;
+        toolbar.style.paddingLeft = 6;
+        toolbar.style.paddingRight = 6;
+
+        var engineField = new ObjectField("Engine")
         {
-            Vector2 reference = engine.panelSettings.referenceResolution;
-            if (reference.x > 1f && reference.y > 1f)
+            objectType = typeof(Dialogue_Engine),
+            value = engine,
+            allowSceneObjects = true
+        };
+        engineField.RegisterValueChangedCallback(evt =>
+        {
+            engine = (Dialogue_Engine)evt.newValue;
+            if (engine != null && layoutAsset == null)
+                layoutAsset = engine.visualLayoutAsset;
+            RefreshPreview();
+        });
+        engineField.style.flexGrow = 1f;
+        toolbar.Add(engineField);
+
+        var assetField = new ObjectField("Layout Asset")
+        {
+            objectType = typeof(DialogueLayoutAsset),
+            value = layoutAsset,
+            allowSceneObjects = false
+        };
+        assetField.RegisterValueChangedCallback(evt =>
+        {
+            layoutAsset = (DialogueLayoutAsset)evt.newValue;
+            RefreshPreview();
+        });
+        assetField.style.flexGrow = 1f;
+        toolbar.Add(assetField);
+
+        var refreshButton = new Button(RefreshPreview) { text = "Refresh" };
+        toolbar.Add(refreshButton);
+
+        root.Add(toolbar);
+
+        previewViewport = new VisualElement
+        {
+            name = "PreviewViewport",
+            style =
             {
-                float desiredHeight = Mathf.Clamp(
-                    (position.width - 24f) * (reference.y / reference.x), 240f, 760f);
-                canvas = GUILayoutUtility.GetRect(position.width - 24f, desiredHeight,
-                    GUILayout.ExpandWidth(true));
+                flexGrow = 1f,
+                justifyContent = Justify.Center,
+                alignItems = Align.Center,
+                overflow = Overflow.Hidden
             }
-        }
-        EditorGUI.DrawRect(canvas, new Color(0.10f, 0.10f, 0.11f, 1f));
+        };
+        previewStage = new VisualElement { name = "PreviewStage" };
+        previewStage.style.backgroundColor = new Color(0.07f, 0.07f, 0.08f, 1f);
+        previewViewport.Add(previewStage);
+        root.Add(previewViewport);
+
+        var help = new Label(
+            "TRUE PREVIEW — this is the exact UXML the visual editor builds and the engine instantiates at Play. " +
+            "It refreshes automatically; keep the Panel Settings reference resolution in mind when comparing sizes.");
+        help.style.whiteSpace = WhiteSpace.Normal;
+        help.style.paddingTop = 4;
+        help.style.paddingBottom = 4;
+        help.style.paddingLeft = 6;
+        help.style.paddingRight = 6;
+        help.style.unityFontStyleAndWeight = FontStyle.Italic;
+        help.style.color = new Color(0.7f, 0.7f, 0.72f, 1f);
+        root.Add(help);
+
+        // Keep the stage scaled/centered as the window resizes.
+        previewViewport.RegisterCallback<GeometryChangedEvent>(_ => ApplyStageScale());
+        // Poll the canonical file so edits made in the visual editor show up here.
+        schedule.Execute(CheckForRebuild).Every(800);
+    }
+
+    void CheckForRebuild()
+    {
+        if (layoutAsset == null) return;
+        string path = DialogueVisualEditorUxml.BuildPathFor(layoutAsset);
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
+        DateTime written = File.GetLastWriteTimeUtc(path);
+        if (written != lastBuildWrite)
+            RefreshPreview();
+    }
+
+    void RefreshPreview()
+    {
+        if (previewStage == null) return;
+        previewStage.Clear();
+        previewStage.style.width = 0;
+        previewStage.style.height = 0;
 
         if (layoutAsset == null)
         {
-            EditorGUILayout.HelpBox(
-                "Assign a DialogueLayoutAsset on a Dialogue_Engine, or drag one directly into this window.",
-                MessageType.Info);
-            HandleDragAndDrop(canvas);
-            EditorGUILayout.EndScrollView();
+            previewStage.Add(MakeMessage(
+                "Assign a DialogueLayoutAsset (drop one on the field above, or set it on a Dialogue_Engine)."));
             return;
         }
 
-        Rect padded = new Rect(canvas.x + 10f, canvas.y + 10f,
-            canvas.width - 20f, canvas.height - 20f);
-        ResolvedDialogueLayout resolved = DialogueVisualLayoutResolver.Resolve(layoutAsset, padded);
-        DrawResolved(resolved);
-        HandleDragAndDrop(canvas);
+        if (engine == null)
+            engine = Object.FindFirstObjectByType<Dialogue_Engine>();
 
-        EditorGUILayout.Space(8);
-        if (engine != null)
+        Vector2 reference = engine != null && engine.panelSettings != null
+            ? new Vector2(engine.panelSettings.referenceResolution.x, engine.panelSettings.referenceResolution.y)
+            : new Vector2(1920f, 1080f);
+
+        string path;
+        try
         {
-            EditorGUILayout.HelpBox(
-                "This preview resolves the DialogueLayoutAsset exactly like Play Mode does — the runtime UI (DialogueVisualLayoutRuntimeUxml) is generated from these same resolved rectangles and styles. The canvas aspect follows the Panel Settings reference resolution. Requires 'Engine Uses This Layout' on the engine for Play to use it.",
-                MessageType.None);
+            path = DialogueVisualEditorUxml.EnsureBuilt(layoutAsset, engine, reference);
+        }
+        catch (System.Exception ex)
+        {
+            previewStage.Add(MakeMessage("Failed to build the runtime UXML: " + ex.Message));
+            return;
         }
 
-        EditorGUILayout.EndScrollView();
-    }
+        lastBuildWrite = File.GetLastWriteTimeUtc(path);
 
-    void DrawToolbar()
-    {
-        EditorGUILayout.BeginHorizontal(EditorStyles.toolbar);
-        engine = (Dialogue_Engine)EditorGUILayout.ObjectField(engine, typeof(Dialogue_Engine), true, GUILayout.Width(220));
-        if (engine != null && layoutAsset == null)
-            layoutAsset = engine.visualLayoutAsset;
-        layoutAsset = (DialogueLayoutAsset)EditorGUILayout.ObjectField(layoutAsset, typeof(DialogueLayoutAsset), false, GUILayout.Width(220));
-
-        GUILayout.FlexibleSpace();
-        showLabels = GUILayout.Toggle(showLabels, "Labels", EditorStyles.toolbarButton);
-        showSlots = GUILayout.Toggle(showSlots, "Slots", EditorStyles.toolbarButton);
-        showComponents = GUILayout.Toggle(showComponents, "Components", EditorStyles.toolbarButton);
-
-        GUI.enabled = engine != null && layoutAsset != null;
-        if (GUILayout.Button("Apply To Engine", EditorStyles.toolbarButton, GUILayout.Width(100)))
+        var tree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(path);
+        if (tree == null)
         {
-            DialogueVisualLayoutBridge.ApplyToEngine(engine, layoutAsset);
-            EditorUtility.SetDirty(engine);
+            previewStage.Add(MakeMessage("The built UXML could not be imported: " + path));
+            return;
         }
-        GUI.enabled = true;
-        EditorGUILayout.EndHorizontal();
+
+        previewStage.style.width = reference.x;
+        previewStage.style.height = reference.y;
+        tree.Clone(previewStage);
+        ApplyStageScale();
     }
 
-    void DrawResolved(ResolvedDialogueLayout layout)
+    void ApplyStageScale()
     {
-        if (layout == null || layoutAsset == null) return;
-
-        DialogueMainPanelDefinition mainPanel = layoutAsset.MainPanel;
-        DialogueInnerRegionDefinition innerRegion = mainPanel != null ? mainPanel.InnerRegion : null;
-
-        DialogueVisualStylePreviewUtility.DrawStyledElement(
-            layout.MainPanelRect,
-            mainPanel != null ? mainPanel.Background : null,
-            mainPanel != null ? mainPanel.Border : null,
-            mainPanel != null ? mainPanel.Shadow : null,
-            mainPanel != null ? mainPanel.Opacity : null,
-            new Color(0.18f, 0.22f, 0.30f, 0.90f),
-            new Color(0.70f, 0.82f, 1f, 1f),
-            2f);
-
-        if (showLabels)
-            GUI.Label(new Rect(layout.MainPanelRect.x + 6, layout.MainPanelRect.y + 4, 220, 18),
-                "Main Panel", EditorStyles.whiteBoldLabel);
-
-        for (int i = 0; i < layout.Areas.Count; i++)
+        if (previewStage == null || previewViewport == null) return;
+        float w = previewViewport.resolvedStyle.width;
+        float h = previewViewport.resolvedStyle.height;
+        if (float.IsNaN(w) || float.IsNaN(h) || w <= 8f || h <= 8f)
         {
-            ResolvedDialogueArea area = layout.Areas[i];
-            DialogueBackgroundStyle background = null;
-            DialogueBorderStyle border = null;
-            DialogueShadowStyle shadow = null;
-            DialogueOpacitySettings opacity = null;
-            Color fallbackFill = area.AreaKind == ResolvedDialogueAreaKind.MainInner
-                ? new Color(0.22f, 0.26f, 0.30f, 0.35f)
-                : new Color(0.16f, 0.36f, 0.24f, 0.45f);
+            previewViewport.schedule.Execute(ApplyStageScale).StartingIn(50);
+            return;
+        }
+        float stageW = previewStage.resolvedStyle.width;
+        float stageH = previewStage.resolvedStyle.height;
+        if (float.IsNaN(stageW) || stageW <= 1f || float.IsNaN(stageH) || stageH <= 1f)
+        {
+            previewViewport.schedule.Execute(ApplyStageScale).StartingIn(50);
+            return;
+        }
+        float scale = Mathf.Min(w / stageW, h / stageH);
+        previewStage.style.scale = new Scale(new Vector3(scale, scale, 1f));
+    }
 
-            if (area.AreaKind == ResolvedDialogueAreaKind.MainInner)
+    static Label MakeMessage(string message)
+    {
+        var label = new Label(message)
+        {
+            style =
             {
-                background = innerRegion != null ? innerRegion.Background : null;
-                border = innerRegion != null ? innerRegion.Border : null;
-                shadow = innerRegion != null ? innerRegion.Shadow : null;
-                opacity = innerRegion != null ? innerRegion.Opacity : null;
+                whiteSpace = WhiteSpace.Normal,
+                color = new Color(0.85f, 0.85f, 0.88f, 1f),
+                paddingLeft = 10, paddingRight = 10, paddingTop = 10, paddingBottom = 10
             }
-            else
-            {
-                DialogueAttachedAreaDefinition areaDef = DialogueVisualEditorUtility.GetArea(layoutAsset, area.AreaKind);
-                background = areaDef != null ? areaDef.Background : null;
-                border = areaDef != null ? areaDef.Border : null;
-                shadow = areaDef != null ? areaDef.Shadow : null;
-                opacity = areaDef != null ? areaDef.Opacity : null;
-            }
-
-            DialogueVisualStylePreviewUtility.DrawStyledElement(
-                area.Rect,
-                background,
-                border,
-                shadow,
-                opacity,
-                fallbackFill,
-                new Color(0.65f, 0.95f, 0.70f, 1f),
-                1.5f);
-
-            if (showLabels)
-                GUI.Label(new Rect(area.Rect.x + 4, area.Rect.y + 2, 240, 18),
-                    area.Name, EditorStyles.miniBoldLabel);
-        }
-
-        if (showSlots)
-        {
-            for (int i = 0; i < layout.Slots.Count; i++)
-            {
-                ResolvedDialogueSlot slot = layout.Slots[i];
-                DialogueSlotDefinition slotDef = DialogueVisualEditorUtility.GetSlot(layoutAsset, slot.AreaKind, slot.SlotIndex);
-                DialogueVisualStylePreviewUtility.DrawStyledElement(
-                    slot.Rect,
-                    slotDef != null ? slotDef.Background : null,
-                    slotDef != null ? slotDef.Border : null,
-                    slotDef != null ? slotDef.Shadow : null,
-                    slotDef != null ? slotDef.Opacity : null,
-                    new Color(1f, 0.84f, 0.40f, 0.08f),
-                    new Color(1f, 0.84f, 0.40f, 1f),
-                    1.5f);
-                if (showLabels)
-                    GUI.Label(new Rect(slot.Rect.x + 4, slot.Rect.y + 2, 120, 18),
-                        slot.SlotId, EditorStyles.miniLabel);
-            }
-        }
-
-        if (showComponents)
-        {
-            for (int i = 0; i < layout.Components.Count; i++)
-            {
-                ResolvedDialogueComponentRect component = layout.Components[i];
-                DialogueComponentDefinition componentDef = DialogueVisualEditorUtility.GetComponent(
-                    layoutAsset,
-                    component.AreaKind,
-                    component.SlotIndex,
-                    component.ComponentIndex);
-                DialogueVisualStylePreviewUtility.DrawStyledElement(
-                    component.Rect,
-                    componentDef != null ? componentDef.Background : null,
-                    componentDef != null ? componentDef.Border : null,
-                    componentDef != null ? componentDef.Shadow : null,
-                    componentDef != null ? componentDef.Opacity : null,
-                    component.ComponentType == DialogueComponentType.ImagePanel
-                        ? new Color(0.75f, 0.46f, 0.16f, 0.22f)
-                        : component.ComponentType == DialogueComponentType.NamePanel
-                            ? new Color(0.24f, 0.56f, 0.92f, 0.22f)
-                            : new Color(0.92f, 0.92f, 0.92f, 0.12f),
-                    component.ClipToSlot
-                        ? new Color(1f, 1f, 1f, 0.85f)
-                        : new Color(1f, 0.4f, 0.4f, 0.95f),
-                    1.5f);
-
-                if (!component.ClipToSlot)
-                {
-                    Handles.color = new Color(1f, 0.4f, 0.4f, 0.95f);
-                    DrawDashedRect(component.Rect, 6f);
-                }
-
-                if (showLabels)
-                    GUI.Label(new Rect(component.Rect.x + 3, component.Rect.y + 2, 180, 18),
-                        component.DisplayName + "  z:" + component.ZLayer,
-                        EditorStyles.whiteMiniLabel);
-            }
-        }
-    }
-
-    void DrawDashedRect(Rect rect, float dash)
-    {
-        DrawDashedLine(new Vector2(rect.xMin, rect.yMin), new Vector2(rect.xMax, rect.yMin), dash);
-        DrawDashedLine(new Vector2(rect.xMax, rect.yMin), new Vector2(rect.xMax, rect.yMax), dash);
-        DrawDashedLine(new Vector2(rect.xMax, rect.yMax), new Vector2(rect.xMin, rect.yMax), dash);
-        DrawDashedLine(new Vector2(rect.xMin, rect.yMax), new Vector2(rect.xMin, rect.yMin), dash);
-    }
-
-    void DrawDashedLine(Vector2 a, Vector2 b, float dash)
-    {
-        float distance = Vector2.Distance(a, b);
-        Vector2 dir = (b - a).normalized;
-        for (float p = 0f; p < distance; p += dash * 2f)
-        {
-            Vector2 start = a + dir * p;
-            Vector2 end = a + dir * Mathf.Min(distance, p + dash);
-            Handles.DrawLine(start, end);
-        }
-    }
-
-    void HandleDragAndDrop(Rect rect)
-    {
-        UnityEngine.Event evt = UnityEngine.Event.current;
-        if (!rect.Contains(evt.mousePosition)) return;
-        if (evt.type != EventType.DragUpdated && evt.type != EventType.DragPerform) return;
-        if (DragAndDrop.objectReferences == null || DragAndDrop.objectReferences.Length == 0) return;
-
-        DialogueLayoutAsset dropped = DragAndDrop.objectReferences[0] as DialogueLayoutAsset;
-        if (dropped == null) return;
-        DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
-        if (evt.type == EventType.DragPerform)
-        {
-            DragAndDrop.AcceptDrag();
-            layoutAsset = dropped;
-            Repaint();
-        }
-        evt.Use();
+        };
+        return label;
     }
 }
 #endif

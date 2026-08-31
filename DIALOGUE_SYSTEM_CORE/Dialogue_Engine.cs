@@ -1236,8 +1236,9 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         string contents = null;
         string source = "engine layout";
 
-        // 1) The visual layout asset is an explicit opt-in: reproduce the
-        //    edited layout EXACTLY from the resolved asset. Beats presets.
+        // 1) The visual layout asset is an explicit opt-in. The visual editor
+        //    OWNS the canonical UXML; the engine never re-derives the layout —
+        //    it just takes a byte-for-byte copy of the editor's file.
         if (useVisualLayoutAsset && visualLayoutAsset != null)
         {
             try
@@ -1245,17 +1246,19 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                 Vector2 canvas = panelSettings != null
                     ? new Vector2(panelSettings.referenceResolution.x, panelSettings.referenceResolution.y)
                     : new Vector2(1920f, 1080f);
-                string generated = DialogueVisualLayoutRuntimeUxml.Generate(visualLayoutAsset, this, canvas);
-                source = "visual layout asset '" + visualLayoutAsset.name + "'";
-                if (ValidateRuntimeUxml(generated, source))
-                {
-                    contents = generated;
+                // Single builder, owned by the editor: refreshes the canonical
+                // file only if the editor was not open to write it itself.
+                string canonicalPath = DialogueVisualEditorUxml.EnsureBuilt(visualLayoutAsset, this, canvas);
+                contents = File.ReadAllText(canonicalPath);
+                source = "visual editor UXML '" + Path.GetFileName(canonicalPath) + "'";
+                if (ValidateRuntimeUxml(contents, source))
                     visualLayoutRuntimeActive = true;
-                }
+                else
+                    contents = null;
             }
             catch (Exception ex)
             {
-                Debug.LogError($"Dialogue_Engine: Visual layout UXML generation failed ({ex.Message}). Falling back.");
+                Debug.LogError($"Dialogue_Engine: Failed to load the visual editor UXML ({ex.Message}). Falling back.");
             }
         }
 

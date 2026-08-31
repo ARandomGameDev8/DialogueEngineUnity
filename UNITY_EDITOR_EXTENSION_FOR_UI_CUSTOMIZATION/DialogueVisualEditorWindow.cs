@@ -97,11 +97,16 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     // Undo bookkeeping: one undo group per gesture (drag, button, field mouse-grab).
     int undoMergeGroup = -1;
 
+    // The editor OWNS the canonical runtime UXML for the layout asset; it is
+    // rebuilt after every completed edit gesture (never mid-drag).
+    bool ownedUxmlDirty;
+
     void OnEnable()
     {
         // Repaint after every Ctrl+Z / Ctrl+Shift+Z and re-sync the engine so the
         // canvas, the asset and the runtime preview never disagree.
         Undo.undoRedoPerformed += HandleUndoRedoPerformed;
+        RebuildOwnedUxml();
     }
 
     void OnDestroy()
@@ -117,7 +122,29 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         // is a re-sync of an undo action, not a new user change.
         if (layoutAsset != null && engine != null && autoApplyToEngine)
             DialogueVisualLayoutBridge.ApplyToEngine(engine, layoutAsset);
+        RebuildOwnedUxml();
         Repaint();
+    }
+
+    /// <summary>
+    /// Rewrites the canonical runtime UXML owned by this editor. The engine at
+    /// Play instantiates a copy of exactly this file.
+    /// </summary>
+    void RebuildOwnedUxml()
+    {
+        if (layoutAsset == null) return;
+        Vector2 canvas = engine != null && engine.panelSettings != null
+            ? new Vector2(engine.panelSettings.referenceResolution.x, engine.panelSettings.referenceResolution.y)
+            : new Vector2(1920f, 1080f);
+        try
+        {
+            DialogueVisualEditorUxml.EnsureBuilt(layoutAsset, engine, canvas);
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogError("Dialogue Visual Editor: failed to build the runtime UXML: " + ex.Message);
+        }
+        ownedUxmlDirty = false;
     }
 
     /// <summary>
@@ -163,6 +190,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         {
             Undo.CollapseUndoOperations(undoMergeGroup);
             undoMergeGroup = -1;
+            // Gesture finished — publish the owned UXML once.
+            if (ownedUxmlDirty)
+                RebuildOwnedUxml();
         }
 
         DrawToolbar();
@@ -2324,6 +2354,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         EditorUtility.SetDirty(layoutAsset);
         if (autoApplyToEngine)
             ApplyBridge();
+        ownedUxmlDirty = true;
         Repaint();
     }
 

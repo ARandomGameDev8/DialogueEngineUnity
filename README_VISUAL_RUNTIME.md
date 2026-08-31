@@ -103,26 +103,30 @@ The runtime never modifies the source UXML:
 
 ## 8. Exact runtime reproduction (visual layout asset)
 
-When the engine has **Engine Uses This Layout** enabled and a
-`DialogueLayoutAsset` assigned, Play no longer approximates the layout through
-the engine's inspector fields. Instead `DialogueVisualLayoutRuntimeUxml`
-builds the play-mode UXML **directly from the resolved layout** — the same
-geometry the editor canvas draws:
+There is **one single builder** and the **visual editor owns it**. The engine
+never re-derives or approximates your layout at play time:
 
-- the main panel at its resolved rect with its exact background, per-side
-  borders, per-corner radii and opacity,
-- every attached area, slot and component at its resolved rect with its exact
-  styles,
-- the first text panel becomes the live dialogue text, the first name panel
-  the live speaker name, the first image panel the live portrait (icon or
-  character figure) — the engine keeps writing all text, names and images,
-- while this mode is active the engine suppresses its own restyling passes
-  (panel resize, portrait frame, name re-flow, character-panel decoration) so
-  nothing overwrites the edited layout.
+1. `DialogueVisualEditorUxml` (owned by the visual editor) builds THE
+   canonical UXML from the asset's resolved layout — the same rects, borders,
+   radii, opacity and text styles the editor canvas draws. The canonical file
+   lives next to the asset as `<AssetName>_dialogue_ui.uxml`.
+2. The visual editor rewrites that file automatically after every edit
+   gesture (drag, inspector change, add/remove, undo/redo).
+3. At Play, `Dialogue_Engine` takes a **byte-for-byte copy** of that exact
+   file (refreshed by the same single builder only if the editor window
+   wasn't open) and instantiates it through the disposable runtime copy.
+4. While this mode is active the engine suppresses its own restyling passes
+   (panel resize, portrait frame, name re-flow, character-panel decoration)
+   so nothing overwrites the edited layout.
+5. **Tools/Dialogue/Open Visual Layout Preview** is a TRUE preview: it clones
+   the exact same built UXML file with UI Toolkit at the Panel Settings
+   reference resolution — what you see in that window is literally the tree
+   Play instantiates.
 
-The design canvas is the Panel Settings reference resolution, so keep the
-panel's aspect ratio in mind when matching the editor preview 1:1. An
-explicitly selected preset still wins over the asset.
+Requires **Engine Uses This Layout** on the engine (the editor warns when it
+isn't). An explicitly selected preset still wins over the asset. For player
+builds, put the canonical UXML into a Resources folder as
+`Dialogue_Presets/dialogue_generated`.
 
 ## 9. Undo / redo
 
