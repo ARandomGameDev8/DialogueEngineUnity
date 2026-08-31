@@ -282,6 +282,7 @@ public sealed class DialogueAttachedAreaDefinition
     };
 
     public float GapFromMainPanel = 8f;
+    public Vector2 Offset;
 
     [Range(0, 2)] public int PartitionLevel = 0;
     public float InterSlotSpacing = 8f;
@@ -329,6 +330,7 @@ public sealed class DialogueSlotDefinition
 
     [Tooltip("Set below zero to use the parent region's inter-slot spacing.")]
     public float GapAfter = -1f;
+    public Vector2 Offset;
 
     public DialoguePadding Padding = new DialoguePadding();
     public DialogueBackgroundStyle Background =

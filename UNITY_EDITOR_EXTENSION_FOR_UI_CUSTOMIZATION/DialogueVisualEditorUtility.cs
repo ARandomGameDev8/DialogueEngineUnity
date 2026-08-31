@@ -178,6 +178,7 @@ public static class DialogueVisualEditorUtility
         slot.Height.Unit = DialogueSizeUnit.Auto;
         slot.Height.Value = 0f;
         slot.GapAfter = -1f;
+        slot.Offset = Vector2.zero;
 
         if (background != null)
         {
@@ -214,6 +215,324 @@ public static class DialogueVisualEditorUtility
         if (opacity != null)
             slot.Opacity.Opacity = opacity.Opacity;
         slot.ZLayer = zLayer;
+    }
+
+    public static bool TryGetOppositeAreaKind(ResolvedDialogueAreaKind kind,
+        out ResolvedDialogueAreaKind opposite)
+    {
+        switch (kind)
+        {
+            case ResolvedDialogueAreaKind.Left:
+                opposite = ResolvedDialogueAreaKind.Right;
+                return true;
+            case ResolvedDialogueAreaKind.Right:
+                opposite = ResolvedDialogueAreaKind.Left;
+                return true;
+            case ResolvedDialogueAreaKind.Top:
+                opposite = ResolvedDialogueAreaKind.Bottom;
+                return true;
+            case ResolvedDialogueAreaKind.Bottom:
+                opposite = ResolvedDialogueAreaKind.Top;
+                return true;
+            default:
+                opposite = ResolvedDialogueAreaKind.MainInner;
+                return false;
+        }
+    }
+
+    public static string GetAreaKindDisplayName(ResolvedDialogueAreaKind kind)
+    {
+        switch (kind)
+        {
+            case ResolvedDialogueAreaKind.Top: return "Top Area";
+            case ResolvedDialogueAreaKind.Bottom: return "Bottom Area";
+            case ResolvedDialogueAreaKind.Left: return "Left Area";
+            case ResolvedDialogueAreaKind.Right: return "Right Area";
+            default: return "Inner Region";
+        }
+    }
+
+    public static void CopyAreaToOpposite(DialogueLayoutAsset asset,
+        ResolvedDialogueAreaKind sourceKind)
+    {
+        ResolvedDialogueAreaKind oppositeKind;
+        if (asset == null || !TryGetOppositeAreaKind(sourceKind, out oppositeKind))
+            return;
+
+        EnsureSlotArrays(asset);
+
+        DialogueAttachedAreaDefinition source = GetArea(asset, sourceKind);
+        DialogueAttachedAreaDefinition target = GetArea(asset, oppositeKind);
+        if (source == null || target == null)
+            return;
+
+        string preservedDisplayName = string.IsNullOrEmpty(target.DisplayName)
+            ? GetAreaKindDisplayName(oppositeKind)
+            : target.DisplayName;
+        DialogueAttachedAreaSide preservedSide = target.Side;
+
+        CopyAreaDefinition(source, target);
+
+        target.DisplayName = preservedDisplayName;
+        target.Side = preservedSide;
+        SetAreaEnabled(asset, oppositeKind, source.Enabled && IsAreaEnabled(asset, sourceKind));
+    }
+
+    public static void CopySlotToOpposite(DialogueLayoutAsset asset,
+        ResolvedDialogueAreaKind sourceKind, int slotIndex)
+    {
+        ResolvedDialogueAreaKind oppositeKind;
+        if (asset == null || !TryGetOppositeAreaKind(sourceKind, out oppositeKind))
+            return;
+
+        EnsureSlotArrays(asset);
+
+        DialogueSlotDefinition source = GetSlot(asset, sourceKind, slotIndex);
+        DialogueSlotDefinition target = GetSlot(asset, oppositeKind, slotIndex);
+        if (source == null || target == null)
+            return;
+
+        DialogueAttachedAreaDefinition sourceArea = GetArea(asset, sourceKind);
+        DialogueAttachedAreaDefinition targetArea = GetArea(asset, oppositeKind);
+        if (sourceArea != null && targetArea != null)
+        {
+            targetArea.Enabled = sourceArea.Enabled;
+            targetArea.PartitionLevel = Mathf.Max(targetArea.PartitionLevel, sourceArea.PartitionLevel);
+            SetAreaEnabled(asset, oppositeKind, sourceArea.Enabled && IsAreaEnabled(asset, sourceKind));
+            EnsureSlots(targetArea.Slots);
+        }
+
+        CopySlotDefinition(source, target);
+    }
+
+    static void CopyAreaDefinition(DialogueAttachedAreaDefinition source,
+        DialogueAttachedAreaDefinition target)
+    {
+        if (source == null || target == null)
+            return;
+
+        target.Enabled = source.Enabled;
+        CopySizeValue(source.Width, target.Width);
+        CopySizeValue(source.Height, target.Height);
+        target.GapFromMainPanel = source.GapFromMainPanel;
+        target.Offset = source.Offset;
+        target.PartitionLevel = source.PartitionLevel;
+        target.InterSlotSpacing = source.InterSlotSpacing;
+        CopyBackgroundStyle(source.Background, target.Background);
+        CopyBorderStyle(source.Border, target.Border);
+        CopyShadowStyle(source.Shadow, target.Shadow);
+        CopyOpacitySettings(source.Opacity, target.Opacity);
+        target.ZLayer = source.ZLayer;
+
+        if (target.Slots == null)
+            target.Slots = new List<DialogueSlotDefinition>();
+        target.Slots.Clear();
+        if (source.Slots != null)
+        {
+            for (int i = 0; i < source.Slots.Count; i++)
+                target.Slots.Add(CloneSlotDefinition(source.Slots[i]));
+        }
+
+        EnsureSlots(target.Slots);
+    }
+
+    static DialogueSlotDefinition CloneSlotDefinition(DialogueSlotDefinition source)
+    {
+        var clone = new DialogueSlotDefinition();
+        CopySlotDefinition(source, clone);
+        return clone;
+    }
+
+    static void CopySlotDefinition(DialogueSlotDefinition source,
+        DialogueSlotDefinition target)
+    {
+        if (source == null || target == null)
+            return;
+
+        target.SlotId = source.SlotId;
+        target.DisplayName = source.DisplayName;
+        target.Enabled = source.Enabled;
+        CopySizeValue(source.Width, target.Width);
+        CopySizeValue(source.Height, target.Height);
+        target.GapAfter = source.GapAfter;
+        target.Offset = source.Offset;
+        CopyPadding(source.Padding, target.Padding);
+        CopyBackgroundStyle(source.Background, target.Background);
+        CopyBorderStyle(source.Border, target.Border);
+        CopyShadowStyle(source.Shadow, target.Shadow);
+        CopyOpacitySettings(source.Opacity, target.Opacity);
+        target.ZLayer = source.ZLayer;
+
+        if (target.Components == null)
+            target.Components = new List<DialogueComponentDefinition>();
+        target.Components.Clear();
+        if (source.Components != null)
+        {
+            for (int i = 0; i < source.Components.Count; i++)
+                target.Components.Add(CloneComponent(source.Components[i]));
+        }
+    }
+
+    static DialogueComponentDefinition CloneComponent(DialogueComponentDefinition source)
+    {
+        if (source == null)
+            return null;
+
+        DialogueComponentDefinition clone = CreateComponent(source.ComponentType);
+        if (clone == null)
+            return null;
+
+        clone.ComponentId = System.Guid.NewGuid().ToString("N");
+        clone.DisplayName = source.DisplayName;
+        clone.Enabled = source.Enabled;
+        clone.ComponentType = source.ComponentType;
+        clone.HorizontalAlignment = source.HorizontalAlignment;
+        clone.VerticalAlignment = source.VerticalAlignment;
+        clone.Offset = source.Offset;
+        CopySizeValue(source.Width, clone.Width);
+        CopySizeValue(source.Height, clone.Height);
+        CopyPadding(source.Padding, clone.Padding);
+        CopyOpacitySettings(source.Opacity, clone.Opacity);
+        clone.ClipToSlot = source.ClipToSlot;
+        clone.ZLayer = source.ZLayer;
+        CopyBackgroundStyle(source.Background, clone.Background);
+        CopyBorderStyle(source.Border, clone.Border);
+        CopyShadowStyle(source.Shadow, clone.Shadow);
+
+        if (source is DialogueTextPanelDefinition sourceText && clone is DialogueTextPanelDefinition cloneText)
+        {
+            CopyTextStyle(sourceText.TextStyle, cloneText.TextStyle);
+            cloneText.TypewriterEnabled = sourceText.TypewriterEnabled;
+            cloneText.CharactersPerSecond = sourceText.CharactersPerSecond;
+            cloneText.StartDelay = sourceText.StartDelay;
+            cloneText.CharacterAudioKey = sourceText.CharacterAudioKey;
+            cloneText.BaseAnimationProfile = sourceText.BaseAnimationProfile;
+            cloneText.OverlayAnimationProfile = sourceText.OverlayAnimationProfile;
+        }
+        else if (source is DialogueNamePanelDefinition sourceName && clone is DialogueNamePanelDefinition cloneName)
+        {
+            CopyTextStyle(sourceName.TextStyle, cloneName.TextStyle);
+            cloneName.TypewriterEnabled = sourceName.TypewriterEnabled;
+            cloneName.CharactersPerSecond = sourceName.CharactersPerSecond;
+            cloneName.StartDelay = sourceName.StartDelay;
+            cloneName.BaseAnimationProfile = sourceName.BaseAnimationProfile;
+            cloneName.OverlayAnimationProfile = sourceName.OverlayAnimationProfile;
+        }
+        else if (source is DialogueImagePanelDefinition sourceImage && clone is DialogueImagePanelDefinition cloneImage)
+        {
+            cloneImage.Mode = sourceImage.Mode;
+            cloneImage.Shape = sourceImage.Shape;
+            cloneImage.UniformScale = sourceImage.UniformScale;
+            cloneImage.InnerPadding = sourceImage.InnerPadding;
+            CopyImageStyle(sourceImage.ImageStyle, cloneImage.ImageStyle);
+            cloneImage.FigureScaleMode = sourceImage.FigureScaleMode;
+            cloneImage.FlipHorizontal = sourceImage.FlipHorizontal;
+            cloneImage.ImageSourceKey = sourceImage.ImageSourceKey;
+        }
+
+        return clone;
+    }
+
+    static void CopySizeValue(DialogueSizeValue source, DialogueSizeValue target)
+    {
+        if (source == null || target == null)
+            return;
+
+        target.Unit = source.Unit;
+        target.Value = source.Value;
+    }
+
+    static void CopyPadding(DialoguePadding source, DialoguePadding target)
+    {
+        if (source == null || target == null)
+            return;
+
+        target.Left = source.Left;
+        target.Right = source.Right;
+        target.Top = source.Top;
+        target.Bottom = source.Bottom;
+    }
+
+    static void CopyBackgroundStyle(DialogueBackgroundStyle source,
+        DialogueBackgroundStyle target)
+    {
+        if (source == null || target == null)
+            return;
+
+        target.Mode = source.Mode;
+        target.ColorA = source.ColorA;
+        target.ColorB = source.ColorB;
+        target.Opacity = source.Opacity;
+        target.SpriteSourceKey = source.SpriteSourceKey;
+        target.GradientDirection = source.GradientDirection;
+    }
+
+    static void CopyBorderStyle(DialogueBorderStyle source,
+        DialogueBorderStyle target)
+    {
+        if (source == null || target == null)
+            return;
+
+        target.Enabled = source.Enabled;
+        target.LeftThickness = source.LeftThickness;
+        target.RightThickness = source.RightThickness;
+        target.TopThickness = source.TopThickness;
+        target.BottomThickness = source.BottomThickness;
+        target.BorderColor = source.BorderColor;
+        target.CornerRadiusTopLeft = source.CornerRadiusTopLeft;
+        target.CornerRadiusTopRight = source.CornerRadiusTopRight;
+        target.CornerRadiusBottomLeft = source.CornerRadiusBottomLeft;
+        target.CornerRadiusBottomRight = source.CornerRadiusBottomRight;
+        target.BorderSpriteSourceKey = source.BorderSpriteSourceKey;
+        target.Opacity = source.Opacity;
+    }
+
+    static void CopyShadowStyle(DialogueShadowStyle source,
+        DialogueShadowStyle target)
+    {
+        if (source == null || target == null)
+            return;
+
+        target.Enabled = source.Enabled;
+        target.Offset = source.Offset;
+        target.Blur = source.Blur;
+        target.Color = source.Color;
+        target.Opacity = source.Opacity;
+    }
+
+    static void CopyOpacitySettings(DialogueOpacitySettings source,
+        DialogueOpacitySettings target)
+    {
+        if (source == null || target == null)
+            return;
+
+        target.Opacity = source.Opacity;
+    }
+
+    static void CopyTextStyle(DialogueTextStyle source, DialogueTextStyle target)
+    {
+        if (source == null || target == null)
+            return;
+
+        target.FontSourceKey = source.FontSourceKey;
+        target.FontSize = source.FontSize;
+        target.FontWeight = source.FontWeight;
+        target.Color = source.Color;
+        target.LineHeight = source.LineHeight;
+        target.LetterSpacing = source.LetterSpacing;
+        target.HorizontalAlignment = source.HorizontalAlignment;
+        target.VerticalAlignment = source.VerticalAlignment;
+    }
+
+    static void CopyImageStyle(DialogueImageStyle source, DialogueImageStyle target)
+    {
+        if (source == null || target == null)
+            return;
+
+        target.ImageSourceKey = source.ImageSourceKey;
+        target.Opacity = source.Opacity;
+        target.PreserveAspect = source.PreserveAspect;
+        target.Tint = source.Tint;
     }
 
     public static void RecordChange(Object target, string actionName)

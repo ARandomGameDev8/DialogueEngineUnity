@@ -184,6 +184,7 @@ public static class DialogueVisualLayoutResolver
             parentRect.center.y - height * 0.5f + def.Offset.y,
             width,
             height);
+        areaRect = ClampRectInside(areaRect, parentRect);
 
         resolved.Areas.Add(new ResolvedDialogueArea
         {
@@ -244,6 +245,9 @@ public static class DialogueVisualLayoutResolver
                 areaRect.y = mainRect.center.y - height * 0.5f;
                 break;
         }
+
+        areaRect.position += def.Offset;
+        areaRect = ClampRectInside(areaRect, canvasRect);
 
         ResolvedDialogueAreaKind kind = ToAreaKind(def.Side);
         resolved.Areas.Add(new ResolvedDialogueArea
@@ -313,6 +317,9 @@ public static class DialogueVisualLayoutResolver
                 slotRect = new Rect(rowRect.xMin, cursor, slotWidth, sizes[i]);
                 cursor += sizes[i] + gapAfter;
             }
+
+            slotRect.position += slot.Offset;
+            slotRect = ClampRectInside(slotRect, rowRect);
 
             resolved.Slots.Add(new ResolvedDialogueSlot
             {
@@ -386,7 +393,7 @@ public static class DialogueVisualLayoutResolver
                 break;
         }
 
-        return new Rect(x + component.Offset.x, y + component.Offset.y, width, height);
+        return ClampRectInside(new Rect(x + component.Offset.x, y + component.Offset.y, width, height), padded);
     }
 
     static List<float> ResolveDistributedSizes(List<DialogueSlotDefinition> slots,
@@ -608,6 +615,18 @@ public static class DialogueVisualLayoutResolver
             case DialogueAnchorReferenceEdge.Bottom: return canvas.yMax - height + custom.OffsetY;
             default: return canvas.center.y - height * 0.5f + custom.OffsetY;
         }
+    }
+
+    static Rect ClampRectInside(Rect rect, Rect parentRect)
+    {
+        if (parentRect.width <= 0f || parentRect.height <= 0f)
+            return rect;
+
+        rect.width = Mathf.Clamp(rect.width, 1f, parentRect.width);
+        rect.height = Mathf.Clamp(rect.height, 1f, parentRect.height);
+        rect.x = Mathf.Clamp(rect.x, parentRect.xMin, parentRect.xMax - rect.width);
+        rect.y = Mathf.Clamp(rect.y, parentRect.yMin, parentRect.yMax - rect.height);
+        return rect;
     }
 
     public static Rect ShrinkRect(Rect rect, DialoguePadding padding)

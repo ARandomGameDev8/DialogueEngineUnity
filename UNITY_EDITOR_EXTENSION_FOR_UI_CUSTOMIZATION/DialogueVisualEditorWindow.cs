@@ -35,7 +35,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     enum DragMode
     {
         None,
-        MoveMainAnchored,
+        MoveSelection,
         ScaleMainSymmetric,
         ResizeWidthLeft,
         ResizeWidthRight,
@@ -169,7 +169,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
         GUILayout.Label("Palette", EditorStyles.boldLabel);
         EditorGUILayout.HelpBox(
-            "Keep the current visual workflow: Move Root drags only the main panel and automatically updates its anchor, Scale Root symmetrically scales only the main panel, Width/Height/Size resize the current selection, and attached areas on the same edge as the main-panel anchor are auto-hidden until that anchor changes.",
+            "Keep the current visual workflow: Move Root now drags the current selection while keeping it inside its parent container, the main panel still auto-updates its anchor when moved, Scale Root symmetrically scales only the main panel, Width/Height/Size resize the current selection, and attached areas on the same edge as the main-panel anchor are auto-hidden until that anchor changes.",
             MessageType.None);
 
         EditorGUILayout.BeginHorizontal();
@@ -437,7 +437,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         switch (editTool)
         {
             case EditTool.MoveRoot:
-                if (selection.Kind == SelectionKind.MainPanel)
+                if (selection.Kind != SelectionKind.None)
                     DrawHandleBox(GetMoveHandle(selectedRect, handle), moveHandleColor);
                 break;
 
@@ -525,9 +525,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         switch (editTool)
         {
             case EditTool.MoveRoot:
-                if (selection.Kind == SelectionKind.MainPanel && selectedRect.Contains(mouse))
+                if (selection.Kind != SelectionKind.None && selectedRect.Contains(mouse))
                 {
-                    BeginMainMove(selectedRect);
+                    BeginMoveSelection(selectedRect);
                     return true;
                 }
                 break;
@@ -593,19 +593,20 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         return false;
     }
 
-    void BeginMainMove(Rect currentRect)
+    void BeginMoveSelection(Rect currentRect)
     {
-        if (layoutAsset == null || layoutAsset.MainPanel == null)
+        if (layoutAsset == null)
             return;
 
-        if (layoutAsset.MainPanel.CustomAnchor == null)
+        if (selection.Kind == SelectionKind.MainPanel && layoutAsset.MainPanel != null &&
+            layoutAsset.MainPanel.CustomAnchor == null)
             layoutAsset.MainPanel.CustomAnchor = new DialogueCustomAnchorDefinition();
 
-        dragMode = DragMode.MoveMainAnchored;
+        dragMode = DragMode.MoveSelection;
         dragStartMouse = UnityEngine.Event.current.mousePosition;
         dragStartRect = currentRect;
         dragParentRect = GetSelectedParentRect();
-        DialogueVisualEditorUtility.RecordChange(layoutAsset, "Move Main Panel");
+        DialogueVisualEditorUtility.RecordChange(layoutAsset, "Move Selection");
     }
 
     void BeginSizedDrag(DragMode mode, Rect currentRect, Rect parentRect, string actionName)
@@ -632,12 +633,16 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     {
         switch (dragMode)
         {
-            case DragMode.MoveMainAnchored:
-                ApplyMainPanelRect(ClampRectInside(new Rect(
+            case DragMode.MoveSelection:
+                Rect movedRect = ClampRectInside(new Rect(
                     dragStartRect.x + delta.x,
                     dragStartRect.y + delta.y,
                     dragStartRect.width,
-                    dragStartRect.height), dragParentRect), false);
+                    dragStartRect.height), dragParentRect);
+                if (selection.Kind == SelectionKind.MainPanel)
+                    ApplyMainPanelRect(movedRect, false);
+                else
+                    ApplyRectToCurrentSelection(movedRect);
                 break;
 
             case DragMode.ScaleMainSymmetric:
@@ -834,6 +839,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         area.Enabled = EditorGUILayout.Toggle("Enabled", area.Enabled);
         DialogueVisualEditorUtility.SetAreaEnabled(layoutAsset, selection.AreaKind, area.Enabled);
         area.GapFromMainPanel = EditorGUILayout.FloatField("Gap From Main Panel", area.GapFromMainPanel);
+        area.Offset = EditorGUILayout.Vector2Field("Offset", area.Offset);
         DrawSizeField("Width", area.Width);
         DrawSizeField("Height", area.Height);
         int oldPartition = area.PartitionLevel;
@@ -844,6 +850,15 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             DialogueVisualEditorUtility.SyncVisibleSlotsFromArea(area);
         if (area.PartitionLevel > 0 && GUILayout.Button("Sync Visible Slots From Parent Area", GUILayout.Height(22f)))
             DialogueVisualEditorUtility.SyncVisibleSlotsFromArea(area);
+        ResolvedDialogueAreaKind oppositeAreaKind;
+        if (DialogueVisualEditorUtility.TryGetOppositeAreaKind(selection.AreaKind, out oppositeAreaKind) &&
+            GUILayout.Button("Copy This Area To " + DialogueVisualEditorUtility.GetAreaKindDisplayName(oppositeAreaKind), GUILayout.Height(22f)))
+        {
+            DialogueVisualEditorUtility.RecordChange(layoutAsset, "Copy Area To Opposite Side");
+            DialogueVisualEditorUtility.CopyAreaToOpposite(layoutAsset, selection.AreaKind);
+            CommitLayoutMutation();
+            return;
+        }
         DrawBackgroundStyle(area.Background);
         DrawBorderStyle(area.Border);
         DrawShadowStyle(area.Shadow);
@@ -857,8 +872,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         slot.DisplayName = EditorGUILayout.TextField("Display Name", slot.DisplayName);
         slot.Enabled = EditorGUILayout.Toggle("Enabled", slot.Enabled);
         EditorGUILayout.HelpBox(
-            "Slots are the final partition pieces. They cannot be partitioned further. They inherit their parent region's visual settings by default, but you can override their own size, spacing-after, and visual styling here.",
+            "Slots are the final partition pieces. They cannot be partitioned further. They inherit their parent region's visual settings by default, but you can override their own size, position, spacing-after, and visual styling here.",
             MessageType.None);
+        slot.Offset = EditorGUILayout.Vector2Field("Offset", slot.Offset);
         DrawSizeField("Width", slot.Width);
         DrawSizeField("Height", slot.Height);
         slot.GapAfter = EditorGUILayout.FloatField("Gap To Next Slot (-1 uses parent)", slot.GapAfter);
@@ -868,6 +884,16 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         DrawBorderStyle(slot.Border);
         DrawShadowStyle(slot.Shadow);
         DrawOpacity(slot.Opacity);
+        ResolvedDialogueAreaKind oppositeSlotAreaKind;
+        if (selection.AreaKind != ResolvedDialogueAreaKind.MainInner &&
+            DialogueVisualEditorUtility.TryGetOppositeAreaKind(selection.AreaKind, out oppositeSlotAreaKind) &&
+            GUILayout.Button("Copy This Slot To Matching Slot On " + DialogueVisualEditorUtility.GetAreaKindDisplayName(oppositeSlotAreaKind), GUILayout.Height(22f)))
+        {
+            DialogueVisualEditorUtility.RecordChange(layoutAsset, "Copy Slot To Opposite Side");
+            DialogueVisualEditorUtility.CopySlotToOpposite(layoutAsset, selection.AreaKind, selection.SlotIndex);
+            CommitLayoutMutation();
+            return;
+        }
         EditorGUILayout.Space(6f);
         GUILayout.Label("Components", EditorStyles.boldLabel);
         if (slot.Components != null)
@@ -1472,9 +1498,13 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         if (area == null)
             return;
 
+        ResolvedDialogueArea resolvedArea = FindAreaByKind(resolved, selection.AreaKind);
+        Vector2 currentPosition = resolvedArea != null ? resolvedArea.Rect.position : targetRect.position;
+
         targetRect = ClampRectInside(targetRect, resolved.CanvasRect);
         SetSizeAsPixels(area.Width, targetRect.width, resolved.CanvasRect.width);
         SetSizeAsPixels(area.Height, targetRect.height, resolved.CanvasRect.height);
+        area.Offset += targetRect.position - currentPosition;
     }
 
     void ApplySlotRect(Rect targetRect)
@@ -1483,10 +1513,14 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         if (slot == null)
             return;
 
+        ResolvedDialogueSlot resolvedSlot = FindSelectedSlot(resolved);
+        Vector2 currentPosition = resolvedSlot != null ? resolvedSlot.Rect.position : targetRect.position;
+
         Rect parentRect = GetSelectedParentRect();
         targetRect = ClampRectInside(targetRect, parentRect);
         SetSizeAsPixels(slot.Width, targetRect.width, parentRect.width);
         SetSizeAsPixels(slot.Height, targetRect.height, parentRect.height);
+        slot.Offset += targetRect.position - currentPosition;
     }
 
     void ApplyComponentRect(Rect targetRect)
