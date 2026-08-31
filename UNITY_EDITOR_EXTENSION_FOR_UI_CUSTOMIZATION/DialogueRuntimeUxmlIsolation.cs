@@ -26,7 +26,9 @@ public static class DialogueRuntimeUxmlIsolation
 
     static void OnPlayModeStateChanged(PlayModeStateChange state)
     {
-        if (state != PlayModeStateChange.ExitedPlayMode) return;
+        // ExitingPlayMode fires while the play-mode objects still exist, so the
+        // engines can still be found and their state cleared.
+        if (state != PlayModeStateChange.ExitingPlayMode) return;
 
         DiscardRuntimeUxmlCopy();
         ClearDialogueUiStates();
