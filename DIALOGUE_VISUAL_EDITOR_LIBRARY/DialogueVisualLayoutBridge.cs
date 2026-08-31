@@ -111,6 +111,16 @@ public static class DialogueVisualLayoutBridge
         // make sure the portrait slot hosting it is not switched off.
         engine.showPortrait = true;
 
+        // Name panel without an image panel: the runtime UXML still contains
+        // the Outside portrait structure (carrying the name element at the
+        // name-panel rect), so the engine must target that placement.
+        if (FindFirstComponent<DialogueImagePanelDefinition>(asset) == null)
+        {
+            engine.portraitPlacement = PortraitPlacement.Outside;
+            engine.portraitDisplayType = PortraitDisplayType.Icon;
+            engine.showPortraitWhenEmpty = false;
+        }
+
         if (name.TextStyle != null)
         {
             engine.nameFontSize = Mathf.RoundToInt(Mathf.Clamp(name.TextStyle.FontSize, 8f, 64f));

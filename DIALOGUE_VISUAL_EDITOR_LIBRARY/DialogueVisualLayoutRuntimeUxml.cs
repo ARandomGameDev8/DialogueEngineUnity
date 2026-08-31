@@ -42,25 +42,51 @@ public static class DialogueVisualLayoutRuntimeUxml
         DialogueComponentDefinition liveName = FindFirstComponent<DialogueNamePanelDefinition>(asset);
         DialogueImagePanelDefinition liveImage = FindFirstComponent<DialogueImagePanelDefinition>(asset);
 
-        // ── Live portrait structures (children of Root; px relative to canvas) ──
+        // ── Main dialogue box at its resolved rect ─────────────────────────────
+        Rect box = resolved.MainPanelRect;
+
+        // ── Live portrait geometry (with sensible fallbacks) ───────────────────
+        Rect imageRect = liveImage != null ? FindComponentRect(resolved, asset, liveImage) : Rect.zero;
+        Rect nameRect = liveName != null ? FindComponentRect(resolved, asset, liveName) : Rect.zero;
+
+        // A name panel that is not currently resolved (e.g. inside an attached
+        // area auto-hidden by the main-panel anchor) must still show a name:
+        // fall back to a nameplate just above the box.
+        if (liveName != null && (nameRect.width < 1f || nameRect.height < 1f))
+            nameRect = new Rect(box.x + 8f, box.y - 30f, Mathf.Min(box.width * 0.5f, 360f), 26f);
+        if (liveImage != null && (imageRect.width < 1f || imageRect.height < 1f))
+            imageRect = new Rect(box.x - 120f, box.y - 120f, 96f, 96f);
+        if (liveName == null && liveImage != null)
+            nameRect = DefaultIconNameRect(imageRect, engine);
+
+        // The name element carries the name component's own background/border.
+        string nameSurface = liveName != null
+            ? SurfaceStyle(liveName.Background, liveName.Border, liveName.Opacity)
+            : "";
+
+        var portraits = new StringBuilder();
         if (liveImage != null)
         {
-            Rect imageRect = FindComponentRect(resolved, asset, liveImage);
-            Rect nameRect = liveName != null ? FindComponentRect(resolved, asset, liveName) : DefaultIconNameRect(imageRect, engine);
             if (liveImage.Mode == DialogueImagePanelMode.CharacterFigure)
             {
-                body.Append(FigureStructure(liveImage, imageRect, nameRect, canvas, false));
-                body.Append(FigureStructure(liveImage, imageRect, nameRect, canvas, true));
+                portraits.Append(FigureStructure(liveImage, imageRect, nameRect, canvas, false, nameSurface));
+                portraits.Append(FigureStructure(liveImage, imageRect, nameRect, canvas, true, nameSurface));
             }
             else
             {
-                body.Append(IconStructure(liveImage, imageRect, nameRect, canvas, false));
-                body.Append(IconStructure(liveImage, imageRect, nameRect, canvas, true));
+                portraits.Append(IconStructure(liveImage, imageRect, nameRect, canvas, false, nameSurface));
+                portraits.Append(IconStructure(liveImage, imageRect, nameRect, canvas, true, nameSurface));
             }
         }
+        else if (liveName != null)
+        {
+            // Name panel without an image panel: still emit the portrait
+            // structure (its name element carries the speaker name; the image
+            // parts simply stay hidden because no portrait is ever loaded).
+            portraits.Append(IconStructure(null, nameRect, nameRect, canvas, false, nameSurface));
+            portraits.Append(IconStructure(null, nameRect, nameRect, canvas, true, nameSurface));
+        }
 
-        // ── Main dialogue box at its resolved rect ─────────────────────────────
-        Rect box = resolved.MainPanelRect;
         var boxEl = new StringBuilder();
 
         // Exact surface styling (per-side borders, per-corner radii, colour,
@@ -168,6 +194,10 @@ public static class DialogueVisualLayoutRuntimeUxml
 
         body.Append($"<ui:VisualElement name=\"DialogueBox\" style=\"position: absolute; left: {Pct(box.x, canvas.x)}; top: {Pct(box.y, canvas.y)}; width: {Pct(box.width, canvas.x)}; height: {Pct(box.height, canvas.y)}; overflow: visible;\">\n{boxEl}</ui:VisualElement>\n");
 
+        // Portraits/names come AFTER the box in DOM order so they paint on top
+        // of it — a name panel inside or overlapping the box must stay visible.
+        body.Append(portraits);
+
         // ── Standard chrome the engine binds to ────────────────────────────────
         body.Append("<ui:VisualElement name=\"BorderLayer\" style=\"position: absolute; overflow: hidden; display: none; picking-mode: Ignore;\" />\n");
         body.Append(HistoryAndSettingsXml());
@@ -197,7 +227,7 @@ public static class DialogueVisualLayoutRuntimeUxml
 
     // ─── Portraits ─────────────────────────────────────────────────────────────
     static string IconStructure(DialogueImagePanelDefinition def,
-        Rect imageRect, Rect nameRect, Vector2 canvas, bool right)
+        Rect imageRect, Rect nameRect, Vector2 canvas, bool right, string nameSurface)
     {
         string side = right ? "Right" : "Left";
         Rect rect = right ? Mirror(imageRect, canvas) : imageRect;
@@ -212,13 +242,13 @@ $@"<ui:VisualElement name=""Outside{side}Wrapper"" style=""position: absolute; l
       <ui:VisualElement name=""PortraitBorderOverlayOutside{side}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; display: none;"" />
     </ui:VisualElement>
   </ui:VisualElement>
-  <ui:VisualElement name=""NameOutside{side}"" style=""position: absolute; left: {nRect.x:0.#}px; top: {nRect.y:0.#}px; width: {nRect.width:0.#}px; height: {nRect.height:0.#}px; justify-content: center;"" />
+  <ui:VisualElement name=""NameOutside{side}"" style=""position: absolute; left: {nRect.x:0.#}px; top: {nRect.y:0.#}px; width: {nRect.width:0.#}px; height: {nRect.height:0.#}px; justify-content: center; overflow: hidden; {nameSurface}"" />
 </ui:VisualElement>
 ";
     }
 
     static string FigureStructure(DialogueImagePanelDefinition def,
-        Rect imageRect, Rect nameRect, Vector2 canvas, bool right)
+        Rect imageRect, Rect nameRect, Vector2 canvas, bool right, string nameSurface)
     {
         string side = right ? "Right" : "Left";
         Rect rect = right ? Mirror(imageRect, canvas) : imageRect;
@@ -243,7 +273,7 @@ $@"<ui:VisualElement name=""CharacterPanel{side}Wrapper"" style=""position: abso
       </ui:VisualElement>
     </ui:VisualElement>
   </ui:VisualElement>
-  <ui:VisualElement name=""CharacterNamePanel{side}"" style=""position: absolute; left: {nRect.x:0.#}px; top: {nRect.y:0.#}px; width: {nRect.width:0.#}px; height: {nRect.height:0.#}px; overflow: hidden;"">
+  <ui:VisualElement name=""CharacterNamePanel{side}"" style=""position: absolute; left: {nRect.x:0.#}px; top: {nRect.y:0.#}px; width: {nRect.width:0.#}px; height: {nRect.height:0.#}px; overflow: hidden; {nameSurface}"">
     <ui:VisualElement name=""NameChar{side}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; justify-content: center;"" />
     <ui:VisualElement name=""CharacterNameBorderOverlay{side}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; display: none;"" />
   </ui:VisualElement>
@@ -398,6 +428,8 @@ $@"<ui:Button name=""ToolbarToggle"" class=""dlg-toolbar-button"" text=""Menu"" 
     /// <summary>Frame styling for icon / figure portraits, shape-aware.</summary>
     static string FrameStyle(DialogueImagePanelDefinition def)
     {
+        if (def == null)
+            return " overflow: hidden; border-width: 0; border-radius: 0;";
         DialogueBorderStyle border = def.Border;
         float tl = 0f, tr = 0f, bl = 0f, br = 0f;
         bool hasBorder = border != null && border.Enabled;
