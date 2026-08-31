@@ -169,7 +169,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
         GUILayout.Label("Palette", EditorStyles.boldLabel);
         EditorGUILayout.HelpBox(
-            "Keep the current visual workflow: Move Root now drags the current selection while keeping it inside its parent container, the main panel still auto-updates its anchor when moved, Scale Root symmetrically scales only the main panel, Width/Height/Size resize the current selection, and attached areas on the same edge as the main-panel anchor are auto-hidden until that anchor changes.",
+            "Keep the current visual workflow: Move Root drags the current selection while keeping it inside its parent container, the main panel still auto-updates its anchor when moved, attached areas stay locked outside the main panel and only slide along their side while Gap From Main Panel controls their distance, Scale Root symmetrically scales only the main panel, Width/Height/Size resize the current selection, and attached areas on the same edge as the main-panel anchor are auto-hidden until that anchor changes.",
             MessageType.None);
 
         EditorGUILayout.BeginHorizontal();
@@ -835,11 +835,14 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             EditorGUILayout.HelpBox(
                 "This attached area is currently auto-hidden because the main panel is anchored to the same screen edge. Change the main-panel anchor and it will reappear automatically.",
                 MessageType.Warning);
+        EditorGUILayout.HelpBox(
+            "Attached areas always stay outside the main panel. Use Gap From Main Panel for the distance away from the main panel, and use the slide field or Move Root tool to slide them along their current side without crossing into the main panel.",
+            MessageType.None);
         area.DisplayName = EditorGUILayout.TextField("Display Name", area.DisplayName);
         area.Enabled = EditorGUILayout.Toggle("Enabled", area.Enabled);
         DialogueVisualEditorUtility.SetAreaEnabled(layoutAsset, selection.AreaKind, area.Enabled);
-        area.GapFromMainPanel = EditorGUILayout.FloatField("Gap From Main Panel", area.GapFromMainPanel);
-        area.Offset = EditorGUILayout.Vector2Field("Offset", area.Offset);
+        area.GapFromMainPanel = Mathf.Max(0f, EditorGUILayout.FloatField("Gap From Main Panel", area.GapFromMainPanel));
+        DrawAreaSlideOffsetField(area);
         DrawSizeField("Width", area.Width);
         DrawSizeField("Height", area.Height);
         int oldPartition = area.PartitionLevel;
@@ -1495,16 +1498,97 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     void ApplyAttachedAreaRect(Rect targetRect)
     {
         DialogueAttachedAreaDefinition area = DialogueVisualEditorUtility.GetArea(layoutAsset, selection.AreaKind);
+        if (area == null || resolved == null)
+            return;
+
+        float gap = Mathf.Max(0f, area.GapFromMainPanel);
+        bool horizontal = area.Side == DialogueAttachedAreaSide.Top ||
+                          area.Side == DialogueAttachedAreaSide.Bottom;
+        float maxWidth = horizontal
+            ? resolved.CanvasRect.width
+            : Mathf.Max(1f, GetAvailableAttachedAreaSpace(area.Side, resolved.MainPanelRect, resolved.CanvasRect, gap));
+        float maxHeight = horizontal
+            ? Mathf.Max(1f, GetAvailableAttachedAreaSpace(area.Side, resolved.MainPanelRect, resolved.CanvasRect, gap))
+            : resolved.CanvasRect.height;
+
+        float clampedWidth = Mathf.Clamp(targetRect.width, 1f, maxWidth);
+        float clampedHeight = Mathf.Clamp(targetRect.height, 1f, maxHeight);
+        SetSizeAsPixels(area.Width, clampedWidth, maxWidth);
+        SetSizeAsPixels(area.Height, clampedHeight, maxHeight);
+
+        Rect baseRect = GetAttachedAreaBaseRect(area.Side, resolved.MainPanelRect,
+            clampedWidth, clampedHeight, gap);
+
+        if (horizontal)
+        {
+            float desiredX = Mathf.Clamp(targetRect.x, resolved.CanvasRect.xMin,
+                resolved.CanvasRect.xMax - clampedWidth);
+            area.Offset.x = desiredX - baseRect.x;
+            area.Offset.y = 0f;
+        }
+        else
+        {
+            float desiredY = Mathf.Clamp(targetRect.y, resolved.CanvasRect.yMin,
+                resolved.CanvasRect.yMax - clampedHeight);
+            area.Offset.y = desiredY - baseRect.y;
+            area.Offset.x = 0f;
+        }
+    }
+
+    static float GetAvailableAttachedAreaSpace(DialogueAttachedAreaSide side,
+        Rect mainRect, Rect canvasRect, float gap)
+    {
+        switch (side)
+        {
+            case DialogueAttachedAreaSide.Top:
+                return mainRect.yMin - canvasRect.yMin - gap;
+            case DialogueAttachedAreaSide.Bottom:
+                return canvasRect.yMax - mainRect.yMax - gap;
+            case DialogueAttachedAreaSide.Left:
+                return mainRect.xMin - canvasRect.xMin - gap;
+            default:
+                return canvasRect.xMax - mainRect.xMax - gap;
+        }
+    }
+
+    static Rect GetAttachedAreaBaseRect(DialogueAttachedAreaSide side,
+        Rect mainRect, float width, float height, float gap)
+    {
+        switch (side)
+        {
+            case DialogueAttachedAreaSide.Top:
+                return new Rect(mainRect.center.x - width * 0.5f,
+                    mainRect.yMin - gap - height, width, height);
+            case DialogueAttachedAreaSide.Bottom:
+                return new Rect(mainRect.center.x - width * 0.5f,
+                    mainRect.yMax + gap, width, height);
+            case DialogueAttachedAreaSide.Left:
+                return new Rect(mainRect.xMin - gap - width,
+                    mainRect.center.y - height * 0.5f, width, height);
+            default:
+                return new Rect(mainRect.xMax + gap,
+                    mainRect.center.y - height * 0.5f, width, height);
+        }
+    }
+
+    void DrawAreaSlideOffsetField(DialogueAttachedAreaDefinition area)
+    {
         if (area == null)
             return;
 
-        ResolvedDialogueArea resolvedArea = FindAreaByKind(resolved, selection.AreaKind);
-        Vector2 currentPosition = resolvedArea != null ? resolvedArea.Rect.position : targetRect.position;
-
-        targetRect = ClampRectInside(targetRect, resolved.CanvasRect);
-        SetSizeAsPixels(area.Width, targetRect.width, resolved.CanvasRect.width);
-        SetSizeAsPixels(area.Height, targetRect.height, resolved.CanvasRect.height);
-        area.Offset += targetRect.position - currentPosition;
+        switch (area.Side)
+        {
+            case DialogueAttachedAreaSide.Top:
+            case DialogueAttachedAreaSide.Bottom:
+                area.Offset.x = EditorGUILayout.FloatField("Horizontal Slide", area.Offset.x);
+                area.Offset.y = 0f;
+                break;
+            case DialogueAttachedAreaSide.Left:
+            case DialogueAttachedAreaSide.Right:
+                area.Offset.y = EditorGUILayout.FloatField("Vertical Slide", area.Offset.y);
+                area.Offset.x = 0f;
+                break;
+        }
     }
 
     void ApplySlotRect(Rect targetRect)

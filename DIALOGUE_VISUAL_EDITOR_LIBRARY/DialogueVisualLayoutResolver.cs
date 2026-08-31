@@ -205,49 +205,32 @@ public static class DialogueVisualLayoutResolver
     {
         if (def == null || !def.Enabled) return;
 
-        float widthReference =
-            (def.Side == DialogueAttachedAreaSide.Top || def.Side == DialogueAttachedAreaSide.Bottom)
-                ? mainRect.width : canvasRect.width;
-        float heightReference =
-            (def.Side == DialogueAttachedAreaSide.Left || def.Side == DialogueAttachedAreaSide.Right)
-                ? mainRect.height : canvasRect.height;
+        bool horizontal = IsHorizontalSide(def.Side);
+        float widthReference = horizontal ? mainRect.width : canvasRect.width;
+        float heightReference = horizontal ? canvasRect.height : mainRect.height;
 
         float width = ResolveSize(def.Width, widthReference,
-            def.Side == DialogueAttachedAreaSide.Left || def.Side == DialogueAttachedAreaSide.Right
-                ? 180f : mainRect.width);
+            horizontal ? mainRect.width : 180f);
         float height = ResolveSize(def.Height, heightReference,
-            def.Side == DialogueAttachedAreaSide.Top || def.Side == DialogueAttachedAreaSide.Bottom
-                ? 100f : mainRect.height);
+            horizontal ? 100f : mainRect.height);
         int slotCount = GetPartitionSlotCount(def.PartitionLevel);
-        bool horizontal = def.Side == DialogueAttachedAreaSide.Top ||
-                          def.Side == DialogueAttachedAreaSide.Bottom;
         if (slotCount > 1 && HasPartitionedSlotOverrides(def.Slots, horizontal, slotCount))
             ResolvePartitionedParentSize(def.Slots, horizontal, slotCount, def.InterSlotSpacing,
                 width, height, out width, out height);
 
-        Rect areaRect = new Rect(mainRect.xMin, mainRect.yMin, width, height);
-        switch (def.Side)
-        {
-            case DialogueAttachedAreaSide.Top:
-                areaRect.x = mainRect.center.x - width * 0.5f;
-                areaRect.y = mainRect.yMin - def.GapFromMainPanel - height;
-                break;
-            case DialogueAttachedAreaSide.Bottom:
-                areaRect.x = mainRect.center.x - width * 0.5f;
-                areaRect.y = mainRect.yMax + def.GapFromMainPanel;
-                break;
-            case DialogueAttachedAreaSide.Left:
-                areaRect.x = mainRect.xMin - def.GapFromMainPanel - width;
-                areaRect.y = mainRect.center.y - height * 0.5f;
-                break;
-            case DialogueAttachedAreaSide.Right:
-                areaRect.x = mainRect.xMax + def.GapFromMainPanel;
-                areaRect.y = mainRect.center.y - height * 0.5f;
-                break;
-        }
+        float gap = Mathf.Max(0f, def.GapFromMainPanel);
+        float maxWidth = horizontal
+            ? canvasRect.width
+            : Mathf.Max(1f, GetAvailableSideSpace(def.Side, mainRect, canvasRect, gap));
+        float maxHeight = horizontal
+            ? Mathf.Max(1f, GetAvailableSideSpace(def.Side, mainRect, canvasRect, gap))
+            : canvasRect.height;
 
-        areaRect.position += def.Offset;
-        areaRect = ClampRectInside(areaRect, canvasRect);
+        width = Mathf.Clamp(width, 1f, maxWidth);
+        height = Mathf.Clamp(height, 1f, maxHeight);
+
+        Rect areaRect = GetAttachedAreaBaseRect(def.Side, mainRect, width, height, gap);
+        ApplyAttachedAreaSlideOffset(def.Side, ref areaRect, def.Offset, canvasRect);
 
         ResolvedDialogueAreaKind kind = ToAreaKind(def.Side);
         resolved.Areas.Add(new ResolvedDialogueArea
@@ -520,6 +503,74 @@ public static class DialogueVisualLayoutResolver
             case DialogueAttachedAreaSide.Left: return ResolvedDialogueAreaKind.Left;
             default: return ResolvedDialogueAreaKind.Right;
         }
+    }
+
+    static bool IsHorizontalSide(DialogueAttachedAreaSide side)
+    {
+        return side == DialogueAttachedAreaSide.Top ||
+               side == DialogueAttachedAreaSide.Bottom;
+    }
+
+    static float GetAvailableSideSpace(DialogueAttachedAreaSide side,
+        Rect mainRect, Rect canvasRect, float gap)
+    {
+        switch (side)
+        {
+            case DialogueAttachedAreaSide.Top:
+                return mainRect.yMin - canvasRect.yMin - gap;
+            case DialogueAttachedAreaSide.Bottom:
+                return canvasRect.yMax - mainRect.yMax - gap;
+            case DialogueAttachedAreaSide.Left:
+                return mainRect.xMin - canvasRect.xMin - gap;
+            default:
+                return canvasRect.xMax - mainRect.xMax - gap;
+        }
+    }
+
+    static Rect GetAttachedAreaBaseRect(DialogueAttachedAreaSide side,
+        Rect mainRect, float width, float height, float gap)
+    {
+        switch (side)
+        {
+            case DialogueAttachedAreaSide.Top:
+                return new Rect(
+                    mainRect.center.x - width * 0.5f,
+                    mainRect.yMin - gap - height,
+                    width,
+                    height);
+            case DialogueAttachedAreaSide.Bottom:
+                return new Rect(
+                    mainRect.center.x - width * 0.5f,
+                    mainRect.yMax + gap,
+                    width,
+                    height);
+            case DialogueAttachedAreaSide.Left:
+                return new Rect(
+                    mainRect.xMin - gap - width,
+                    mainRect.center.y - height * 0.5f,
+                    width,
+                    height);
+            default:
+                return new Rect(
+                    mainRect.xMax + gap,
+                    mainRect.center.y - height * 0.5f,
+                    width,
+                    height);
+        }
+    }
+
+    static void ApplyAttachedAreaSlideOffset(DialogueAttachedAreaSide side,
+        ref Rect rect, Vector2 offset, Rect canvasRect)
+    {
+        if (IsHorizontalSide(side))
+        {
+            rect.x += offset.x;
+            rect.x = Mathf.Clamp(rect.x, canvasRect.xMin, canvasRect.xMax - rect.width);
+            return;
+        }
+
+        rect.y += offset.y;
+        rect.y = Mathf.Clamp(rect.y, canvasRect.yMin, canvasRect.yMax - rect.height);
     }
 
     static bool ShouldResolveAttachedArea(DialogueLayoutAsset asset,
