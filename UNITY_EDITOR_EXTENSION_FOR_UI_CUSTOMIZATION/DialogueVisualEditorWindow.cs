@@ -544,12 +544,12 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 break;
 
             case EditTool.Width:
-                if (GetLeftEdgeHandle(selectedRect, size).Contains(mouse))
+                if (GetLeftEdgeDragZone(selectedRect, size).Contains(mouse))
                 {
                     BeginSizedDrag(DragMode.ResizeWidthLeft, selectedRect, GetSelectedParentRect(), "Adjust Width");
                     return true;
                 }
-                if (GetRightEdgeHandle(selectedRect, size).Contains(mouse))
+                if (GetRightEdgeDragZone(selectedRect, size).Contains(mouse))
                 {
                     BeginSizedDrag(DragMode.ResizeWidthRight, selectedRect, GetSelectedParentRect(), "Adjust Width");
                     return true;
@@ -557,12 +557,12 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 break;
 
             case EditTool.Height:
-                if (GetTopEdgeHandle(selectedRect, size).Contains(mouse))
+                if (GetTopEdgeDragZone(selectedRect, size).Contains(mouse))
                 {
                     BeginSizedDrag(DragMode.ResizeHeightTop, selectedRect, GetSelectedParentRect(), "Adjust Height");
                     return true;
                 }
-                if (GetBottomEdgeHandle(selectedRect, size).Contains(mouse))
+                if (GetBottomEdgeDragZone(selectedRect, size).Contains(mouse))
                 {
                     BeginSizedDrag(DragMode.ResizeHeightBottom, selectedRect, GetSelectedParentRect(), "Adjust Height");
                     return true;
@@ -1521,18 +1521,41 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
         if (horizontal)
         {
-            float desiredX = Mathf.Clamp(targetRect.x, resolved.CanvasRect.xMin,
-                resolved.CanvasRect.xMax - clampedWidth);
-            area.Offset.x = desiredX - baseRect.x;
+            float currentHorizontalSlide = area.Offset.x;
+            switch (dragMode)
+            {
+                case DragMode.MoveSelection:
+                case DragMode.ResizeWidthLeft:
+                case DragMode.ResizeWidthRight:
+                case DragMode.ResizeSymmetric:
+                    float desiredX = Mathf.Clamp(targetRect.x, resolved.CanvasRect.xMin,
+                        resolved.CanvasRect.xMax - clampedWidth);
+                    area.Offset.x = desiredX - baseRect.x;
+                    break;
+                default:
+                    area.Offset.x = currentHorizontalSlide;
+                    break;
+            }
             area.Offset.y = 0f;
+            return;
         }
-        else
+
+        float currentVerticalSlide = area.Offset.y;
+        switch (dragMode)
         {
-            float desiredY = Mathf.Clamp(targetRect.y, resolved.CanvasRect.yMin,
-                resolved.CanvasRect.yMax - clampedHeight);
-            area.Offset.y = desiredY - baseRect.y;
-            area.Offset.x = 0f;
+            case DragMode.MoveSelection:
+            case DragMode.ResizeHeightTop:
+            case DragMode.ResizeHeightBottom:
+            case DragMode.ResizeSymmetric:
+                float desiredY = Mathf.Clamp(targetRect.y, resolved.CanvasRect.yMin,
+                    resolved.CanvasRect.yMax - clampedHeight);
+                area.Offset.y = desiredY - baseRect.y;
+                break;
+            default:
+                area.Offset.y = currentVerticalSlide;
+                break;
         }
+        area.Offset.x = 0f;
     }
 
     static float GetAvailableAttachedAreaSpace(DialogueAttachedAreaSide side,
@@ -1830,6 +1853,34 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     static Rect GetBottomEdgeHandle(Rect rect, float size)
     {
         return new Rect(rect.center.x - size * 0.5f, rect.yMax - size * 0.5f, size, size);
+    }
+
+    static Rect GetLeftEdgeDragZone(Rect rect, float size)
+    {
+        float thickness = Mathf.Max(size, 18f);
+        return new Rect(rect.xMin - thickness * 0.5f, rect.yMin - size,
+            thickness, rect.height + size * 2f);
+    }
+
+    static Rect GetRightEdgeDragZone(Rect rect, float size)
+    {
+        float thickness = Mathf.Max(size, 18f);
+        return new Rect(rect.xMax - thickness * 0.5f, rect.yMin - size,
+            thickness, rect.height + size * 2f);
+    }
+
+    static Rect GetTopEdgeDragZone(Rect rect, float size)
+    {
+        float thickness = Mathf.Max(size, 18f);
+        return new Rect(rect.xMin - size, rect.yMin - thickness * 0.5f,
+            rect.width + size * 2f, thickness);
+    }
+
+    static Rect GetBottomEdgeDragZone(Rect rect, float size)
+    {
+        float thickness = Mathf.Max(size, 18f);
+        return new Rect(rect.xMin - size, rect.yMax - thickness * 0.5f,
+            rect.width + size * 2f, thickness);
     }
 
     static Rect GetTopLeftCornerHandle(Rect rect, float size)
