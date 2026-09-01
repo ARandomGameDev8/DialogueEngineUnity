@@ -833,6 +833,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     VisualElement choicePanelRoot;
     readonly List<VisualElement> visualChoiceButtons = new List<VisualElement>();
     readonly List<Label> visualChoiceButtonTexts = new List<Label>();
+    bool visualFrameHooked;
 
     VisualElement toolbarPanel;
     VisualElement historyPanel;
@@ -1098,6 +1099,18 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                     OnOptionSelected(choiceOptions[index]);
                 });
             }
+        }
+
+        // Visual-layout runtime: the whole tree lives in a reference-resolution
+        // frame (like the editor canvas). Re-fit it whenever the game view
+        // changes size so the layout always tracks the view as one unit.
+        if (!visualFrameHooked)
+        {
+            visualFrameHooked = true;
+            docRoot.RegisterCallback<GeometryChangedEvent>(_ =>
+            {
+                if (visualLayoutRuntimeActive) ApplyVisualReferenceFrame();
+            });
         }
 
         // Portrait wrappers
@@ -4193,6 +4206,49 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     // ══════════════════════════════════════════════════════════════════════════
     // RUNTIME LAYOUT — sizes, image layers, shapes, positions
     // ══════════════════════════════════════════════════════════════════════════
+    /// <summary>
+    /// Fits the ENTIRE visual layout into the live game view as one unit, the
+    /// same way the visual editor canvas frames the reference resolution: the
+    /// RowContainer becomes a reference-resolution frame (reference px), scaled
+    /// uniformly by min(view/reference) and centered. Every element — main
+    /// panel, attached areas, portraits, choice panel — keeps its exact design
+    /// coordinates and moves/scales with the game view, never pinned to raw
+    /// screen pixels.
+    /// </summary>
+    void ApplyVisualReferenceFrame()
+    {
+        if (!visualLayoutRuntimeActive || document == null || document.rootVisualElement == null) return;
+        VisualElement root = document.rootVisualElement;
+        if (rowContainer == null || panelSettings == null) return;
+
+        float refW = panelSettings.referenceResolution.x;
+        float refH = panelSettings.referenceResolution.y;
+        if (refW < 8f || refH < 8f) return;
+
+        float viewW = root.resolvedStyle.width;
+        float viewH = root.resolvedStyle.height;
+        if (float.IsNaN(viewW) || float.IsNaN(viewH) || viewW < 8f || viewH < 8f)
+        {
+            root.schedule.Execute(ApplyVisualReferenceFrame).StartingIn(50);
+            return;
+        }
+
+        root.style.justifyContent = Justify.Center;
+        root.style.alignItems = Align.Center;
+
+        rowContainer.style.position = Position.Relative;
+        rowContainer.style.left = 0f; rowContainer.style.top = 0f;
+        rowContainer.style.right = StyleKeyword.Null; rowContainer.style.bottom = StyleKeyword.Null;
+        rowContainer.style.width = refW;
+        rowContainer.style.height = refH;
+        rowContainer.style.translate = new Translate(0f, 0f, 0f);
+        rowContainer.style.justifyContent = StyleKeyword.Null;
+        rowContainer.style.alignItems = StyleKeyword.Null;
+
+        float scale = Mathf.Min(viewW / refW, viewH / refH);
+        rowContainer.style.scale = new Scale(new Vector3(scale, scale, 1f));
+    }
+
     void ApplyVisualRuntimeTextAnchoring()
     {
         if (textScroll != null)
@@ -4223,6 +4279,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             // The visual-layout runtime UXML already carries the exact panel
             // geometry and styling from the editor; restyle only the parts the
             // generator does not own (text anchoring, hint, toolbar).
+            ApplyVisualReferenceFrame();
             ApplyVisualRuntimeTextAnchoring();
             if (advanceHintLabel != null)
             {
