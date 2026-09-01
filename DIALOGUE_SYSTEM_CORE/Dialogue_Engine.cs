@@ -850,6 +850,21 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     string shownText = "";
 
     // Dual portrait slot ownership
+    // ─── Visual-layout runtime cast slots ────────────────────────────────────
+    // One per image/name panel pair in the editor layout, INDEXED in layout
+    // order: the k-th speaker (order of first appearance) owns the k-th pair.
+    // Current speaker at activePortraitOpacity; interrupted speakers greyed
+    // (inactivePortraitOpacity + inactiveTintColour, both adjustable).
+    public class VisualRuntimeSlot
+    {
+        public VisualElement wrapper, panel, frame, portrait, name;
+        public bool hidePanelWhenEmpty;
+        public string owner;
+        public float opacity = 1f;
+        public IVisualElementScheduledItem tween;
+    }
+    List<VisualRuntimeSlot> visualRuntimeSlots = new List<VisualRuntimeSlot>();
+
     string[] slotOwner = new string[2] { null, null };
 
     // History — array-backed list for O(1) indexed access
@@ -1030,6 +1045,26 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         dialogueTextLabel  = docRoot.Q<Label>("DialogueText");
         advanceHintLabel   = docRoot.Q<Label>("AdvanceHint");
         choiceContainer    = docRoot.Q("ChoiceContainer");
+
+        // Visual-layout runtime cast slots: VisualSlot{i}Wrapper /
+        // VisualImagePanel{i} / VisualPortrait{i} / VisualName{i}, built by the
+        // visual editor — one indexed pair per image/name panel.
+        visualRuntimeSlots = new List<VisualRuntimeSlot>();
+        for (int i = 0; ; i++)
+        {
+            VisualElement visualWrapper = docRoot.Q("VisualSlot" + i + "Wrapper");
+            if (visualWrapper == null) break;
+            VisualElement visualPanel = docRoot.Q("VisualImagePanel" + i);
+            visualRuntimeSlots.Add(new VisualRuntimeSlot
+            {
+                wrapper  = visualWrapper,
+                panel    = visualPanel,
+                frame    = docRoot.Q("VisualPortraitFrame" + i),
+                portrait = docRoot.Q("VisualPortrait" + i),
+                name     = docRoot.Q("VisualName" + i),
+                hidePanelWhenEmpty = visualPanel != null && visualPanel.ClassListContains("dlg-fig-hide")
+            });
+        }
 
         // Portrait wrappers
         insideLeftWrapper  = docRoot.Q("InsideLeftWrapper");
@@ -1917,6 +1952,16 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             }
         }
         ShowPortraitWrappers();
+
+        // Visual-layout runtime: rebuild the indexed cast slots from the
+        // restored dual-slot state, then grey everyone but the current speaker.
+        if (visualLayoutRuntimeActive && visualRuntimeSlots.Count > 0)
+        {
+            for (int i = 0; i < 2; i++)
+                if (slotTokens[i] != null)
+                    UpdateVisualRuntimeSlots(slotTokens[i], applyOpacity: false);
+            ApplyVisualSlotOpacities(currentTextName);
+        }
 
         isOpen = true;
         isSuccess = false;
@@ -3065,6 +3110,16 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     // ─── Dual portrait slot management ────────────────────────────────────────
     void UpdatePortraitSlots(CharacterToken ct)
     {
+        // Visual-layout runtime: the layout's own panels ARE the cast slots —
+        // the k-th speaker owns the k-th image+name panel pair. This replaces
+        // the classic single/dual model entirely (the layout is the explicit
+        // opt-in, so engine portrait toggles do not veto it).
+        if (visualLayoutRuntimeActive && visualRuntimeSlots.Count > 0)
+        {
+            UpdateVisualRuntimeSlots(ct);
+            return;
+        }
+
         if (!showPortrait || portraitMode == PortraitMode.None)
         {
             HideAllPortraitWrappers();
@@ -3118,6 +3173,112 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             var   slot   = GetSlot(i == 1);
             SetSlotOpacity(slot.portrait, slot.name, active, i);
         }
+    }
+
+    // ─── Visual-layout runtime cast slots ─────────────────────────────────
+    void UpdateVisualRuntimeSlots(CharacterToken ct, bool applyOpacity = true)
+    {
+        if (visualRuntimeSlots.Count == 0) return;
+        string speaker = ct.Speaker;
+
+        int slotIndex = -1;
+        if (!string.IsNullOrEmpty(speaker))
+            for (int i = 0; i < visualRuntimeSlots.Count; i++)
+                if (visualRuntimeSlots[i].owner == speaker) { slotIndex = i; break; }
+        if (slotIndex == -1)
+        {
+            // First appearance: take the next free panel. When the cast
+            // outgrows the layout, the newest speaker takes the last panel.
+            for (int i = 0; i < visualRuntimeSlots.Count; i++)
+                if (string.IsNullOrEmpty(visualRuntimeSlots[i].owner)) { slotIndex = i; break; }
+            if (slotIndex == -1) slotIndex = visualRuntimeSlots.Count - 1;
+            visualRuntimeSlots[slotIndex].owner = speaker;
+        }
+
+        VisualRuntimeSlot slot = visualRuntimeSlots[slotIndex];
+        SetVisualPortraitContent(slot, ct);
+        if (slot.name != null) RenderName(slot.name, speaker);
+
+        // Mirror the first two owners into the classic dual-slot state so
+        // save/resume of interrupted dialogues keeps working.
+        if (slotIndex < 2) { slotOwner[slotIndex] = speaker; slotTokens[slotIndex] = ct; }
+
+        if (applyOpacity) ApplyVisualSlotOpacities(speaker);
+    }
+
+    void ApplyVisualSlotOpacities(string currentSpeaker)
+    {
+        for (int i = 0; i < visualRuntimeSlots.Count; i++)
+        {
+            VisualRuntimeSlot v = visualRuntimeSlots[i];
+            if (v.wrapper == null) continue;
+            bool owned = !string.IsNullOrEmpty(v.owner);
+            v.wrapper.style.display = owned ? DisplayStyle.Flex : DisplayStyle.None;
+            if (owned) SetVisualSlotOpacity(v, v.owner == currentSpeaker);
+        }
+    }
+
+    void SetVisualSlotOpacity(VisualRuntimeSlot slot, bool active)
+    {
+        // Only the image and the name grey out — the panel/frame keep their
+        // exact layout paint. Smoothly animated, both levels adjustable.
+        float target = active ? activePortraitOpacity : inactivePortraitOpacity;
+        Color tint   = active ? Color.white : inactiveTintColour;
+        if (slot.tween != null) slot.tween.Pause();
+        float from = slot.opacity;
+        if (slot.portrait != null)
+            slot.portrait.style.unityBackgroundImageTintColor = new StyleColor(tint);
+        slot.tween = RunTween(0.22f, t =>
+        {
+            float v = Mathf.Lerp(from, target, t);
+            slot.opacity = v;
+            if (slot.portrait != null) slot.portrait.style.opacity = v;
+            if (slot.name     != null) slot.name.style.opacity     = v;
+        });
+    }
+
+    void SetVisualPortraitContent(VisualRuntimeSlot slot, CharacterToken ct)
+    {
+        if (slot.portrait == null) return;
+
+        // Every token starts from an empty visual slot — no image survives
+        // from the previous token. No invented placeholder either: a panel
+        // with no image simply stays empty (exact WYSIWYG).
+        slot.portrait.style.backgroundImage = new StyleBackground(StyleKeyword.None);
+
+        Sprite sprite = ResolveCharacterSprite(ct);
+        if (sprite != null)
+        {
+            slot.portrait.style.backgroundImage = new StyleBackground(sprite);
+            slot.portrait.style.display = DisplayStyle.Flex;
+            if (slot.frame != null) slot.frame.style.display = DisplayStyle.Flex;
+            if (slot.panel != null) slot.panel.style.display = DisplayStyle.Flex;
+        }
+        else
+        {
+            slot.portrait.style.display = DisplayStyle.None;
+            if (slot.frame != null) slot.frame.style.display = DisplayStyle.None;
+            // "Visible only when an image exists" figure panels hide fully.
+            if (slot.hidePanelWhenEmpty && slot.panel != null)
+                slot.panel.style.display = DisplayStyle.None;
+        }
+    }
+
+    Sprite ResolveCharacterSprite(CharacterToken ct)
+    {
+        if (ct == null || string.IsNullOrEmpty(ct.ImageSource)) return null;
+        if (ct.ImageIsUnresolved)
+        {
+            var entry = portraits.Find(pr => pr.key == ct.ImageSource);
+            if (entry != null)
+            {
+                if (entry.sprite != null) return entry.sprite;
+                if (!string.IsNullOrEmpty(entry.path) && File.Exists(entry.path))
+                    return GetFileSprite(entry.path);
+            }
+            return null;
+        }
+        return File.Exists(ct.ImageSource) ? GetFileSprite(ct.ImageSource) : null;
     }
 
     void ShowPortraitWrappers()
@@ -3180,6 +3341,29 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
 
     void ResetPortraitSlots()
     {
+        // Visual-layout runtime: clear the indexed cast slots — owners, paint
+        // and tweens only, NEVER their geometry (the layout owns the rects).
+        if (visualRuntimeSlots != null)
+        {
+            foreach (VisualRuntimeSlot v in visualRuntimeSlots)
+            {
+                if (v.tween != null) v.tween.Pause();
+                v.owner = null;
+                v.opacity = 1f;
+                if (v.wrapper  != null) v.wrapper.style.display  = DisplayStyle.None;
+                if (v.panel    != null) v.panel.style.display    = DisplayStyle.Flex;
+                if (v.frame    != null) v.frame.style.display    = DisplayStyle.Flex;
+                if (v.portrait != null)
+                {
+                    v.portrait.style.backgroundImage = new StyleBackground(StyleKeyword.None);
+                    v.portrait.style.unityBackgroundImageTintColor = new StyleColor(Color.white);
+                    v.portrait.style.opacity = 1f;
+                    v.portrait.style.display = DisplayStyle.None;
+                }
+                if (v.name != null) { v.name.Clear(); v.name.style.opacity = 1f; }
+            }
+        }
+
         slotOwner[0] = null;
         slotOwner[1] = null;
         slotTokens[0] = null;

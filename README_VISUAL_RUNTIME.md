@@ -118,7 +118,15 @@ never re-derives or approximates your layout at play time:
 4. While this mode is active the engine suppresses its own restyling passes
    (panel resize, portrait frame, name re-flow, character-panel decoration)
    so nothing overwrites the edited layout.
-5. **Tools/Dialogue/Open Visual Layout Preview** is a TRUE preview: it clones
+5. **Cast slots are indexed.** EVERY image panel and EVERY name panel in the
+   layout is live, ordered by layout position. The k-th speaker (order of
+   first appearance) owns the k-th name panel + the k-th image panel — 3
+   characters, 3 panels: character 2's name/figure never lands on panel 1.
+   The speaking character renders at full opacity; interrupted speakers stay
+   on their own panels greyed out (`Inactive Portrait Opacity` + tint on the
+   engine, both adjustable). Panels with no assigned speaker stay hidden, and
+   a figure panel marked *hide when empty* only appears once its image loads.
+6. **Tools/Dialogue/Open Visual Layout Preview** is a TRUE preview: it clones
    the exact same built UXML file with UI Toolkit at the Panel Settings
    reference resolution — what you see in that window is literally the tree
    Play instantiates.

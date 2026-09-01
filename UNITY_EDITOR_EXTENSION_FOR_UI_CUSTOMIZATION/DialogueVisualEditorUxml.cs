@@ -85,56 +85,35 @@ public static class DialogueVisualEditorUxml
         var uss = new StringBuilder();
 
         bool liveTextDone = false;
-        bool liveNameDone = false;
-        bool liveImageDone = false;
 
         DialogueComponentDefinition liveText = FindFirstComponent<DialogueTextPanelDefinition>(asset);
-        DialogueComponentDefinition liveName = FindFirstComponent<DialogueNamePanelDefinition>(asset);
-        DialogueImagePanelDefinition liveImage = FindFirstComponent<DialogueImagePanelDefinition>(asset);
+
+        // EVERY image panel and EVERY name panel is live — indexed in layout
+        // order. The k-th speaker (order of first appearance) owns the k-th
+        // panel pair: k-th image panel + k-th name panel. No mirrored
+        // Left/Right pair, no first-panel funnel — one structure per panel at
+        // that panel's exact resolved rect.
+        var imagePanels = new List<DialogueImagePanelDefinition>();
+        var namePanels  = new List<DialogueNamePanelDefinition>();
+        CollectComponents(asset, imagePanels);
+        CollectComponents(asset, namePanels);
+
+        var livePanels = new HashSet<DialogueComponentDefinition>();
+        for (int i = 0; i < imagePanels.Count; i++) livePanels.Add(imagePanels[i]);
+        for (int i = 0; i < namePanels.Count; i++) livePanels.Add(namePanels[i]);
 
         // ── Main dialogue box at its resolved rect ─────────────────────────────
         Rect box = resolved.MainPanelRect;
 
-        // ── Live portrait geometry (with sensible fallbacks) ───────────────────
-        Rect imageRect = liveImage != null ? FindComponentRect(resolved, asset, liveImage) : Rect.zero;
-        Rect nameRect = liveName != null ? FindComponentRect(resolved, asset, liveName) : Rect.zero;
-
-        // A name panel that is not currently resolved (e.g. inside an attached
-        // area auto-hidden by the main-panel anchor) must still show a name:
-        // fall back to a nameplate just above the box.
-        if (liveName != null && (nameRect.width < 1f || nameRect.height < 1f))
-            nameRect = new Rect(box.x + 8f, box.y - 30f, Mathf.Min(box.width * 0.5f, 360f), 26f);
-        if (liveImage != null && (imageRect.width < 1f || imageRect.height < 1f))
-            imageRect = new Rect(box.x - 120f, box.y - 120f, 96f, 96f);
-        if (liveName == null && liveImage != null)
-            nameRect = DefaultIconNameRect(imageRect, engine);
-
-        // The name element carries the name component's own background/border.
-        string nameSurface = liveName != null
-            ? SurfaceStyle(liveName.Background, liveName.Border, liveName.Opacity)
-            : "";
-
+        // ── Live cast slots: one per panel, indexed in layout order ───────────
         var portraits = new StringBuilder();
-        if (liveImage != null)
+        int panelCount = Mathf.Max(imagePanels.Count, namePanels.Count);
+        for (int i = 0; i < panelCount; i++)
         {
-            if (liveImage.Mode == DialogueImagePanelMode.CharacterFigure)
-            {
-                portraits.Append(FigureStructure(liveImage, imageRect, nameRect, false, nameSurface));
-                portraits.Append(FigureStructure(liveImage, imageRect, nameRect, true, nameSurface));
-            }
-            else
-            {
-                portraits.Append(IconStructure(liveImage, imageRect, nameRect, false, nameSurface));
-                portraits.Append(IconStructure(liveImage, imageRect, nameRect, true, nameSurface));
-            }
-        }
-        else if (liveName != null)
-        {
-            // Name panel without an image panel: still emit the portrait
-            // structure (its name element carries the speaker name; the image
-            // parts simply stay hidden because no portrait is ever loaded).
-            portraits.Append(IconStructure(null, nameRect, nameRect, false, nameSurface));
-            portraits.Append(IconStructure(null, nameRect, nameRect, true, nameSurface));
+            portraits.Append(VisualSlotStructure(resolved, asset,
+                i < imagePanels.Count ? imagePanels[i] : null,
+                i < namePanels.Count  ? namePanels[i]  : null,
+                namePanels.Count > 0, box, engine, i));
         }
 
         var boxEl = new StringBuilder();
@@ -201,17 +180,10 @@ public static class DialogueVisualEditorUxml
                                 continue;
                             }
 
-                            if (comp == liveName && !liveNameDone)
+                            if (livePanels.Contains(comp))
                             {
-                                liveNameDone = true;
-                                // Rendered inside the portrait structure instead.
-                                continue;
-                            }
-
-                            if (comp == liveImage && !liveImageDone)
-                            {
-                                liveImageDone = true;
-                                // Rendered inside the portrait structure instead.
+                                // Every image/name panel renders inside its own
+                                // indexed VisualSlot structure instead.
                                 continue;
                             }
 
@@ -287,63 +259,82 @@ public static class DialogueVisualEditorUxml
     }
 
     // ─── Portraits ─────────────────────────────────────────────────────────────
-    static string IconStructure(DialogueImagePanelDefinition def,
-        Rect imageRect, Rect nameRect, bool right, string nameSurface)
+    // ─── Live cast slot (indexed: one structure per panel) ────────────────────
+    static string VisualSlotStructure(ResolvedDialogueLayout resolved, DialogueLayoutAsset asset,
+        DialogueImagePanelDefinition img, DialogueNamePanelDefinition nm,
+        bool anyNamePanels, Rect box, Dialogue_Engine engine, int index)
     {
-        string side = right ? "Right" : "Left";
-        // EXACT placement: both speaker slots live at the component's own rect
-        // (no mirroring / no invented second position). The current speaker
-        // paints on top; the interrupted one stays greyed out underneath.
-        Rect rect = imageRect;
-        Rect nRect = nameRect;
+        Rect imageRect = img != null ? FindComponentRect(resolved, asset, img) : Rect.zero;
+        Rect nameRect  = nm  != null ? FindComponentRect(resolved, asset, nm)  : Rect.zero;
 
-        string frame = FrameStyle(def);
-        return
-$@"<ui:VisualElement name=""Outside{side}Wrapper"" style=""position: absolute; left: 0; top: 0; width: 0; height: 0; display: none;"">
-  <ui:VisualElement name=""PortraitHostOutside{side}"" style=""position: absolute; left: {rect.x:0.#}px; top: {rect.y:0.#}px; width: {rect.width:0.#}px; height: {rect.height:0.#}px;"">
-    <ui:VisualElement name=""PortraitFrameOutside{side}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0;{frame}"">
-      <ui:VisualElement name=""PortraitOutside{side}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; overflow: hidden; background-size: cover;"" />
-      <ui:VisualElement name=""PortraitBorderOverlayOutside{side}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; display: none;"" />
+        // A name panel that is not currently resolved (e.g. inside an attached
+        // area auto-hidden by the main-panel anchor) must still show a name:
+        // fall back to a nameplate just above the box.
+        if (nm != null && (nameRect.width < 1f || nameRect.height < 1f))
+            nameRect = new Rect(box.x + 8f, box.y - 30f, Mathf.Min(box.width * 0.5f, 360f), 26f);
+        if (img != null && (imageRect.width < 1f || imageRect.height < 1f))
+            imageRect = new Rect(box.x - 120f, box.y - 120f, 96f, 96f);
+        // Icon slot with no name panel anywhere in the layout: keep the classic
+        // nameplate above the image so speaker names never vanish.
+        if (nm == null && img != null && !anyNamePanels)
+            nameRect = DefaultIconNameRect(imageRect, engine);
+
+        bool figure = img != null && img.Mode == DialogueImagePanelMode.CharacterFigure;
+
+        string panelStyle;
+        string fill;
+        string hideClass = "";
+        if (figure)
+        {
+            // A figure that hides when empty paints nothing itself — the
+            // engine gates the whole panel on the loaded image (class marker).
+            panelStyle = img.HideWhenEmpty
+                ? "background-color: rgba(0,0,0,0); border-width: 0;"
+                : SurfaceStyle(img.Background, img.Border, img.Opacity);
+            if (img.HideWhenEmpty) hideClass = " class=\"dlg-fig-hide\"";
+            fill = img.FigureScaleMode == DialogueFigureScaleMode.Fill
+                ? "background-size: cover;" : "background-size: contain;";
+        }
+        else
+        {
+            panelStyle = "";
+            fill = "background-size: cover;";
+        }
+
+        string frame = img != null ? FrameStyle(img) : "";
+        string nameSurface = nm != null
+            ? SurfaceStyle(nm.Background, nm.Border, nm.Opacity)
+            : "";
+
+        var sb = new StringBuilder();
+        sb.Append($@"<ui:VisualElement name=""VisualSlot{index}Wrapper"" style=""position: absolute; left: 0; top: 0; width: 0; height: 0; display: none;"">
+");
+        if (img != null)
+        {
+            sb.Append($@"  <ui:VisualElement name=""VisualImagePanel{index}""{hideClass} style=""position: absolute; left: {imageRect.x:0.#}px; top: {imageRect.y:0.#}px; width: {imageRect.width:0.#}px; height: {imageRect.height:0.#}px; overflow: hidden;{Join(panelStyle)}"">
+    <ui:VisualElement name=""VisualPortraitFrame{index}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0;{Join(frame)}"">
+      <ui:VisualElement name=""VisualPortrait{index}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; overflow: hidden; {fill}"" />
     </ui:VisualElement>
   </ui:VisualElement>
-  <ui:VisualElement name=""NameOutside{side}"" style=""position: absolute; left: {nRect.x:0.#}px; top: {nRect.y:0.#}px; width: {nRect.width:0.#}px; height: {nRect.height:0.#}px; justify-content: center; overflow: hidden; {nameSurface}"" />
-</ui:VisualElement>
-";
+");
+        }
+        if (nm != null || (img != null && !anyNamePanels))
+        {
+            sb.Append($@"  <ui:VisualElement name=""VisualName{index}"" style=""position: absolute; left: {nameRect.x:0.#}px; top: {nameRect.y:0.#}px; width: {nameRect.width:0.#}px; height: {nameRect.height:0.#}px; justify-content: center; overflow: hidden;{Join(nameSurface)}"" />
+");
+        }
+        sb.Append("</ui:VisualElement>\n");
+        return sb.ToString();
     }
 
-    static string FigureStructure(DialogueImagePanelDefinition def,
-        Rect imageRect, Rect nameRect, bool right, string nameSurface)
+    /// <summary>Joins an inline style fragment into a style attribute: ensures
+    /// one leading space and a trailing semicolon (empty → empty).</summary>
+    static string Join(string fragment)
     {
-        string side = right ? "Right" : "Left";
-        // EXACT placement: both speaker slots live at the component's own rect.
-        Rect rect = imageRect;
-        Rect nRect = nameRect;
-
-        // A figure that hides when empty paints nothing itself — the engine
-        // gates the portrait's visibility on the loaded image.
-        string panelStyle = def.HideWhenEmpty
-            ? "background-color: rgba(0,0,0,0); border-width: 0;"
-            : SurfaceStyle(def.Background, def.Border, def.Opacity);
-        string fill = def.FigureScaleMode == DialogueFigureScaleMode.Fill
-            ? "background-size: cover;" : "background-size: contain;";
-
-        return
-$@"<ui:VisualElement name=""CharacterPanel{side}Wrapper"" style=""position: absolute; left: 0; top: 0; width: 0; height: 0; display: none;"">
-  <ui:VisualElement name=""CharacterFigurePanel{side}"" style=""position: absolute; left: 0; top: 0; width: 0; height: 0;"" />
-  <ui:VisualElement name=""CharacterImagePanel{side}"" style=""position: absolute; left: {rect.x:0.#}px; top: {rect.y:0.#}px; width: {rect.width:0.#}px; height: {rect.height:0.#}px; overflow: hidden; {panelStyle}"">
-    <ui:VisualElement name=""PortraitHostChar{side}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0;"">
-      <ui:VisualElement name=""PortraitFrameChar{side}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0;{FrameStyle(def)}"">
-        <ui:VisualElement name=""PortraitChar{side}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; overflow: hidden; {fill}"" />
-        <ui:VisualElement name=""PortraitBorderOverlayChar{side}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; display: none;"" />
-      </ui:VisualElement>
-    </ui:VisualElement>
-  </ui:VisualElement>
-  <ui:VisualElement name=""CharacterNamePanel{side}"" style=""position: absolute; left: {nRect.x:0.#}px; top: {nRect.y:0.#}px; width: {nRect.width:0.#}px; height: {nRect.height:0.#}px; overflow: hidden; {nameSurface}"">
-    <ui:VisualElement name=""NameChar{side}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; justify-content: center;"" />
-    <ui:VisualElement name=""CharacterNameBorderOverlay{side}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0; display: none;"" />
-  </ui:VisualElement>
-</ui:VisualElement>
-";
+        if (string.IsNullOrEmpty(fragment)) return "";
+        string t = fragment.Trim();
+        if (t.Length == 0) return "";
+        return " " + t + (t.EndsWith(";") ? "" : ";");
     }
 
     // ─── Static (non-live) components ──────────────────────────────────────────
@@ -602,6 +593,29 @@ $@"<ui:Button name=""ToolbarToggle"" class=""dlg-toolbar-button"" text=""Menu"" 
                 ? asset.MainPanel.InnerRegion.Slots : null;
         DialogueAttachedAreaDefinition area = GetArea(asset, kind);
         return area != null ? area.Slots : null;
+    }
+
+    static void CollectComponents<T>(DialogueLayoutAsset asset, List<T> sink) where T : DialogueComponentDefinition
+    {
+        if (asset == null) return;
+        CollectInSlots(asset.MainPanel != null && asset.MainPanel.InnerRegion != null
+            ? asset.MainPanel.InnerRegion.Slots : null, sink);
+        CollectInSlots(asset.TopArea != null ? asset.TopArea.Slots : null, sink);
+        CollectInSlots(asset.BottomArea != null ? asset.BottomArea.Slots : null, sink);
+        CollectInSlots(asset.LeftArea != null ? asset.LeftArea.Slots : null, sink);
+        CollectInSlots(asset.RightArea != null ? asset.RightArea.Slots : null, sink);
+    }
+
+    static void CollectInSlots<T>(List<DialogueSlotDefinition> slots, List<T> sink) where T : DialogueComponentDefinition
+    {
+        if (slots == null) return;
+        for (int i = 0; i < slots.Count; i++)
+        {
+            DialogueSlotDefinition slot = slots[i];
+            if (slot == null || slot.Components == null) continue;
+            for (int c = 0; c < slot.Components.Count; c++)
+                if (slot.Components[c] is T match) sink.Add(match);
+        }
     }
 
     static T FindFirstComponent<T>(DialogueLayoutAsset asset) where T : DialogueComponentDefinition
