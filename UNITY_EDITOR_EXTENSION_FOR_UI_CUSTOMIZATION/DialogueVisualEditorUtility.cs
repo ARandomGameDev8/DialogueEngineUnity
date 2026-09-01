@@ -66,6 +66,21 @@ public static class DialogueVisualEditorUtility
         if (kind == ResolvedDialogueAreaKind.ChoiceInner)
             return asset.ChoicePanel != null && asset.ChoicePanel.InnerRegion != null
                 ? asset.ChoicePanel.InnerRegion.Slots : null;
+        if (kind == ResolvedDialogueAreaKind.ChoiceGroup)
+            return asset.ChoiceGroups;
+        if (kind == ResolvedDialogueAreaKind.ChoiceLeaf)
+        {
+            var leaves = new List<DialogueSlotDefinition>();
+            List<DialogueSlotDefinition> groups = asset.ChoiceGroups;
+            if (groups != null)
+                for (int g = 0; g < groups.Count && g < 3; g++)
+                {
+                    if (groups[g] == null || groups[g].Children == null) continue;
+                    for (int l = 0; l < groups[g].Children.Count && l < 2; l++)
+                        leaves.Add(groups[g].Children[l]);
+                }
+            return leaves;
+        }
         DialogueAttachedAreaDefinition area = GetArea(asset, kind);
         return area != null ? area.Slots : null;
     }
@@ -73,9 +88,60 @@ public static class DialogueVisualEditorUtility
     public static DialogueSlotDefinition GetSlot(DialogueLayoutAsset asset,
         ResolvedDialogueAreaKind kind, int slotIndex)
     {
+        if (kind == ResolvedDialogueAreaKind.ChoiceLeaf)
+        {
+            List<DialogueSlotDefinition> groups = asset != null ? asset.ChoiceGroups : null;
+            int g = slotIndex / 2;
+            int l = slotIndex % 2;
+            if (groups == null || g < 0 || g >= groups.Count || groups[g] == null ||
+                groups[g].Children == null || l >= groups[g].Children.Count)
+                return null;
+            return groups[g].Children[l];
+        }
         List<DialogueSlotDefinition> slots = GetSlots(asset, kind);
         return slots != null && slotIndex >= 0 && slotIndex < slots.Count
             ? slots[slotIndex] : null;
+    }
+
+    /// <summary>The group definition that owns the encoded leaf index.</summary>
+    public static DialogueSlotDefinition GetChoiceLeafGroup(DialogueLayoutAsset asset, int leafIndex)
+    {
+        List<DialogueSlotDefinition> groups = asset != null ? asset.ChoiceGroups : null;
+        int g = leafIndex / 2;
+        return groups != null && g >= 0 && g < groups.Count ? groups[g] : null;
+    }
+
+    public static void EnsureChoiceGroups(DialogueLayoutAsset asset)
+    {
+        if (asset == null) return;
+        if (asset.ChoiceGroups == null)
+            asset.ChoiceGroups = new List<DialogueSlotDefinition>();
+        while (asset.ChoiceGroups.Count < 3)
+            asset.ChoiceGroups.Add(new DialogueSlotDefinition
+            {
+                SlotId = "G" + (asset.ChoiceGroups.Count + 1),
+                DisplayName = "Button Group " + (asset.ChoiceGroups.Count + 1)
+            });
+        for (int i = 0; i < asset.ChoiceGroups.Count; i++)
+        {
+            if (asset.ChoiceGroups[i] == null) continue;
+            if (asset.ChoiceGroups[i].Children == null)
+                asset.ChoiceGroups[i].Children = new List<DialogueSlotDefinition>();
+        }
+    }
+
+    public static void SetChoiceGroupLeafCount(DialogueSlotDefinition group, int count)
+    {
+        if (group == null) return;
+        if (group.Children == null) group.Children = new List<DialogueSlotDefinition>();
+        count = Mathf.Clamp(count, 1, 2);
+        while (group.Children.Count > count) group.Children.RemoveAt(group.Children.Count - 1);
+        while (group.Children.Count < count)
+            group.Children.Add(new DialogueSlotDefinition
+            {
+                SlotId = "B" + (group.Children.Count + 1),
+                DisplayName = "Choice Button " + (group.Children.Count + 1)
+            });
     }
 
     public static DialogueComponentDefinition GetComponent(DialogueLayoutAsset asset,
@@ -102,7 +168,10 @@ public static class DialogueVisualEditorUtility
         if (asset == null) return;
         EnsureSlots(asset.MainPanel != null ? asset.MainPanel.InnerRegion : null);
         if (asset.ChoicePanelEnabled)
+        {
             EnsureSlots(asset.ChoicePanel != null ? asset.ChoicePanel.InnerRegion : null);
+            EnsureChoiceGroups(asset);
+        }
         EnsureSlots(asset.TopArea);
         EnsureSlots(asset.BottomArea);
         EnsureSlots(asset.LeftArea);

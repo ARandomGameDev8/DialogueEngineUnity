@@ -503,14 +503,33 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             {
                 ResolvedDialogueSlot slot = layout.Slots[i];
                 DialogueSlotDefinition slotDef = DialogueVisualEditorUtility.GetSlot(layoutAsset, slot.AreaKind, slot.SlotIndex);
+                DialogueBackgroundStyle slotBg = slotDef != null ? slotDef.Background : null;
+                DialogueBorderStyle slotBorder = slotDef != null ? slotDef.Border : null;
+                DialogueShadowStyle slotShadow = slotDef != null ? slotDef.Shadow : null;
+                DialogueOpacitySettings slotOpacity = slotDef != null ? slotDef.Opacity : null;
+                Color slotFill = new Color(1f, 0.84f, 0.40f, 0.08f);
+                Color slotEdge = new Color(1f, 0.84f, 0.40f, 1f);
+                if (slot.AreaKind == ResolvedDialogueAreaKind.ChoiceLeaf && layoutAsset.ChoiceButtons != null)
+                {
+                    // Choice buttons render with the SHARED PRESET at runtime —
+                    // the canvas must show exactly that (never the leaf's own
+                    // hidden style fields).
+                    DialogueChoiceButtonSettings preset = layoutAsset.ChoiceButtons;
+                    slotBg = preset.Background;
+                    slotBorder = preset.Border;
+                    slotShadow = preset.Shadow;
+                    slotOpacity = preset.Opacity;
+                    slotFill = new Color(0.36f, 0.55f, 0.95f, 0.28f);
+                    slotEdge = new Color(0.62f, 0.78f, 1f, 1f);
+                }
                 DialogueVisualStylePreviewUtility.DrawStyledElement(
                     slot.Rect,
-                    slotDef != null ? slotDef.Background : null,
-                    slotDef != null ? slotDef.Border : null,
-                    slotDef != null ? slotDef.Shadow : null,
-                    slotDef != null ? slotDef.Opacity : null,
-                    new Color(1f, 0.84f, 0.40f, 0.08f),
-                    new Color(1f, 0.84f, 0.40f, 1f),
+                    slotBg,
+                    slotBorder,
+                    slotShadow,
+                    slotOpacity,
+                    slotFill,
+                    slotEdge,
                     1.2f);
                 if (IsSelected(slot))
                     DialogueVisualStylePreviewUtility.DrawSelectionOutline(
@@ -1038,6 +1057,18 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         }
     }
 
+    int EffectiveChoiceHolderIndex()
+    {
+        if (layoutAsset == null || layoutAsset.ChoicePanel == null ||
+            layoutAsset.ChoicePanel.InnerRegion == null) return -1;
+        DialogueInnerRegionDefinition region = layoutAsset.ChoicePanel.InnerRegion;
+        int partition = 1 + Mathf.Clamp(region.PartitionLevel, 0, 2);
+        int index = layoutAsset.ChoiceHolderSlotIndex;
+        if (index < 0 || index >= partition)
+            index = Mathf.Clamp(partition - 1, 0, region.Slots != null ? region.Slots.Count - 1 : 0);
+        return index;
+    }
+
     void DrawHierarchy()
     {
         DrawHierarchyButton("Main Panel", SelectionKind.MainPanel, ResolvedDialogueAreaKind.MainInner, -1, -1, 0);
@@ -1045,9 +1076,35 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         DrawHierarchySlots(ResolvedDialogueAreaKind.MainInner, 2);
         if (layoutAsset.ChoicePanelEnabled && layoutAsset.ChoicePanel != null)
         {
+            DialogueVisualEditorUtility.EnsureChoiceGroups(layoutAsset);
             DrawHierarchyButton("Choice Panel", SelectionKind.ChoicePanel, ResolvedDialogueAreaKind.ChoiceInner, -1, -1, 0);
             DrawHierarchyButton("Choice Region", SelectionKind.Area, ResolvedDialogueAreaKind.ChoiceInner, -1, -1, 1);
-            DrawHierarchySlots(ResolvedDialogueAreaKind.ChoiceInner, 2);
+
+            DialogueInnerRegionDefinition choiceRegion = layoutAsset.ChoicePanel.InnerRegion;
+            int choicePartition = choiceRegion != null
+                ? DialogueVisualEditorUtility.GetVisibleSlotCount(choiceRegion) : 1;
+            int holder = EffectiveChoiceHolderIndex();
+            List<DialogueSlotDefinition> choiceSlots = DialogueVisualEditorUtility.GetSlots(
+                layoutAsset, ResolvedDialogueAreaKind.ChoiceInner);
+            for (int i = 0; i < choicePartition && choiceSlots != null && i < choiceSlots.Count; i++)
+            {
+                string label = choiceSlots[i].DisplayName + (i == holder ? "  ▼ CHOICES" : "");
+                DrawHierarchyButton(label, SelectionKind.Slot, ResolvedDialogueAreaKind.ChoiceInner, i, -1, 2);
+
+                if (i != holder) continue;
+                List<DialogueSlotDefinition> groups = layoutAsset.ChoiceGroups;
+                for (int g = 0; g < 3 && groups != null && g < groups.Count; g++)
+                {
+                    if (groups[g] == null) continue;
+                    DrawHierarchyButton(groups[g].DisplayName, SelectionKind.Slot,
+                        ResolvedDialogueAreaKind.ChoiceGroup, g, -1, 3);
+                    if (groups[g].Children == null) continue;
+                    for (int l = 0; l < 2 && l < groups[g].Children.Count; l++)
+                        if (groups[g].Children[l] != null)
+                            DrawHierarchyButton(groups[g].Children[l].DisplayName, SelectionKind.Slot,
+                                ResolvedDialogueAreaKind.ChoiceLeaf, g * 2 + l, -1, 4);
+                }
+            }
         }
         DrawHierarchyArea(ResolvedDialogueAreaKind.Top, "Top Area");
         DrawHierarchyArea(ResolvedDialogueAreaKind.Bottom, "Bottom Area");
@@ -1222,6 +1279,68 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         panel.CustomAnchor.OffsetX = EditorGUILayout.FloatField("Anchor Offset X", panel.CustomAnchor.OffsetX);
         panel.CustomAnchor.OffsetY = EditorGUILayout.FloatField("Anchor Offset Y", panel.CustomAnchor.OffsetY);
 
+        EditorGUILayout.Space(6f);
+        GUILayout.Label("Choice Layout", EditorStyles.boldLabel);
+        layoutAsset.ChoiceRegionOrientation = (DialogueChoiceRegionOrientation)EditorGUILayout.EnumPopup(
+            new GUIContent("Region Orientation", "Vertical stacks the region slots as rows (the bottom-most slot is the default button holder); Horizontal lays them out as columns."),
+            layoutAsset.ChoiceRegionOrientation);
+
+        DialogueVisualEditorUtility.EnsureChoiceGroups(layoutAsset);
+        DialogueInnerRegionDefinition choiceRegion = panel.InnerRegion;
+        int choicePartition = choiceRegion != null
+            ? DialogueVisualEditorUtility.GetVisibleSlotCount(choiceRegion) : 1;
+        List<string> holderOptions = new List<string> { "Automatic (Bottom-Most Slot)" };
+        List<DialogueSlotDefinition> regionSlots = choiceRegion != null ? choiceRegion.Slots : null;
+        for (int i = 0; i < choicePartition && regionSlots != null && i < regionSlots.Count; i++)
+            holderOptions.Add("Slot: " + regionSlots[i].DisplayName);
+        int holderPopup = Mathf.Clamp(layoutAsset.ChoiceHolderSlotIndex + 1, 0, holderOptions.Count - 1);
+        holderPopup = EditorGUILayout.Popup("Button Holder Slot", holderPopup, holderOptions.ToArray());
+        layoutAsset.ChoiceHolderSlotIndex = holderPopup - 1;
+
+        int groupCount = Mathf.Clamp(layoutAsset.ChoiceGroups.Count, 1, 3);
+        int newGroupCount = EditorGUILayout.IntSlider(
+            new GUIContent("Button Groups", "The holder slot partitions into up to 3 button groups; each group holds up to 2 buttons → up to 6 visual choices."),
+            groupCount, 1, 3);
+        if (newGroupCount != groupCount)
+        {
+            while (layoutAsset.ChoiceGroups.Count > newGroupCount)
+                layoutAsset.ChoiceGroups.RemoveAt(layoutAsset.ChoiceGroups.Count - 1);
+            while (layoutAsset.ChoiceGroups.Count < newGroupCount)
+            {
+                var group = new DialogueSlotDefinition
+                {
+                    SlotId = "G" + (layoutAsset.ChoiceGroups.Count + 1),
+                    DisplayName = "Button Group " + (layoutAsset.ChoiceGroups.Count + 1)
+                };
+                DialogueVisualEditorUtility.SetChoiceGroupLeafCount(group, 2);
+                layoutAsset.ChoiceGroups.Add(group);
+            }
+        }
+
+        EditorGUILayout.Space(6f);
+        GUILayout.Label("Choice Button Preset", EditorStyles.boldLabel);
+        DialogueChoiceButtonSettings preset = layoutAsset.ChoiceButtons;
+        if (preset == null) { preset = new DialogueChoiceButtonSettings(); layoutAsset.ChoiceButtons = preset; }
+        preset.SizingMode = (DialogueChoiceButtonSizing)EditorGUILayout.EnumPopup(
+            new GUIContent("Sizing",
+                "Fixed: one size for EVERY button, relative to the choice holder — identical across all instances. Variable: each button may set its own width/height; everything else still comes from this preset."),
+            preset.SizingMode);
+        if (preset.SizingMode == DialogueChoiceButtonSizing.Fixed)
+        {
+            DrawSizeField("Button Width (All)", preset.FixedWidth);
+            DrawSizeField("Button Height (All)", preset.FixedHeight);
+        }
+        DrawPaddingField("Text Padding", preset.Padding);
+        DrawBackgroundStyle(preset.Background);
+        DrawBorderStyle(preset.Border);
+        DrawShadowStyle(preset.Shadow);
+        DrawOpacity(preset.Opacity);
+        DrawTextStyle(preset.TextStyle);
+        preset.HoverBackground = EditorGUILayout.ColorField("Hover Background", preset.HoverBackground);
+        EditorGUILayout.HelpBox(
+            "Every button instance shares these properties exactly. In Variable sizing, a button's own width/height (select the button on the canvas) is the ONLY per-instance difference.",
+            MessageType.None);
+
         EditorGUILayout.Space(8f);
         GUILayout.Label("Choice Panel Style", EditorStyles.boldLabel);
         DrawBackgroundStyle(panel.Background);
@@ -1293,6 +1412,40 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         if (slot == null) return;
         slot.DisplayName = EditorGUILayout.TextField("Display Name", slot.DisplayName);
         slot.Enabled = EditorGUILayout.Toggle("Enabled", slot.Enabled);
+
+        if (selection.AreaKind == ResolvedDialogueAreaKind.ChoiceInner)
+        {
+            bool isHolder = EffectiveChoiceHolderIndex() == selection.SlotIndex;
+            bool setHolder = EditorGUILayout.Toggle(
+                new GUIContent("Holds The Choice Buttons",
+                    "This slot's content becomes the choice buttons (up to 3 groups x 2 buttons). The other slots hold whatever components you like. Default is the bottom-most slot."),
+                isHolder);
+            if (setHolder != isHolder)
+                layoutAsset.ChoiceHolderSlotIndex = setHolder ? selection.SlotIndex : -1;
+        }
+        if (selection.AreaKind == ResolvedDialogueAreaKind.ChoiceGroup)
+        {
+            int leaves = slot.Children != null ? Mathf.Clamp(slot.Children.Count, 1, 2) : 1;
+            int newLeaves = EditorGUILayout.IntSlider(
+                new GUIContent("Buttons In This Group", "Each group partitions into at most 2 choice buttons."),
+                leaves, 1, 2);
+            if (newLeaves != leaves)
+                DialogueVisualEditorUtility.SetChoiceGroupLeafCount(slot, newLeaves);
+            EditorGUILayout.HelpBox(
+                "A button group is a layout container inside the choice holder: up to 2 choice buttons, your own background/border/spacing. Groups and buttons accept no components — the buttons are styled by the shared Choice Button Preset.",
+                MessageType.None);
+        }
+        if (selection.AreaKind == ResolvedDialogueAreaKind.ChoiceLeaf)
+        {
+            bool fixedSizing = layoutAsset.ChoiceButtons != null &&
+                layoutAsset.ChoiceButtons.SizingMode == DialogueChoiceButtonSizing.Fixed;
+            EditorGUILayout.HelpBox(
+                fixedSizing
+                    ? "One choice button instance. Sizing is FIXED: every button shares the preset size (edit it on the Choice Panel) — the size fields below are ignored."
+                    : "One choice button instance. Sizing is VARIABLE: set this button's width/height below. Every other property (background, border, text, font...) comes from the shared Choice Button Preset.",
+                MessageType.Info);
+        }
+        if (selection.AreaKind != ResolvedDialogueAreaKind.ChoiceLeaf)
         EditorGUILayout.HelpBox(
             "Slots are the final partition pieces. They cannot be partitioned further. They inherit their parent region's visual settings by default, but you can override their own size, position, spacing-after, and visual styling here.",
             MessageType.None);
@@ -1302,10 +1455,13 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         slot.GapAfter = EditorGUILayout.FloatField("Gap To Next Slot (-1 uses parent)", slot.GapAfter);
         DrawPaddingField("Padding", slot.Padding);
         slot.ZLayer = EditorGUILayout.IntSlider("Z Layer", slot.ZLayer, -10, 10);
-        DrawBackgroundStyle(slot.Background);
-        DrawBorderStyle(slot.Border);
-        DrawShadowStyle(slot.Shadow);
-        DrawOpacity(slot.Opacity);
+        if (selection.AreaKind != ResolvedDialogueAreaKind.ChoiceLeaf)
+        {
+            DrawBackgroundStyle(slot.Background);
+            DrawBorderStyle(slot.Border);
+            DrawShadowStyle(slot.Shadow);
+            DrawOpacity(slot.Opacity);
+        }
         ResolvedDialogueAreaKind oppositeSlotAreaKind;
         if (selection.AreaKind != ResolvedDialogueAreaKind.MainInner &&
             DialogueVisualEditorUtility.TryGetOppositeAreaKind(selection.AreaKind, out oppositeSlotAreaKind) &&
@@ -1316,6 +1472,10 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             CommitLayoutMutation();
             return;
         }
+        if (selection.AreaKind == ResolvedDialogueAreaKind.ChoiceGroup ||
+            selection.AreaKind == ResolvedDialogueAreaKind.ChoiceLeaf)
+            return; // choice groups/buttons hold no components
+
         EditorGUILayout.Space(6f);
         GUILayout.Label("Components", EditorStyles.boldLabel);
         if (slot.Components != null)
@@ -1392,6 +1552,10 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 ? layoutAsset.ChoicePanel.InnerRegion : null;
             return DialogueVisualEditorUtility.GetVisibleSlotCount(region);
         }
+        if (kind == ResolvedDialogueAreaKind.ChoiceGroup)
+            return layoutAsset.ChoiceGroups != null ? Mathf.Clamp(layoutAsset.ChoiceGroups.Count, 0, 3) : 0;
+        if (kind == ResolvedDialogueAreaKind.ChoiceLeaf)
+            return 6;
         DialogueAttachedAreaDefinition area = DialogueVisualEditorUtility.GetArea(layoutAsset, kind);
         return DialogueVisualEditorUtility.GetVisibleSlotCount(area);
     }
@@ -1635,6 +1799,13 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
     void AddComponentAtSlot(SelectionState slotSelection, DialogueComponentType type)
     {
+        if (slotSelection.AreaKind == ResolvedDialogueAreaKind.ChoiceGroup ||
+            slotSelection.AreaKind == ResolvedDialogueAreaKind.ChoiceLeaf)
+        {
+            ShowNotification(new GUIContent(
+                "Choice buttons are styled by the shared Choice Button Preset — they hold no components."));
+            return;
+        }
         DialogueSlotDefinition slot = DialogueVisualEditorUtility.GetSlot(layoutAsset,
             slotSelection.AreaKind, slotSelection.SlotIndex);
         if (slot == null) return;
@@ -1890,6 +2061,26 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 return resolved.CanvasRect;
 
             case SelectionKind.Slot:
+                if (selection.AreaKind == ResolvedDialogueAreaKind.ChoiceGroup)
+                {
+                    ResolvedDialogueSlot holderSlot = FindResolvedSlot(resolved,
+                        ResolvedDialogueAreaKind.ChoiceInner, EffectiveChoiceHolderIndex());
+                    DialogueSlotDefinition holderDef = DialogueVisualEditorUtility.GetSlot(layoutAsset,
+                        ResolvedDialogueAreaKind.ChoiceInner, EffectiveChoiceHolderIndex());
+                    return holderSlot != null
+                        ? DialogueVisualLayoutResolver.ShrinkRect(holderSlot.Rect, holderDef != null ? holderDef.Padding : null)
+                        : resolved.CanvasRect;
+                }
+                if (selection.AreaKind == ResolvedDialogueAreaKind.ChoiceLeaf)
+                {
+                    ResolvedDialogueSlot groupSlot = FindResolvedSlot(resolved,
+                        ResolvedDialogueAreaKind.ChoiceGroup, selection.SlotIndex / 2);
+                    DialogueSlotDefinition groupDef = DialogueVisualEditorUtility.GetSlot(layoutAsset,
+                        ResolvedDialogueAreaKind.ChoiceGroup, selection.SlotIndex / 2);
+                    return groupSlot != null
+                        ? DialogueVisualLayoutResolver.ShrinkRect(groupSlot.Rect, groupDef != null ? groupDef.Padding : null)
+                        : resolved.CanvasRect;
+                }
                 ResolvedDialogueArea slotArea = FindAreaByKind(resolved, selection.AreaKind);
                 return slotArea != null ? slotArea.Rect : resolved.CanvasRect;
 

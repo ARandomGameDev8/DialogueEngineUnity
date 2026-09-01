@@ -831,8 +831,8 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     // editor. The engine only writes option texts, shows/hides and handles
     // clicks — every rect and style belongs to the layout.
     VisualElement choicePanelRoot;
-    readonly List<VisualElement> visualChoiceSlots = new List<VisualElement>();
-    readonly List<Label> visualChoiceLabels = new List<Label>();
+    readonly List<VisualElement> visualChoiceButtons = new List<VisualElement>();
+    readonly List<Label> visualChoiceButtonTexts = new List<Label>();
 
     VisualElement toolbarPanel;
     VisualElement historyPanel;
@@ -1076,22 +1076,22 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
 
         // Choice panel from the visual layout (may be absent — optional).
         choicePanelRoot = docRoot.Q("ChoicePanel");
-        visualChoiceSlots.Clear();
-        visualChoiceLabels.Clear();
+        visualChoiceButtons.Clear();
+        visualChoiceButtonTexts.Clear();
         if (choicePanelRoot != null)
         {
             for (int i = 0; ; i++)
             {
-                VisualElement slot = docRoot.Q("ChoiceSlot" + i);
-                if (slot == null) break;
-                visualChoiceSlots.Add(slot);
-                visualChoiceLabels.Add(docRoot.Q<Label>("ChoiceLabel" + i));
+                VisualElement button = docRoot.Q("ChoiceButton" + i);
+                if (button == null) break;
+                visualChoiceButtons.Add(button);
+                visualChoiceButtonTexts.Add(docRoot.Q<Label>("ChoiceButtonText" + i));
 
                 // Registered once per tree; the option list is read at click
                 // time and the current-token guard makes stale clicks no-ops.
                 int index = i;
-                slot.pickingMode = PickingMode.Position;
-                slot.RegisterCallback<ClickEvent>(_ =>
+                button.pickingMode = PickingMode.Position;
+                button.RegisterCallback<ClickEvent>(_ =>
                 {
                     if (currentChoiceToken == null) return;
                     if (index < 0 || index >= choiceOptions.Count) return;
@@ -2601,7 +2601,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         currentCharacterToken = null;
 
         // Visual-layout runtime: the layout's own designed choice panel.
-        if (visualLayoutRuntimeActive && choicePanelRoot != null && visualChoiceSlots.Count > 0)
+        if (visualLayoutRuntimeActive && choicePanelRoot != null && visualChoiceButtons.Count > 0)
         {
             ShowVisualChoices(choice);
             return;
@@ -2657,23 +2657,34 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                     choiceOptions.Add(option);
         }
 
-        if (choiceOptions.Count > visualChoiceSlots.Count)
-            Debug.LogWarning($"Dialogue_Engine: the layout has {visualChoiceSlots.Count} choice slots " +
+        if (choiceOptions.Count > visualChoiceButtons.Count)
+            Debug.LogWarning($"Dialogue_Engine: the layout has {visualChoiceButtons.Count} choice buttons " +
                              $"but this choice has {choiceOptions.Count} options — showing the first " +
-                             $"{visualChoiceSlots.Count}. Add more choice slots in the visual editor " +
-                             "(partition level, max 3).");
+                             $"{visualChoiceButtons.Count}. Add button groups/leaves in the visual editor " +
+                             "(up to 6 visual choices).");
 
-        int shown = Mathf.Min(choiceOptions.Count, visualChoiceSlots.Count);
-        for (int i = 0; i < visualChoiceSlots.Count; i++)
+        int shown = Mathf.Min(choiceOptions.Count, visualChoiceButtons.Count);
+        for (int i = 0; i < visualChoiceButtons.Count; i++)
         {
-            VisualElement slot = visualChoiceSlots[i];
-            if (slot == null) continue;
+            VisualElement button = visualChoiceButtons[i];
+            if (button == null) continue;
             bool active = i < shown;
-            slot.style.display = active ? DisplayStyle.Flex : DisplayStyle.None;
-            if (active && visualChoiceLabels != null && i < visualChoiceLabels.Count &&
-                visualChoiceLabels[i] != null)
-                visualChoiceLabels[i].text = choiceOptions[i].OptionText;
+            button.style.display = active ? DisplayStyle.Flex : DisplayStyle.None;
+            if (active && i < visualChoiceButtonTexts.Count && visualChoiceButtonTexts[i] != null)
+                visualChoiceButtonTexts[i].text = choiceOptions[i].OptionText;
         }
+
+        // Hide button groups whose every button is unused.
+        for (int g = 0; ; g++)
+        {
+            VisualElement group = choicePanelRoot.Q("ChoiceGroup" + g);
+            if (group == null) break;
+            bool anyVisible = false;
+            foreach (VisualElement child in group.Children())
+                if (child.style.display == DisplayStyle.Flex) { anyVisible = true; break; }
+            group.style.display = anyVisible ? DisplayStyle.Flex : DisplayStyle.None;
+        }
+
         choicePanelRoot.style.display = DisplayStyle.Flex;
 
         currentTextName = "CHOICE_" + choice.ChoiceIndex;

@@ -230,7 +230,7 @@ public static class DialogueVisualEditorUxml
         body.Append(HistoryAndSettingsXml());
         body.Append(ToolbarXml(engine));
 
-        BuildUss(uss, engine);
+        BuildUss(uss, engine, asset);
 
         return $@"<ui:UXML xmlns:ui=""UnityEngine.UIElements"" xmlns:uie=""UnityEditor.UIElements"" xsi=""http://www.w3.org/2001/XMLSchema-instance"" engine=""UnityEngine.UIElements"" editor=""UnityEditor.UIElements"" noNamespaceSchemaLocation=""../../UIElementsSchema/UIElements.xsd"" editor-extension-mode=""False"">
     <ui:VisualElement name=""Root"" style=""width: 100%; height: 100%;"">
@@ -369,30 +369,15 @@ public static class DialogueVisualEditorUxml
                     if (slot == null || slotDef == null) continue;
 
                     var slotEl = new StringBuilder();
-                    bool labelDone = false;
-                    if (slotDef.Components != null)
+                    if (i == resolved.ChoiceHolderSlotIndex)
                     {
-                        for (int c = 0; c < slotDef.Components.Count; c++)
-                        {
-                            DialogueComponentDefinition comp = slotDef.Components[c];
-                            ResolvedDialogueComponentRect compRect = FindComponent(
-                                resolved, ResolvedDialogueAreaKind.ChoiceInner, i, c);
-                            if (comp == null || compRect == null) continue;
-
-                            Rect r = Relative(compRect.Rect, slot.Rect);
-                            DialogueTextPanelDefinition text = comp as DialogueTextPanelDefinition;
-                            if (text != null && !labelDone)
-                            {
-                                // The first text panel in a choice slot is that
-                                // option's LIVE label — the engine writes the
-                                // option text here at runtime.
-                                labelDone = true;
-                                slotEl.Append($@"      <ui:Label name=""ChoiceLabel{i}"" text="""" style=""{AbsStyle(r.x, r.y, r.width, r.height)}{Join(SurfaceStyle(comp.Background, comp.Border, comp.Opacity))}{TextStyle(text.TextStyle)}"" />
-");
-                                continue;
-                            }
-                            slotEl.Append(StaticComponentXml(comp, r));
-                        }
+                        // This slot holds the choice BUTTONS (grouped leaves),
+                        // styled entirely by the shared preset.
+                        slotEl.Append(ChoiceButtonsXml(resolved, asset, slot));
+                    }
+                    else
+                    {
+                    slotEl.Append(StaticChoiceSlotComponents(resolved, asset, region, i, slot, slotDef));
                     }
                     areaEl.Append($@"    <ui:VisualElement name=""ChoiceSlot{i}"" style=""{AbsStyle(slot.Rect.x - area.Rect.x, slot.Rect.y - area.Rect.y, slot.Rect.width, slot.Rect.height)}{Join(SurfaceStyle(slotDef.Background, slotDef.Border, slotDef.Opacity))} overflow: hidden;"">
 ");
@@ -405,6 +390,86 @@ public static class DialogueVisualEditorUxml
         }
 
         sb.Append("  </ui:VisualElement>\n</ui:VisualElement>\n");
+        return sb.ToString();
+    }
+
+    /// <summary>Components for a NON-holder choice slot (labels, images...).</summary>
+    static string StaticChoiceSlotComponents(ResolvedDialogueLayout resolved, DialogueLayoutAsset asset,
+        DialogueInnerRegionDefinition region, int slotIndex, ResolvedDialogueSlot slot,
+        DialogueSlotDefinition slotDef)
+    {
+        var slotEl = new StringBuilder();
+        bool labelDone = false;
+        if (slotDef.Components != null)
+                    {
+                        for (int c = 0; c < slotDef.Components.Count; c++)
+                        {
+                            DialogueComponentDefinition comp = slotDef.Components[c];
+                            ResolvedDialogueComponentRect compRect = FindComponent(
+                                resolved, ResolvedDialogueAreaKind.ChoiceInner, slotIndex, c);
+                            if (comp == null || compRect == null) continue;
+
+                            Rect r = Relative(compRect.Rect, slot.Rect);
+                            DialogueTextPanelDefinition text = comp as DialogueTextPanelDefinition;
+                            if (text != null && !labelDone)
+                            {
+                                // The first text panel in a choice slot is that
+                                // option's LIVE label — the engine writes the
+                                // option text here at runtime.
+                                labelDone = true;
+                                slotEl.Append($@"      <ui:Label name=""ChoiceLabel{slotIndex}"" text="""" style=""{AbsStyle(r.x, r.y, r.width, r.height)}{Join(SurfaceStyle(comp.Background, comp.Border, comp.Opacity))}{TextStyle(text.TextStyle)}"" />
+");
+                                continue;
+                            }
+                            slotEl.Append(StaticComponentXml(comp, r));
+                        }
+                    }
+        return slotEl.ToString();
+    }
+
+    // ─── Choice buttons (shared preset, grouped leaves) ────────────────────────
+    static string ChoiceButtonsXml(ResolvedDialogueLayout resolved, DialogueLayoutAsset asset,
+        ResolvedDialogueSlot holderSlot)
+    {
+        DialogueChoiceButtonSettings preset = asset.ChoiceButtons;
+        if (preset == null) return "";
+
+        var sb = new StringBuilder();
+        int buttonSeq = 0;
+        int groupSeq = 0;
+        for (int g = 0; g < resolved.Slots.Count; g++)
+        {
+            ResolvedDialogueSlot groupSlot = resolved.Slots[g];
+            if (groupSlot.AreaKind != ResolvedDialogueAreaKind.ChoiceGroup) continue;
+
+            DialogueSlotDefinition groupDef = groupSlot.SlotIndex >= 0 && asset.ChoiceGroups != null &&
+                groupSlot.SlotIndex < asset.ChoiceGroups.Count
+                ? asset.ChoiceGroups[groupSlot.SlotIndex] : null;
+            if (groupDef == null) continue;
+
+            sb.Append($@"      <ui:VisualElement name=""ChoiceGroup{groupSeq}"" style=""{AbsStyle(groupSlot.Rect.x - holderSlot.Rect.x, groupSlot.Rect.y - holderSlot.Rect.y, groupSlot.Rect.width, groupSlot.Rect.height)}{Join(SurfaceStyle(groupDef.Background, groupDef.Border, groupDef.Opacity))} overflow: hidden;"">
+");
+            int structuralGroup = groupSlot.SlotIndex;
+            for (int l = 0; l < resolved.Slots.Count; l++)
+            {
+                ResolvedDialogueSlot leaf = resolved.Slots[l];
+                if (leaf.AreaKind != ResolvedDialogueAreaKind.ChoiceLeaf) continue;
+                if (leaf.SlotIndex / 2 != structuralGroup) continue;
+
+                int k = buttonSeq++;
+                string buttonStyle = AbsStyle(leaf.Rect.x - groupSlot.Rect.x,
+                    leaf.Rect.y - groupSlot.Rect.y, leaf.Rect.width, leaf.Rect.height) +
+                    SurfaceStyle(preset.Background, preset.Border, preset.Opacity);
+                string pad = preset.Padding != null ? preset.Padding : new DialoguePadding();
+                sb.Append($@"        <ui:VisualElement name=""ChoiceButton{k}"" class=""dlg-choice-btn"" style=""{buttonStyle}"">
+");
+                sb.Append($@"          <ui:Label name=""ChoiceButtonText{k}"" text="""" style=""position: absolute; left: {pad.Left:0.#}px; top: {pad.Top:0.#}px; right: {pad.Right:0.#}px; bottom: {pad.Bottom:0.#}px;{TextStyle(preset.TextStyle)} white-space: normal;"" />
+");
+                sb.Append("        </ui:VisualElement>\n");
+            }
+            sb.Append("      </ui:VisualElement>\n");
+            groupSeq++;
+        }
         return sb.ToString();
     }
 
@@ -475,7 +540,7 @@ $@"<ui:Button name=""ToolbarToggle"" class=""dlg-toolbar-button"" text=""Menu"" 
 ";
     }
 
-    static void BuildUss(StringBuilder uss, Dialogue_Engine e)
+    static void BuildUss(StringBuilder uss, Dialogue_Engine e, DialogueLayoutAsset asset)
     {
         Color baseBg = e.backgroundColour;
         Color hover = Color.Lerp(baseBg, Color.white, 0.08f);
@@ -492,6 +557,14 @@ $@"<ui:Button name=""ToolbarToggle"" class=""dlg-toolbar-button"" text=""Menu"" 
         uss.AppendLine("    transition-duration: 0.12s;");
         uss.AppendLine("}");
         uss.AppendLine($".dlg-choice-button:hover {{ background-color: {Rgba(hover)}; border-color: rgba(140, 191, 255, 1); }}");
+        if (asset != null && asset.ChoiceButtons != null)
+        {
+            uss.AppendLine(".dlg-choice-btn {");
+            uss.AppendLine("    transition-property: background-color, border-color;");
+            uss.AppendLine("    transition-duration: 0.12s;");
+            uss.AppendLine("}");
+            uss.AppendLine($".dlg-choice-btn:hover {{ background-color: {Rgba(asset.ChoiceButtons.HoverBackground)}; }}");
+        }
         uss.AppendLine(".dlg-choice-selected {");
         uss.AppendLine($"    background-color: {Rgba(Color.Lerp(baseBg, new Color(0.3f, 0.45f, 0.8f), 0.55f))};");
         uss.AppendLine("    border-color: rgba(166, 209, 255, 1);");

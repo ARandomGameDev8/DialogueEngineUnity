@@ -83,6 +83,59 @@ public sealed class DialogueLayoutAsset : ScriptableObject
         }
     };
 
+    // How the choice region partitions: Vertical = stacked rows (default;
+    // "bottom-most" slot), Horizontal = side-by-side columns.
+    public DialogueChoiceRegionOrientation ChoiceRegionOrientation =
+        DialogueChoiceRegionOrientation.Vertical;
+
+    // Which choice-region slot holds the buttons. -1 = automatic: the
+    // bottom-most (last) visible slot when partitioned, the slot itself at
+    // partition level 0. The other slots hold whatever components you like.
+    public int ChoiceHolderSlotIndex = -1;
+
+    // Button groups inside the holder slot: up to 3 groups, each with up to 2
+    // leaf slots (choice buttons) in its Children list → up to 6 visual
+    // choices. The DSL is not limited; extra options are simply not shown.
+    public List<DialogueSlotDefinition> ChoiceGroups = BuildDefaultChoiceGroups();
+
+    // The shared choice button preset: every button instance looks exactly
+    // like this. Only its size may differ per instance (Variable mode).
+    public DialogueChoiceButtonSettings ChoiceButtons = new DialogueChoiceButtonSettings();
+
+    static List<DialogueSlotDefinition> BuildDefaultChoiceGroups()
+    {
+        return new List<DialogueSlotDefinition>
+        {
+            new DialogueSlotDefinition
+            {
+                SlotId = "G1", DisplayName = "Button Group 1",
+                Children = new List<DialogueSlotDefinition>
+                {
+                    new DialogueSlotDefinition { SlotId = "B1", DisplayName = "Choice Button 1" },
+                    new DialogueSlotDefinition { SlotId = "B2", DisplayName = "Choice Button 2" }
+                }
+            },
+            new DialogueSlotDefinition
+            {
+                SlotId = "G2", DisplayName = "Button Group 2",
+                Children = new List<DialogueSlotDefinition>
+                {
+                    new DialogueSlotDefinition { SlotId = "B3", DisplayName = "Choice Button 3" },
+                    new DialogueSlotDefinition { SlotId = "B4", DisplayName = "Choice Button 4" }
+                }
+            },
+            new DialogueSlotDefinition
+            {
+                SlotId = "G3", DisplayName = "Button Group 3",
+                Children = new List<DialogueSlotDefinition>
+                {
+                    new DialogueSlotDefinition { SlotId = "B5", DisplayName = "Choice Button 5" },
+                    new DialogueSlotDefinition { SlotId = "B6", DisplayName = "Choice Button 6" }
+                }
+            }
+        };
+    }
+
     // How the current speaker is emphasized against recently interrupted ones.
     public DialogueSpeakerEmphasisSettings SpeakerEmphasis =
         new DialogueSpeakerEmphasisSettings();
@@ -387,6 +440,12 @@ public sealed class DialogueSlotDefinition
     [SerializeReference]
     public List<DialogueComponentDefinition> Components =
         new List<DialogueComponentDefinition>();
+
+    // Sub-partitioning — used ONLY by choice button groups (each group holds
+    // up to 2 leaf slots = choice buttons). Null for every other slot; slots
+    // elsewhere remain terminal and cannot be partitioned.
+    [SerializeReference]
+    public List<DialogueSlotDefinition> Children;
 }
 
 [Serializable]
@@ -627,4 +686,53 @@ public sealed class DialogueCustomAnchorDefinition
         DialogueAnchorReferenceEdge.Top;
     public float OffsetX;
     public float OffsetY;
+}
+
+public enum DialogueChoiceRegionOrientation
+{
+    Vertical,
+    Horizontal
+}
+
+public enum DialogueChoiceButtonSizing
+{
+    // One size for every button instance, relative to the choice holder.
+    Fixed,
+    // Each button may size itself individually.
+    Variable
+}
+
+/// <summary>
+/// THE choice button preset. All instances share every property here exactly;
+/// in Variable sizing mode, a button's width/height may additionally be
+/// overridden per instance (nothing else is per-instance).
+/// </summary>
+[Serializable]
+public sealed class DialogueChoiceButtonSettings
+{
+    public DialogueChoiceButtonSizing SizingMode = DialogueChoiceButtonSizing.Fixed;
+
+    // Fixed sizing: relative to the choice holder content rect, identical for
+    // every button instance.
+    public DialogueSizeValue FixedWidth = new DialogueSizeValue
+    { Unit = DialogueSizeUnit.Percent, Value = 100f };
+    public DialogueSizeValue FixedHeight = new DialogueSizeValue
+    { Unit = DialogueSizeUnit.Percent, Value = 100f };
+
+    public DialoguePadding Padding = new DialoguePadding
+    { Left = 14f, Right = 14f, Top = 8f, Bottom = 8f };
+
+    public DialogueBackgroundStyle Background = new DialogueBackgroundStyle
+    { Mode = DialogueBackgroundMode.SolidColor, ColorA = new Color(0.09f, 0.09f, 0.12f, 0.95f) };
+    public DialogueBorderStyle Border = new DialogueBorderStyle
+    { Enabled = true, BorderColor = new Color(1f, 1f, 1f, 0.30f), CornerRadiusTopLeft = 6f,
+      CornerRadiusTopRight = 6f, CornerRadiusBottomLeft = 6f, CornerRadiusBottomRight = 6f };
+    public DialogueShadowStyle Shadow = new DialogueShadowStyle();
+    public DialogueOpacitySettings Opacity = new DialogueOpacitySettings();
+
+    public DialogueTextStyle TextStyle = new DialogueTextStyle
+    { FontSize = 18f, Color = Color.white, HorizontalAlignment = DialogueHorizontalAlignment.Center,
+      VerticalAlignment = DialogueVerticalAlignment.Center };
+
+    public Color HoverBackground = new Color(0.20f, 0.24f, 0.34f, 0.98f);
 }

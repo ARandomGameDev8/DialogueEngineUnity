@@ -167,10 +167,24 @@ treatment as everything else:
   one becomes that option's live label with its complete text style (colour,
   font size, spacing, weight, alignment). Image components render statically
   next to it, so decorative option icons work too.
-- At Play the panel is hidden until a choice fires; then each option's text
-  lands on its designed slot and clicking a slot picks that option. More
-  options than slots logs a warning and shows the first N (add slots in the
-  editor — max 3).
+- The region slots: **choose which one holds the buttons** ("Holds The Choice
+  Buttons" on the slot, or the Button Holder popup on the panel). Default is
+  the bottom-most slot (or the slot itself at partition level 0); the other
+  slots hold whatever components you like. Region orientation Vertical
+  (stacked rows, default) or Horizontal (columns).
+- The holder slot partitions into up to **3 button groups**, each with up to
+  **2 choice buttons** (its Children) → up to 6 visual choices. Groups are
+  styleable layout containers; all drag/resize tools work on everything.
+- The **Choice Button Preset** (on the Choice Panel inspector) styles every
+  button: background, border, shadow, opacity, text padding, full text style,
+  hover colour. Every instance shares it EXACTLY. Sizing: **Fixed** = one
+  width/height relative to the choice holder, identical for all buttons;
+  **Variable** = each button may set its own width/height (select it on the
+  canvas) — the ONLY per-instance difference.
+- At Play the panel is hidden until a choice fires; each option's text lands
+  on its button, unused buttons/groups hide, clicking a button picks that
+  option. More options than buttons logs a warning and shows the first N
+  (the DSL itself is not limited).
 - The **True Preview** window has a **Peek Choice Panel** toggle so you can
   design the panel without running a dialogue.
 
