@@ -1,5 +1,4 @@
 #if UNITY_EDITOR
-using System;
 using System.IO;
 using UnityEditor;
 using UnityEditor.UIElements;
@@ -20,12 +19,12 @@ public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
 
     VisualElement previewViewport;
     VisualElement previewStage;
-    DateTime lastBuildWrite;
+    System.DateTime lastBuildWrite;
 
     [MenuItem("Tools/Dialogue/Open Visual Layout Preview")]
     static void OpenFromMenu()
     {
-        Open(Object.FindFirstObjectByType<Dialogue_Engine>());
+        Open(UnityEngine.Object.FindObjectOfType<Dialogue_Engine>());
     }
 
     public static void Open(Dialogue_Engine targetEngine)
@@ -127,7 +126,7 @@ public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
         // Keep the stage scaled/centered as the window resizes.
         previewViewport.RegisterCallback<GeometryChangedEvent>(_ => ApplyStageScale());
         // Poll the canonical file so edits made in the visual editor show up here.
-        schedule.Execute(CheckForRebuild).Every(800);
+        previewViewport.schedule.Execute(CheckForRebuild).Every(800);
     }
 
     void CheckForRebuild()
@@ -135,7 +134,7 @@ public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
         if (layoutAsset == null) return;
         string path = DialogueVisualEditorUxml.BuildPathFor(layoutAsset);
         if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
-        DateTime written = File.GetLastWriteTimeUtc(path);
+        System.DateTime written = File.GetLastWriteTimeUtc(path);
         if (written != lastBuildWrite)
             RefreshPreview();
     }
@@ -155,7 +154,7 @@ public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
         }
 
         if (engine == null)
-            engine = Object.FindFirstObjectByType<Dialogue_Engine>();
+            engine = UnityEngine.Object.FindObjectOfType<Dialogue_Engine>();
 
         Vector2 reference = engine != null && engine.panelSettings != null
             ? new Vector2(engine.panelSettings.referenceResolution.x, engine.panelSettings.referenceResolution.y)
@@ -183,7 +182,7 @@ public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
 
         previewStage.style.width = reference.x;
         previewStage.style.height = reference.y;
-        tree.Clone(previewStage);
+        tree.CloneTree(previewStage);
         ApplyStageScale();
     }
 
