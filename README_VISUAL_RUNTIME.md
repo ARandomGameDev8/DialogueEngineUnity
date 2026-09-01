@@ -172,12 +172,15 @@ treatment as everything else:
   the bottom-most slot (or the slot itself at partition level 0); the other
   slots hold whatever components you like. Region orientation Vertical
   (stacked rows, default) or Horizontal (columns).
-- The holder slot partitions **AUTOMATICALLY** from the actual choice count
-  (at Play) — up to 3 button groups x 2 choice buttons = 6 visual choices.
-  While designing, **Preview Choice Count (0-6)** on the Choice Panel shows
-  any hypothetical count, rendered INSIDE the holder slot at its rightful
-  place (never a separate ghost panel). The choice subtree draws ABOVE the
-  main panel and portraits while editing — its exact runtime z-order.
+- The holder slot IS the choice area — ONE slot inside the choice region,
+  in its rightful place (no ghost panels, no group boxes). Its content
+  partitions **AUTOMATICALLY**: at Play the ACTUAL option count decides the
+  arrangement (up to 6: rows of 1, then rows of 2 — 3 choices stack
+  vertically, 6 fill a 3x2 grid). The engine computes it with the exact
+  same resolver math as the editor, so Play is the layout you designed for
+  that count. While designing, **Preview Choice Count (0-6)** shows any
+  hypothetical count INSIDE the holder slot. The choice subtree draws ABOVE
+  the main panel and portraits while editing — its exact runtime z-order.
 - The **Choice Button Preset** (on the Choice Panel inspector) styles every
   button: background, border, shadow, opacity, text padding, full text style,
   hover colour. Every instance shares it EXACTLY. Sizing: **Fixed** = one

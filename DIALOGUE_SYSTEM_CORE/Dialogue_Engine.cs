@@ -2658,12 +2658,12 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         }
 
         if (choiceOptions.Count > visualChoiceButtons.Count)
-            Debug.LogWarning($"Dialogue_Engine: the layout has {visualChoiceButtons.Count} choice buttons " +
-                             $"but this choice has {choiceOptions.Count} options — showing the first " +
-                             $"{visualChoiceButtons.Count}. Add button groups/leaves in the visual editor " +
-                             "(up to 6 visual choices).");
+            Debug.LogWarning($"Dialogue_Engine: the layout shows at most {visualChoiceButtons.Count} choice " +
+                             $"buttons but this choice has {choiceOptions.Count} options — showing the first " +
+                             $"{visualChoiceButtons.Count}.");
 
         int shown = Mathf.Min(choiceOptions.Count, visualChoiceButtons.Count);
+        ApplyVisualChoiceArrangement(shown);
         for (int i = 0; i < visualChoiceButtons.Count; i++)
         {
             VisualElement button = visualChoiceButtons[i];
@@ -2674,23 +2674,69 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                 visualChoiceButtonTexts[i].text = choiceOptions[i].OptionText;
         }
 
-        // Hide button groups whose every button is unused.
-        for (int g = 0; ; g++)
-        {
-            VisualElement group = choicePanelRoot.Q("ChoiceGroup" + g);
-            if (group == null) break;
-            bool anyVisible = false;
-            foreach (VisualElement child in group.Children())
-                if (child.style.display == DisplayStyle.Flex) { anyVisible = true; break; }
-            group.style.display = anyVisible ? DisplayStyle.Flex : DisplayStyle.None;
-        }
-
         choicePanelRoot.style.display = DisplayStyle.Flex;
 
         currentTextName = "CHOICE_" + choice.ChoiceIndex;
         currentServiceText = string.Join(" | ", choiceOptions.ConvertAll(o => o.OptionText));
         SetRuntimeStatus(DialogueRuntimeStatus.TakingChoice, "Waiting for a choice");
         Debug.Log($"Dialogue_Engine: Showing {shown} choices on the visual choice panel.");
+    }
+
+    /// <summary>
+    /// AUTO-PARTITIONING: the holder slot's content splits itself by the ACTUAL
+    /// option count, using the exact same arrangement math as the visual
+    /// editor (DialogueVisualLayoutResolver) — so Play is the layout you
+    /// designed for that count, never an invented one.
+    /// </summary>
+    void ApplyVisualChoiceArrangement(int count)
+    {
+        if (visualLayoutAsset == null || panelSettings == null) return;
+
+        Rect canvas = new Rect(0f, 0f,
+            panelSettings.referenceResolution.x, panelSettings.referenceResolution.y);
+        Rect holderSlotRect, holderContent;
+        System.Collections.Generic.List<Rect> rects;
+        if (!DialogueVisualLayoutResolver.ResolveChoiceButtonRects(
+                visualLayoutAsset, canvas, count, out holderSlotRect, out holderContent, out rects))
+            return;
+
+        // Buttons live inside the holder ChoiceSlot element — position them
+        // relative to it, exactly like the generated UXML does.
+        VisualElement holderElement = FindVisualChoiceHolderElement();
+        if (holderElement == null) return;
+
+        for (int k = 0; k < visualChoiceButtons.Count; k++)
+        {
+            VisualElement button = visualChoiceButtons[k];
+            if (button == null) continue;
+            if (k < rects.Count)
+            {
+                button.style.left   = rects[k].x - holderSlotRect.x;
+                button.style.top    = rects[k].y - holderSlotRect.y;
+                button.style.width  = rects[k].width;
+                button.style.height = rects[k].height;
+            }
+            else
+            {
+                button.style.display = DisplayStyle.None;
+            }
+        }
+    }
+
+    VisualElement FindVisualChoiceHolderElement()
+    {
+        if (choicePanelRoot == null || visualLayoutAsset == null ||
+            visualLayoutAsset.ChoicePanel == null || visualLayoutAsset.ChoicePanel.InnerRegion == null)
+            return null;
+
+        // Same effective-holder rule as the resolver: designated slot, else
+        // the bottom-most visible region slot.
+        DialogueInnerRegionDefinition region = visualLayoutAsset.ChoicePanel.InnerRegion;
+        int partition = 1 + Mathf.Clamp(region.PartitionLevel, 0, 2);
+        int holder = visualLayoutAsset.ChoiceHolderSlotIndex;
+        if (holder < 0 || holder >= partition)
+            holder = Mathf.Clamp(partition - 1, 0, 2);
+        return choicePanelRoot.Q("ChoiceSlot" + holder);
     }
 
     // ─── OnOptionSelected ─────────────────────────────────────────────────────

@@ -178,7 +178,7 @@ public static class DialogueVisualEditorUxml
                                     SurfaceStyle(comp.Background, comp.Border, comp.Opacity) + " overflow: hidden;";
                                 slotEl.Append("<ui:VisualElement style=\"" + wrapStyle + "\">\n" +
                                     TextScrollLocal(comp as DialogueTextPanelDefinition) +
-                                    "</ui:VisualElement>\n");
+                                    "</ui:VisualElement>" + "\n");
                                 continue;
                             }
 
@@ -214,9 +214,9 @@ public static class DialogueVisualEditorUxml
             AbsStyle(hintArea.x, choiceTop, hintArea.width, choiceHeight) + " display: none;", null));
         float hintTop = Mathf.Min(hintArea.yMax + 8f, box.height - 22f);
         float hintLeft = Mathf.Max(0f, hintArea.xMax - 170f);
-        boxEl.Append($"<ui:Label name=\"AdvanceHint\" text=\"{Escape(engine.advanceHintText)}\" style=\"position: absolute; left: {hintLeft:0.#}px; top: {hintTop:0.#}px; width: 170px; color: {Rgba(engine.hintColour)}; font-size: {engine.hintFontSize}px; {(engine.showAdvanceHint ? "" : "display: none; ")}-unity-text-align: middle-right;\" />\n");
+        boxEl.Append($"<ui:Label name=\"AdvanceHint\" text=\"{Escape(engine.advanceHintText)}\" style=\"position: absolute; left: {hintLeft:0.#}px; top: {hintTop:0.#}px; width: 170px; color: {Rgba(engine.hintColour)}; font-size: {engine.hintFontSize}px; {(engine.showAdvanceHint ? "" : "display: none; ")}-unity-text-align: middle-right;\" />" + "\n");
 
-        body.Append($"<ui:VisualElement name=\"DialogueBox\" style=\"position: absolute; left: {Pct(box.x, canvas.x)}; top: {Pct(box.y, canvas.y)}; width: {Pct(box.width, canvas.x)}; height: {Pct(box.height, canvas.y)}; overflow: visible;\">\n{boxEl}</ui:VisualElement>\n");
+        body.Append($"<ui:VisualElement name=\"DialogueBox\" style=\"position: absolute; left: {Pct(box.x, canvas.x)}; top: {Pct(box.y, canvas.y)}; width: {Pct(box.width, canvas.x)}; height: {Pct(box.height, canvas.y)}; overflow: visible;\">\n{boxEl}</ui:VisualElement>" + "\n");
 
         // Portraits/names come AFTER the box in DOM order so they paint on top
         // of it — a name panel inside or overlapping the box must stay visible.
@@ -226,7 +226,7 @@ public static class DialogueVisualEditorUxml
         body.Append(ChoicePanelXml(resolved, asset));
 
         // ── Standard chrome the engine binds to ────────────────────────────────
-        body.Append("<ui:VisualElement name=\"BorderLayer\" style=\"position: absolute; overflow: hidden; display: none; picking-mode: Ignore;\" />\n");
+        body.Append("<ui:VisualElement name=\"BorderLayer\" style=\"position: absolute; overflow: hidden; display: none; picking-mode: Ignore;\" />" + "\n");
         body.Append(HistoryAndSettingsXml());
         body.Append(ToolbarXml(engine));
 
@@ -328,7 +328,7 @@ public static class DialogueVisualEditorUxml
             sb.Append($@"  <ui:VisualElement name=""VisualName{index}"" style=""position: absolute; left: {nameRect.x:0.#}px; top: {nameRect.y:0.#}px; width: {nameRect.width:0.#}px; height: {nameRect.height:0.#}px; justify-content: center; overflow: hidden;{Join(nameSurface)}"" />
 ");
         }
-        sb.Append("</ui:VisualElement>\n");
+        sb.Append("</ui:VisualElement>" + "\n");
         return sb.ToString();
     }
 
@@ -382,14 +382,14 @@ public static class DialogueVisualEditorUxml
                     areaEl.Append($@"    <ui:VisualElement name=""ChoiceSlot{i}"" style=""{AbsStyle(slot.Rect.x - area.Rect.x, slot.Rect.y - area.Rect.y, slot.Rect.width, slot.Rect.height)}{Join(SurfaceStyle(slotDef.Background, slotDef.Border, slotDef.Opacity))} overflow: hidden;"">
 ");
                     areaEl.Append(slotEl);
-                    areaEl.Append("    </ui:VisualElement>\n");
+                    areaEl.Append("    </ui:VisualElement>" + "\n");
                 }
-                areaEl.Append("    </ui:VisualElement>\n");
+                areaEl.Append("    </ui:VisualElement>" + "\n");
                 sb.Append(areaEl);
             }
         }
 
-        sb.Append("  </ui:VisualElement>\n</ui:VisualElement>\n");
+        sb.Append("  </ui:VisualElement>\n</ui:VisualElement>" + "\n");
         return sb.ToString();
     }
 
@@ -427,50 +427,52 @@ public static class DialogueVisualEditorUxml
         return slotEl.ToString();
     }
 
-    // ─── Choice buttons (shared preset, grouped leaves) ────────────────────────
+    // ─── Choice buttons (shared preset, auto-arranged leaves) ──────────────────
     static string ChoiceButtonsXml(ResolvedDialogueLayout resolved, DialogueLayoutAsset asset,
         ResolvedDialogueSlot holderSlot)
     {
         DialogueChoiceButtonSettings preset = asset.ChoiceButtons;
         if (preset == null) return "";
 
+        // Preview arrangement for the visible buttons; the 6-button
+        // arrangement positions the (hidden) extras so the file still renders
+        // sensibly if the engine cannot re-arrange at runtime.
+        Rect holderSlotRect, holderContent;
+        List<Rect> previewRects, fullRects;
+        bool hasPreview = TryCallArrange(asset, resolved, Mathf.Clamp(asset.ChoicePreviewCount, 0, 6), out previewRects);
+        bool hasFull    = TryCallArrange(asset, resolved, 6, out fullRects);
+
         var sb = new StringBuilder();
-        int buttonSeq = 0;
-        int groupSeq = 0;
-        for (int g = 0; g < resolved.Slots.Count; g++)
+        int total = 6;
+        for (int k = 0; k < total; k++)
         {
-            ResolvedDialogueSlot groupSlot = resolved.Slots[g];
-            if (groupSlot.AreaKind != ResolvedDialogueAreaKind.ChoiceGroup) continue;
+            Rect rect;
+            bool visible;
+            if (hasPreview && k < previewRects.Count) { rect = previewRects[k]; visible = true; }
+            else if (hasFull && k < fullRects.Count)  { rect = fullRects[k];    visible = false; }
+            else continue;
 
-            DialogueSlotDefinition groupDef = groupSlot.SlotIndex >= 0 && asset.ChoiceGroups != null &&
-                groupSlot.SlotIndex < asset.ChoiceGroups.Count
-                ? asset.ChoiceGroups[groupSlot.SlotIndex] : null;
-            if (groupDef == null) continue;
-
-            sb.Append($@"      <ui:VisualElement name=""ChoiceGroup{groupSeq}"" style=""{AbsStyle(groupSlot.Rect.x - holderSlot.Rect.x, groupSlot.Rect.y - holderSlot.Rect.y, groupSlot.Rect.width, groupSlot.Rect.height)}{Join(SurfaceStyle(groupDef.Background, groupDef.Border, groupDef.Opacity))} overflow: hidden;"">
+            string buttonStyle = AbsStyle(rect.x - holderSlot.Rect.x,
+                rect.y - holderSlot.Rect.y, rect.width, rect.height) +
+                SurfaceStyle(preset.Background, preset.Border, preset.Opacity);
+            DialoguePadding pad = preset.Padding != null ? preset.Padding : new DialoguePadding();
+            sb.Append($@"        <ui:VisualElement name=""ChoiceButton{k}"" class=""dlg-choice-btn"" style=""{buttonStyle}{(visible ? "" : " display: none;")}"">
 ");
-            int structuralGroup = groupSlot.SlotIndex;
-            for (int l = 0; l < resolved.Slots.Count; l++)
-            {
-                ResolvedDialogueSlot leaf = resolved.Slots[l];
-                if (leaf.AreaKind != ResolvedDialogueAreaKind.ChoiceLeaf) continue;
-                if (leaf.SlotIndex / 2 != structuralGroup) continue;
-
-                int k = buttonSeq++;
-                string buttonStyle = AbsStyle(leaf.Rect.x - groupSlot.Rect.x,
-                    leaf.Rect.y - groupSlot.Rect.y, leaf.Rect.width, leaf.Rect.height) +
-                    SurfaceStyle(preset.Background, preset.Border, preset.Opacity);
-                DialoguePadding pad = preset.Padding != null ? preset.Padding : new DialoguePadding();
-                sb.Append($@"        <ui:VisualElement name=""ChoiceButton{k}"" class=""dlg-choice-btn"" style=""{buttonStyle}"">
+            sb.Append($@"          <ui:Label name=""ChoiceButtonText{k}"" text="""" style=""position: absolute; left: {pad.Left:0.#}px; top: {pad.Top:0.#}px; right: {pad.Right:0.#}px; bottom: {pad.Bottom:0.#}px;{TextStyle(preset.TextStyle)} white-space: normal;"" />
 ");
-                sb.Append($@"          <ui:Label name=""ChoiceButtonText{k}"" text="""" style=""position: absolute; left: {pad.Left:0.#}px; top: {pad.Top:0.#}px; right: {pad.Right:0.#}px; bottom: {pad.Bottom:0.#}px;{TextStyle(preset.TextStyle)} white-space: normal;"" />
-");
-                sb.Append("        </ui:VisualElement>\n");
-            }
-            sb.Append("      </ui:VisualElement>\n");
-            groupSeq++;
+            sb.Append("        </ui:VisualElement>" + "\n");
         }
         return sb.ToString();
+    }
+
+    static bool TryCallArrange(DialogueLayoutAsset asset, ResolvedDialogueLayout resolved,
+        int count, out List<Rect> rects)
+    {
+        Rect slotRect, content;
+        // Same arrangement math the resolver uses, derived from this resolved
+        // layout (the public entry re-resolves; this mirrors its core).
+        return DialogueVisualLayoutResolver.ResolveChoiceButtonRectsFromLayout(asset, resolved,
+            count, out slotRect, out content, out rects);
     }
 
     /// <summary>Joins an inline style fragment into a style attribute: ensures

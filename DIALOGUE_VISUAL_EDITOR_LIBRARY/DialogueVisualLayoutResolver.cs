@@ -227,18 +227,130 @@ public static class DialogueVisualLayoutResolver
     }
 
     /// <summary>
-    /// Resolves the designated holder slot's button sub-structure: up to 3
-    /// groups, each with up to 2 leaf slots (choice buttons). Leaf SlotIndex
-    /// is encoded groupIndex*2 + leafIndex so (kind, index) lookups stay
-    /// unique. In Fixed sizing mode every leaf gets the preset size, centered
-    /// in its cell; in Variable mode each leaf keeps its own resolved size.
+    /// Auto-arranges up to 6 choice buttons inside the holder slot for a given
+    /// button count (round-robin over at most 3 rows x 2 buttons, gaps of 8).
+    /// Fixed sizing centers the preset size in each cell; Variable sizing
+    /// honors each leaf's explicit Width/Height inside its cell.
+    /// </summary>
+    public static bool ResolveChoiceButtonRects(DialogueLayoutAsset asset, Rect canvasRect,
+        int buttonCount, out Rect holderSlotRect, out Rect holderContentRect, out List<Rect> buttonRects)
+    {
+        buttonRects = new List<Rect>();
+        holderSlotRect = Rect.zero;
+        holderContentRect = Rect.zero;
+        if (asset == null || asset.ChoicePanel == null || asset.ChoicePanel.InnerRegion == null) return false;
+
+        ResolvedDialogueLayout resolved = Resolve(asset, canvasRect);
+        if (!resolved.ChoicePanelActive) return false;
+
+        return ResolveChoiceButtonRectsFromLayout(asset, resolved, buttonCount,
+            out holderSlotRect, out holderContentRect, out buttonRects);
+    }
+
+    /// <summary>Arranges buttons from an ALREADY resolved layout (no re-entry
+    /// into Resolve — safe to call from inside the resolve pass and from the
+    /// UXML generator, which already holds the resolved layout).</summary>
+    public static bool ResolveChoiceButtonRectsFromLayout(DialogueLayoutAsset asset, ResolvedDialogueLayout resolved,
+        int buttonCount, out Rect holderSlotRect, out Rect holderContentRect, out List<Rect> buttonRects)
+    {
+        buttonRects = new List<Rect>();
+        holderSlotRect = Rect.zero;
+        holderContentRect = Rect.zero;
+
+        int holderIndex = resolved.ChoiceHolderSlotIndex;
+        ResolvedDialogueSlot holderSlot = null;
+        for (int i = 0; i < resolved.Slots.Count; i++)
+            if (resolved.Slots[i].AreaKind == ResolvedDialogueAreaKind.ChoiceInner &&
+                resolved.Slots[i].SlotIndex == holderIndex)
+            { holderSlot = resolved.Slots[i]; break; }
+        if (holderSlot == null) return false;
+
+        DialogueInnerRegionDefinition region = asset.ChoicePanel.InnerRegion;
+        DialogueSlotDefinition holderDef = region.Slots != null && holderIndex < region.Slots.Count
+            ? region.Slots[holderIndex] : null;
+        holderSlotRect = holderSlot.Rect;
+        holderContentRect = ShrinkRect(holderSlot.Rect, holderDef != null ? holderDef.Padding : null);
+
+        int n = Mathf.Clamp(buttonCount, 0, 6);
+        if (n == 0 || holderContentRect.width < 2f || holderContentRect.height < 2f) return true;
+
+        bool regionHorizontal = asset.ChoiceRegionOrientation == DialogueChoiceRegionOrientation.Horizontal;
+        DialogueChoiceButtonSettings preset = asset.ChoiceButtons;
+        bool fixedSizing = preset != null && preset.SizingMode == DialogueChoiceButtonSizing.Fixed;
+
+        // Rows (groups): at most 3, filled round-robin so small counts stack
+        // vertically in a vertical region (1 per row up to 3, then 2 per row).
+        int rows = Mathf.Min(n, 3);
+        int[] perRow = new int[rows];
+        for (int i = 0; i < n; i++) perRow[i % rows]++;
+
+        const float gap = 8f;
+        float primary = regionHorizontal ? holderContentRect.width : holderContentRect.height;
+        float secondary = regionHorizontal ? holderContentRect.height : holderContentRect.width;
+        float rowGapTotal = gap * (rows - 1);
+        float rowSize = Mathf.Max(1f, (primary - rowGapTotal) / rows);
+
+        int k = 0;
+        float cursor = regionHorizontal ? holderContentRect.x : holderContentRect.y;
+        for (int r = 0; r < rows; r++)
+        {
+            int count = perRow[r];
+            float cellGapTotal = gap * (count - 1);
+            float cellSize = Mathf.Max(1f, (secondary - cellGapTotal) / count);
+
+            float cellCursor = regionHorizontal ? holderContentRect.y : holderContentRect.x;
+            for (int c = 0; c < count; c++)
+            {
+                DialogueSlotDefinition leaf = GetChoiceLeaf(asset, k);
+                float w, h;
+                if (fixedSizing)
+                {
+                    w = Mathf.Min(ResolveSize(preset.FixedWidth, secondary, secondary), secondary);
+                    h = Mathf.Min(ResolveSize(preset.FixedHeight, rowSize, rowSize), rowSize);
+                }
+                else
+                {
+                    w = leaf != null && leaf.Width != null && leaf.Width.Unit == DialogueSizeUnit.Pixels && leaf.Width.Value > 0f
+                        ? Mathf.Min(leaf.Width.Value, secondary) : cellSize;
+                    h = leaf != null && leaf.Height != null && leaf.Height.Unit == DialogueSizeUnit.Pixels && leaf.Height.Value > 0f
+                        ? Mathf.Min(leaf.Height.Value, rowSize) : rowSize;
+                }
+
+                Rect cell = regionHorizontal
+                    ? new Rect(cursor, cellCursor, rowSize, cellSize)
+                    : new Rect(cellCursor, cursor, cellSize, rowSize);
+                buttonRects.Add(new Rect(
+                    cell.center.x - w * 0.5f, cell.center.y - h * 0.5f, w, h));
+
+                if (regionHorizontal) cellCursor += cellSize + gap; else cellCursor += cellSize + gap;
+                k++;
+            }
+            cursor += rowSize + gap;
+        }
+        return true;
+    }
+
+    static DialogueSlotDefinition GetChoiceLeaf(DialogueLayoutAsset asset, int index)
+    {
+        List<DialogueSlotDefinition> groups = asset != null ? asset.ChoiceGroups : null;
+        int g = index / 2;
+        int l = index % 2;
+        if (groups == null || g >= groups.Count || groups[g] == null || groups[g].Children == null ||
+            l >= groups[g].Children.Count) return null;
+        return groups[g].Children[l];
+    }
+
+    /// <summary>
+    /// Editor-time arrangement: the resolved layout carries one leaf slot per
+    /// PREVIEW-count button so the canvas, hit-testing, dragging and inspector
+    /// all operate on exactly what is shown. No group slots are emitted — the
+    /// holder slot IS the choice area; its content partitions automatically.
     /// </summary>
     static void ResolveChoiceButtons(DialogueLayoutAsset asset, ResolvedDialogueLayout resolved)
     {
         DialogueInnerRegionDefinition region = asset.ChoicePanel.InnerRegion;
         if (region == null || region.Slots == null || region.Slots.Count == 0) return;
 
-        bool regionHorizontal = asset.ChoiceRegionOrientation == DialogueChoiceRegionOrientation.Horizontal;
         int partitionCount = GetPartitionSlotCount(region.PartitionLevel);
         int holderIndex = asset.ChoiceHolderSlotIndex;
         if (holderIndex < 0 || holderIndex >= partitionCount || holderIndex >= region.Slots.Count)
@@ -252,61 +364,25 @@ public static class DialogueVisualLayoutResolver
             { holderSlot = resolved.Slots[i]; break; }
         if (holderSlot == null) return;
 
-        DialogueSlotDefinition holderDef = region.Slots[holderIndex];
-        Rect holderContent = ShrinkRect(holderSlot.Rect, holderDef != null ? holderDef.Padding : null);
+        Rect holderSlotRect, holderContent;
+        List<Rect> buttonRects;
+        int preview = Mathf.Clamp(asset.ChoicePreviewCount, 0, 6);
+        if (!ResolveChoiceButtonRectsFromLayout(asset, resolved, preview,
+                out holderSlotRect, out holderContent, out buttonRects))
+            return;
 
-        List<DialogueSlotDefinition> groups = asset.ChoiceGroups;
-        if (groups == null || groups.Count == 0) return;
-        int groupCount = Mathf.Min(groups.Count, 3);
-        bool groupsHorizontal = !regionHorizontal;
-
-        int groupsBefore = resolved.Slots.Count;
-        ResolveSlotRow("Choice Buttons", ResolvedDialogueAreaKind.ChoiceGroup, holderContent,
-            groupsHorizontal, 0, groupCount, 8f, groups, resolved, 0);
-
-        DialogueChoiceButtonSettings preset = asset.ChoiceButtons;
-        bool fixedSizing = preset != null && preset.SizingMode == DialogueChoiceButtonSizing.Fixed;
-        float fixedW = 0f, fixedH = 0f;
-        if (fixedSizing)
+        for (int k = 0; k < buttonRects.Count; k++)
         {
-            fixedW = Mathf.Min(ResolveSize(preset.FixedWidth, holderContent.width, holderContent.width),
-                holderContent.width);
-            fixedH = Mathf.Min(ResolveSize(preset.FixedHeight, holderContent.height, holderContent.height),
-                holderContent.height);
-        }
-
-        resolved.ChoiceButtonsResolved = false;
-        for (int g = groupsBefore; g < resolved.Slots.Count; g++)
-        {
-            ResolvedDialogueSlot groupSlot = resolved.Slots[g];
-            if (groupSlot.AreaKind != ResolvedDialogueAreaKind.ChoiceGroup) continue;
-            DialogueSlotDefinition groupDef = groupSlot.SlotIndex >= 0 && groupSlot.SlotIndex < groups.Count
-                ? groups[groupSlot.SlotIndex] : null;
-            if (groupDef == null || groupDef.Children == null || groupDef.Children.Count == 0) continue;
-
-            Rect groupContent = ShrinkRect(groupSlot.Rect, groupDef.Padding);
-            int groupIndex = groupSlot.SlotIndex;
-            int leavesBefore = resolved.Slots.Count;
-            int leafCount = Mathf.Min(groupDef.Children.Count, 2);
-            ResolveSlotRow("Choice", ResolvedDialogueAreaKind.ChoiceLeaf, groupContent,
-                regionHorizontal, 0, leafCount, 8f, groupDef.Children, resolved, 0);
-
-            for (int l = leavesBefore; l < resolved.Slots.Count; l++)
+            resolved.Slots.Add(new ResolvedDialogueSlot
             {
-                ResolvedDialogueSlot leaf = resolved.Slots[l];
-                if (leaf.AreaKind != ResolvedDialogueAreaKind.ChoiceLeaf) continue;
-                // encode: group*2 + structural leaf index → unique stable key
-                leaf.SlotIndex = groupIndex * 2 + leaf.SlotIndex;
-                resolved.ChoiceButtonsResolved = true;
-                if (fixedSizing)
-                {
-                    leaf.Rect = new Rect(
-                        leaf.Rect.center.x - fixedW * 0.5f,
-                        leaf.Rect.center.y - fixedH * 0.5f,
-                        fixedW, fixedH);
-                }
-            }
+                AreaName = "Choice",
+                AreaKind = ResolvedDialogueAreaKind.ChoiceLeaf,
+                SlotIndex = k,
+                SlotId = "Choice " + (k + 1),
+                Rect = buttonRects[k]
+            });
         }
+        resolved.ChoiceButtonsResolved = buttonRects.Count > 0;
     }
 
     static void ResolveOuterArea(DialogueAttachedAreaDefinition def, Rect mainRect,
