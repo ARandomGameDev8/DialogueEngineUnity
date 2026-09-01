@@ -16,6 +16,8 @@ public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
 {
     Dialogue_Engine engine;
     DialogueLayoutAsset layoutAsset;
+    Button peekChoice;
+    bool choicePeeked;
 
     VisualElement previewViewport;
     VisualElement previewStage;
@@ -92,6 +94,11 @@ public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
 
         var refreshButton = new Button(RefreshPreview) { text = "Refresh" };
         toolbar.Add(refreshButton);
+
+        // The choice panel ships hidden (it only appears while taking a
+        // choice at Play); peek at it here while designing.
+        peekChoice = new Button(TogglePeekChoice) { text = "Peek Choice Panel" };
+        toolbar.Add(peekChoice);
 
         root.Add(toolbar);
 
@@ -183,7 +190,25 @@ public sealed class DialogueVisualLayoutPreviewWindow : EditorWindow
         previewStage.style.width = reference.x;
         previewStage.style.height = reference.y;
         tree.CloneTree(previewStage);
+        if (choicePeeked)
+        {
+            VisualElement choicePanel = previewStage.Q("ChoicePanel");
+            if (choicePanel != null) choicePanel.style.display = DisplayStyle.Flex;
+        }
         ApplyStageScale();
+    }
+
+    void TogglePeekChoice()
+    {
+        choicePeeked = !choicePeeked;
+        if (peekChoice != null)
+            peekChoice.text = choicePeeked ? "Hide Choice Panel" : "Peek Choice Panel";
+        if (previewStage != null)
+        {
+            VisualElement choicePanel = previewStage.Q("ChoicePanel");
+            if (choicePanel != null)
+                choicePanel.style.display = choicePeeked ? DisplayStyle.Flex : DisplayStyle.None;
+        }
     }
 
     void ApplyStageScale()

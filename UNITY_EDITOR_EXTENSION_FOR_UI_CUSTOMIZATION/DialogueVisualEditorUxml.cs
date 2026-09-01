@@ -131,6 +131,8 @@ public static class DialogueVisualEditorUxml
         for (int i = 0; i < resolved.Areas.Count; i++)
         {
             ResolvedDialogueArea area = resolved.Areas[i];
+            if (area.AreaKind == ResolvedDialogueAreaKind.ChoiceInner)
+                continue; // emitted as its own standalone ChoicePanel below
             DialogueBackgroundStyle bg = null;
             DialogueBorderStyle border = null;
             DialogueOpacitySettings opacity = null;
@@ -219,6 +221,9 @@ public static class DialogueVisualEditorUxml
         // Portraits/names come AFTER the box in DOM order so they paint on top
         // of it — a name panel inside or overlapping the box must stay visible.
         body.Append(portraits);
+
+        // ── Choice event panel — hidden until the player takes a choice ──────
+        body.Append(ChoicePanelXml(resolved, asset));
 
         // ── Standard chrome the engine binds to ────────────────────────────────
         body.Append("<ui:VisualElement name=\"BorderLayer\" style=\"position: absolute; overflow: hidden; display: none; picking-mode: Ignore;\" />\n");
@@ -324,6 +329,82 @@ public static class DialogueVisualEditorUxml
 ");
         }
         sb.Append("</ui:VisualElement>\n");
+        return sb.ToString();
+    }
+
+    // ─── Choice event panel ─────────────────────────────────────────────────────
+    static string ChoicePanelXml(ResolvedDialogueLayout resolved, DialogueLayoutAsset asset)
+    {
+        if (!resolved.ChoicePanelActive) return "";
+
+        DialogueMainPanelDefinition panel = asset.ChoicePanel;
+        DialogueInnerRegionDefinition region = panel != null ? panel.InnerRegion : null;
+        Rect panelRect = resolved.ChoicePanelRect;
+
+        var sb = new StringBuilder();
+        // Surface styling lives on a child so the panel maps 1:1 onto canvas
+        // coordinates, exactly like the main box.
+        sb.Append($@"<ui:VisualElement name=""ChoicePanel"" style=""position: absolute; left: {Pct(panelRect.x, resolved.CanvasRect.width)}; top: {Pct(panelRect.y, resolved.CanvasRect.height)}; width: {Pct(panelRect.width, resolved.CanvasRect.width)}; height: {Pct(panelRect.height, resolved.CanvasRect.height)}; display: none;"">
+  <ui:VisualElement name=""ChoicePanelSurface"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0;{Join(SurfaceStyle(panel.Background, panel.Border, panel.Opacity))} overflow: hidden;"">
+");
+
+        if (region != null)
+        {
+            ResolvedDialogueArea area = null;
+            for (int i = 0; i < resolved.Areas.Count; i++)
+                if (resolved.Areas[i].AreaKind == ResolvedDialogueAreaKind.ChoiceInner)
+                { area = resolved.Areas[i]; break; }
+
+            if (area != null)
+            {
+                var areaEl = new StringBuilder();
+                areaEl.Append($@"    <ui:VisualElement name=""ChoiceRegion"" style=""{AbsStyle(area.Rect.x - panelRect.x, area.Rect.y - panelRect.y, area.Rect.width, area.Rect.height)}{Join(SurfaceStyle(region.Background, region.Border, region.Opacity))} overflow: hidden;"">
+");
+                int slotCount = Mathf.Clamp(1 + Mathf.Clamp(region.PartitionLevel, 0, 2), 1, 3);
+                for (int i = 0; i < slotCount; i++)
+                {
+                    ResolvedDialogueSlot slot = FindSlot(resolved, ResolvedDialogueAreaKind.ChoiceInner, i);
+                    DialogueSlotDefinition slotDef = region.Slots != null && i < region.Slots.Count
+                        ? region.Slots[i] : null;
+                    if (slot == null || slotDef == null) continue;
+
+                    var slotEl = new StringBuilder();
+                    bool labelDone = false;
+                    if (slotDef.Components != null)
+                    {
+                        for (int c = 0; c < slotDef.Components.Count; c++)
+                        {
+                            DialogueComponentDefinition comp = slotDef.Components[c];
+                            ResolvedDialogueComponentRect compRect = FindComponent(
+                                resolved, ResolvedDialogueAreaKind.ChoiceInner, i, c);
+                            if (comp == null || compRect == null) continue;
+
+                            Rect r = Relative(compRect.Rect, slot.Rect);
+                            DialogueTextPanelDefinition text = comp as DialogueTextPanelDefinition;
+                            if (text != null && !labelDone)
+                            {
+                                // The first text panel in a choice slot is that
+                                // option's LIVE label — the engine writes the
+                                // option text here at runtime.
+                                labelDone = true;
+                                slotEl.Append($@"      <ui:Label name=""ChoiceLabel{i}"" text="""" style=""{AbsStyle(r.x, r.y, r.width, r.height)}{Join(SurfaceStyle(comp.Background, comp.Border, comp.Opacity))}{TextStyle(text.TextStyle)}"" />
+");
+                                continue;
+                            }
+                            slotEl.Append(StaticComponentXml(comp, r));
+                        }
+                    }
+                    areaEl.Append($@"    <ui:VisualElement name=""ChoiceSlot{i}"" style=""{AbsStyle(slot.Rect.x - area.Rect.x, slot.Rect.y - area.Rect.y, slot.Rect.width, slot.Rect.height)}{Join(SurfaceStyle(slotDef.Background, slotDef.Border, slotDef.Opacity))} overflow: hidden;"">
+");
+                    areaEl.Append(slotEl);
+                    areaEl.Append("    </ui:VisualElement>\n");
+                }
+                areaEl.Append("    </ui:VisualElement>\n");
+                sb.Append(areaEl);
+            }
+        }
+
+        sb.Append("  </ui:VisualElement>\n</ui:VisualElement>\n");
         return sb.ToString();
     }
 

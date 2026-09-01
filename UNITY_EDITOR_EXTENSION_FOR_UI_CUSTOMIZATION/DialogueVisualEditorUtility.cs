@@ -23,6 +23,8 @@ public static class DialogueVisualEditorUtility
         ResolvedDialogueAreaKind kind)
     {
         if (asset == null) return false;
+        if (kind == ResolvedDialogueAreaKind.ChoiceInner)
+            return asset.ChoicePanelEnabled && asset.ChoicePanel != null && asset.ChoicePanel.Enabled;
         switch (kind)
         {
             case ResolvedDialogueAreaKind.Top: return asset.TopAreaEnabled;
@@ -37,6 +39,12 @@ public static class DialogueVisualEditorUtility
         ResolvedDialogueAreaKind kind, bool enabled)
     {
         if (asset == null) return;
+        if (kind == ResolvedDialogueAreaKind.ChoiceInner)
+        {
+            asset.ChoicePanelEnabled = enabled;
+            if (asset.ChoicePanel != null) asset.ChoicePanel.Enabled = enabled;
+            return;
+        }
         switch (kind)
         {
             case ResolvedDialogueAreaKind.Top: asset.TopAreaEnabled = enabled; break;
@@ -55,6 +63,9 @@ public static class DialogueVisualEditorUtility
         if (kind == ResolvedDialogueAreaKind.MainInner)
             return asset.MainPanel != null && asset.MainPanel.InnerRegion != null
                 ? asset.MainPanel.InnerRegion.Slots : null;
+        if (kind == ResolvedDialogueAreaKind.ChoiceInner)
+            return asset.ChoicePanel != null && asset.ChoicePanel.InnerRegion != null
+                ? asset.ChoicePanel.InnerRegion.Slots : null;
         DialogueAttachedAreaDefinition area = GetArea(asset, kind);
         return area != null ? area.Slots : null;
     }
@@ -90,6 +101,8 @@ public static class DialogueVisualEditorUtility
     {
         if (asset == null) return;
         EnsureSlots(asset.MainPanel != null ? asset.MainPanel.InnerRegion : null);
+        if (asset.ChoicePanelEnabled)
+            EnsureSlots(asset.ChoicePanel != null ? asset.ChoicePanel.InnerRegion : null);
         EnsureSlots(asset.TopArea);
         EnsureSlots(asset.BottomArea);
         EnsureSlots(asset.LeftArea);

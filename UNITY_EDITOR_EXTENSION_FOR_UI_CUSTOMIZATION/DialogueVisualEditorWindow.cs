@@ -27,6 +27,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     {
         None,
         MainPanel,
+        ChoicePanel,
         Area,
         Slot,
         Component
@@ -364,6 +365,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             case SelectionKind.MainPanel:
                 DrawMainPanelInspector();
                 break;
+            case SelectionKind.ChoicePanel:
+                DrawChoicePanelInspector();
+                break;
             case SelectionKind.Area:
                 DrawAreaInspector();
                 break;
@@ -390,6 +394,31 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
         DialogueMainPanelDefinition mainPanel = layoutAsset.MainPanel;
         DialogueInnerRegionDefinition innerRegion = mainPanel != null ? mainPanel.InnerRegion : null;
+
+        // Choice event panel (drawn under its own region/slots/components,
+        // which resolve through the normal Areas/Slots/Components passes).
+        if (layout.ChoicePanelActive)
+        {
+            DialogueMainPanelDefinition choicePanel = layoutAsset.ChoicePanel;
+            DialogueVisualStylePreviewUtility.DrawStyledElement(
+                layout.ChoicePanelRect,
+                choicePanel != null ? choicePanel.Background : null,
+                choicePanel != null ? choicePanel.Border : null,
+                choicePanel != null ? choicePanel.Shadow : null,
+                choicePanel != null ? choicePanel.Opacity : null,
+                new Color(0.30f, 0.18f, 0.38f, 0.85f),
+                new Color(0.85f, 0.62f, 1f, 1f),
+                2f);
+            if (selection.Kind == SelectionKind.ChoicePanel)
+                DialogueVisualStylePreviewUtility.DrawSelectionOutline(
+                    layout.ChoicePanelRect,
+                    choicePanel != null ? choicePanel.Border : null,
+                    new Color(1f, 1f, 0.45f, 1f),
+                    2.5f);
+            if (showLabels)
+                GUI.Label(new Rect(layout.ChoicePanelRect.x + 6f, layout.ChoicePanelRect.y + 4f, 240f, 18f),
+                    "Choice Panel", EditorStyles.whiteBoldLabel);
+        }
 
         DialogueVisualStylePreviewUtility.DrawStyledElement(
             layout.MainPanelRect,
@@ -419,7 +448,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             DialogueOpacitySettings opacity = null;
             Color fallbackFill = area.AreaKind == ResolvedDialogueAreaKind.MainInner
                 ? new Color(0.22f, 0.26f, 0.30f, 0.30f)
-                : new Color(0.16f, 0.36f, 0.24f, 0.40f);
+                : area.AreaKind == ResolvedDialogueAreaKind.ChoiceInner
+                    ? new Color(0.34f, 0.22f, 0.42f, 0.35f)
+                    : new Color(0.16f, 0.36f, 0.24f, 0.40f);
 
             if (area.AreaKind == ResolvedDialogueAreaKind.MainInner)
             {
@@ -427,6 +458,15 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 border = innerRegion != null ? innerRegion.Border : null;
                 shadow = innerRegion != null ? innerRegion.Shadow : null;
                 opacity = innerRegion != null ? innerRegion.Opacity : null;
+            }
+            else if (area.AreaKind == ResolvedDialogueAreaKind.ChoiceInner)
+            {
+                DialogueInnerRegionDefinition choiceRegion = layoutAsset.ChoicePanel != null
+                    ? layoutAsset.ChoicePanel.InnerRegion : null;
+                background = choiceRegion != null ? choiceRegion.Background : null;
+                border = choiceRegion != null ? choiceRegion.Border : null;
+                shadow = choiceRegion != null ? choiceRegion.Shadow : null;
+                opacity = choiceRegion != null ? choiceRegion.Opacity : null;
             }
             else
             {
@@ -675,7 +715,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
             case EditTool.Size:
             case EditTool.ScaleRoot:
-                if (editTool == EditTool.ScaleRoot && selection.Kind != SelectionKind.MainPanel)
+                if (editTool == EditTool.ScaleRoot &&
+                    selection.Kind != SelectionKind.MainPanel &&
+                    selection.Kind != SelectionKind.ChoicePanel)
                     return;
                 EditorGUIUtility.AddCursorRect(GetTopRightCornerHandle(selectedRect, size), MouseCursor.ResizeUpRight);
                 EditorGUIUtility.AddCursorRect(GetBottomLeftCornerHandle(selectedRect, size), MouseCursor.ResizeUpRight);
@@ -703,11 +745,12 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 break;
 
             case EditTool.ScaleRoot:
-                if (selection.Kind == SelectionKind.MainPanel)
+                if (selection.Kind == SelectionKind.MainPanel || selection.Kind == SelectionKind.ChoicePanel)
                 {
                     if (TryHitCornerHandle(selectedRect, mouse, size, out dragHandleDirection))
                     {
-                        BeginSizedDrag(DragMode.ScaleMainSymmetric, selectedRect, GetSelectedParentRect(), "Scale Main Panel");
+                        BeginSizedDrag(DragMode.ScaleMainSymmetric, selectedRect, GetSelectedParentRect(),
+                            selection.Kind == SelectionKind.ChoicePanel ? "Scale Choice Panel" : "Scale Main Panel");
                         return true;
                     }
                 }
@@ -847,6 +890,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                     dragStartRect.height), dragParentRect);
                 if (selection.Kind == SelectionKind.MainPanel)
                     ApplyMainPanelRect(movedRect, false, true);
+                else if (selection.Kind == SelectionKind.ChoicePanel)
+                    ApplyMainPanelRect(movedRect, false, true, layoutAsset.ChoicePanel);
                 else
                     ApplyRectToCurrentSelection(movedRect);
                 break;
@@ -998,6 +1043,12 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         DrawHierarchyButton("Main Panel", SelectionKind.MainPanel, ResolvedDialogueAreaKind.MainInner, -1, -1, 0);
         DrawHierarchyButton("Inner Region", SelectionKind.Area, ResolvedDialogueAreaKind.MainInner, -1, -1, 1);
         DrawHierarchySlots(ResolvedDialogueAreaKind.MainInner, 2);
+        if (layoutAsset.ChoicePanelEnabled && layoutAsset.ChoicePanel != null)
+        {
+            DrawHierarchyButton("Choice Panel", SelectionKind.ChoicePanel, ResolvedDialogueAreaKind.ChoiceInner, -1, -1, 0);
+            DrawHierarchyButton("Choice Region", SelectionKind.Area, ResolvedDialogueAreaKind.ChoiceInner, -1, -1, 1);
+            DrawHierarchySlots(ResolvedDialogueAreaKind.ChoiceInner, 2);
+        }
         DrawHierarchyArea(ResolvedDialogueAreaKind.Top, "Top Area");
         DrawHierarchyArea(ResolvedDialogueAreaKind.Bottom, "Bottom Area");
         DrawHierarchyArea(ResolvedDialogueAreaKind.Left, "Left Area");
@@ -1078,6 +1129,12 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                     MessageType.Warning);
         }
 
+        EditorGUILayout.Space(6f);
+        layoutAsset.ChoicePanelEnabled = EditorGUILayout.Toggle(
+            new GUIContent("Choice Panel Enabled",
+                "Design the choice event UI: a standalone panel with up to 3 fully customizable option slots that appears only while the player is taking a choice."),
+            layoutAsset.ChoicePanelEnabled);
+
         EditorGUILayout.Space(8f);
         DrawSpeakerEmphasisInspector();
     }
@@ -1142,11 +1199,53 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             MessageType.None);
     }
 
+    void DrawChoicePanelInspector()
+    {
+        DialogueMainPanelDefinition panel = layoutAsset.ChoicePanel;
+        if (panel == null) return;
+        panel.DisplayName = EditorGUILayout.TextField("Display Name", panel.DisplayName);
+        panel.Enabled = EditorGUILayout.Toggle("Enabled", panel.Enabled);
+        panel.AnchorPreset = (DialogueAnchorPreset)EditorGUILayout.EnumPopup("Anchor", panel.AnchorPreset);
+        panel.FillMode = (DialoguePanelFillMode)EditorGUILayout.EnumPopup("Fill Mode", panel.FillMode);
+        DrawSizeField("Width", panel.Width);
+        DrawSizeField("Height", panel.Height);
+        DrawPaddingField("Padding", panel.Padding);
+        panel.ZLayer = EditorGUILayout.IntSlider("Z Layer", panel.ZLayer, -10, 10);
+
+        if (panel.CustomAnchor == null)
+            panel.CustomAnchor = new DialogueCustomAnchorDefinition();
+        if (panel.AnchorPreset == DialogueAnchorPreset.Custom)
+        {
+            panel.CustomAnchor.HorizontalReference = (DialogueAnchorReferenceEdge)EditorGUILayout.EnumPopup("Horizontal Reference", panel.CustomAnchor.HorizontalReference);
+            panel.CustomAnchor.VerticalReference = (DialogueAnchorReferenceEdge)EditorGUILayout.EnumPopup("Vertical Reference", panel.CustomAnchor.VerticalReference);
+        }
+        panel.CustomAnchor.OffsetX = EditorGUILayout.FloatField("Anchor Offset X", panel.CustomAnchor.OffsetX);
+        panel.CustomAnchor.OffsetY = EditorGUILayout.FloatField("Anchor Offset Y", panel.CustomAnchor.OffsetY);
+
+        EditorGUILayout.Space(8f);
+        GUILayout.Label("Choice Panel Style", EditorStyles.boldLabel);
+        DrawBackgroundStyle(panel.Background);
+        DrawBorderStyle(panel.Border);
+        DrawShadowStyle(panel.Shadow);
+        DrawOpacity(panel.Opacity);
+
+        EditorGUILayout.Space(8f);
+        EditorGUILayout.HelpBox(
+            "The Choice Panel appears at Play ONLY while the player is taking a choice, exactly at this rect with these styles. Its Choice Region partitions into 1-3 terminal slots (partition level 0-2) — one per option. Put a Text Panel component in each slot: the first one becomes that option's live label (full text styling). Selecting an option is click-only.",
+            MessageType.None);
+    }
+
     void DrawAreaInspector()
     {
         if (selection.AreaKind == ResolvedDialogueAreaKind.MainInner)
         {
             DrawInnerRegionInspector();
+            return;
+        }
+        if (selection.AreaKind == ResolvedDialogueAreaKind.ChoiceInner)
+        {
+            DrawInnerRegionInspector(layoutAsset.ChoicePanel != null
+                ? layoutAsset.ChoicePanel.InnerRegion : null);
             return;
         }
         DialogueAttachedAreaDefinition area = DialogueVisualEditorUtility.GetArea(layoutAsset, selection.AreaKind);
@@ -1253,10 +1352,11 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         if (GUILayout.Button("Add Image Panel")) AddComponentToSelectedSlot(DialogueComponentType.ImagePanel);
     }
 
-    void DrawInnerRegionInspector()
+    void DrawInnerRegionInspector(DialogueInnerRegionDefinition region = null)
     {
-        DialogueInnerRegionDefinition region = layoutAsset != null && layoutAsset.MainPanel != null
-            ? layoutAsset.MainPanel.InnerRegion : null;
+        if (region == null)
+            region = layoutAsset != null && layoutAsset.MainPanel != null
+                ? layoutAsset.MainPanel.InnerRegion : null;
         if (region == null) return;
 
         region.DisplayName = EditorGUILayout.TextField("Display Name", region.DisplayName);
@@ -1284,6 +1384,12 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         if (kind == ResolvedDialogueAreaKind.MainInner)
         {
             DialogueInnerRegionDefinition region = layoutAsset.MainPanel != null ? layoutAsset.MainPanel.InnerRegion : null;
+            return DialogueVisualEditorUtility.GetVisibleSlotCount(region);
+        }
+        if (kind == ResolvedDialogueAreaKind.ChoiceInner)
+        {
+            DialogueInnerRegionDefinition region = layoutAsset.ChoicePanel != null
+                ? layoutAsset.ChoicePanel.InnerRegion : null;
             return DialogueVisualEditorUtility.GetVisibleSlotCount(region);
         }
         DialogueAttachedAreaDefinition area = DialogueVisualEditorUtility.GetArea(layoutAsset, kind);
@@ -1600,6 +1706,16 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 };
             }
         }
+        if (resolved.ChoicePanelActive && resolved.ChoicePanelRect.Contains(mouse))
+        {
+            return new SelectionState
+            {
+                Kind = SelectionKind.ChoicePanel,
+                AreaKind = ResolvedDialogueAreaKind.ChoiceInner,
+                SlotIndex = -1,
+                ComponentIndex = -1
+            };
+        }
         if (resolved.MainPanelRect.Contains(mouse))
         {
             return new SelectionState
@@ -1723,6 +1839,11 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 rect = layout.MainPanelRect;
                 return rect.width > 0f && rect.height > 0f;
 
+            case SelectionKind.ChoicePanel:
+                if (!layout.ChoicePanelActive) return false;
+                rect = layout.ChoicePanelRect;
+                return rect.width > 0f && rect.height > 0f;
+
             case SelectionKind.Area:
                 ResolvedDialogueArea area = FindSelectedArea(layout);
                 if (area == null) return false;
@@ -1754,12 +1875,18 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         switch (selection.Kind)
         {
             case SelectionKind.MainPanel:
+            case SelectionKind.ChoicePanel:
                 return resolved.CanvasRect;
 
             case SelectionKind.Area:
                 if (selection.AreaKind == ResolvedDialogueAreaKind.MainInner)
                     return DialogueVisualLayoutResolver.ShrinkRect(resolved.MainPanelRect,
                         layoutAsset != null && layoutAsset.MainPanel != null ? layoutAsset.MainPanel.Padding : null);
+                if (selection.AreaKind == ResolvedDialogueAreaKind.ChoiceInner)
+                    return resolved.ChoicePanelActive
+                        ? DialogueVisualLayoutResolver.ShrinkRect(resolved.ChoicePanelRect,
+                            layoutAsset != null && layoutAsset.ChoicePanel != null ? layoutAsset.ChoicePanel.Padding : null)
+                        : resolved.CanvasRect;
                 return resolved.CanvasRect;
 
             case SelectionKind.Slot:
@@ -1787,9 +1914,16 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             case SelectionKind.MainPanel:
                 ApplyMainPanelRect(targetRect, true, false);
                 break;
+            case SelectionKind.ChoicePanel:
+                ApplyMainPanelRect(targetRect, true, false, layoutAsset.ChoicePanel);
+                break;
             case SelectionKind.Area:
                 if (selection.AreaKind == ResolvedDialogueAreaKind.MainInner)
                     ApplyInnerRegionRect(targetRect);
+                else if (selection.AreaKind == ResolvedDialogueAreaKind.ChoiceInner)
+                    ApplyInnerRegionRect(targetRect,
+                        layoutAsset.ChoicePanel != null ? layoutAsset.ChoicePanel.InnerRegion : null,
+                        ResolvedDialogueAreaKind.ChoiceInner);
                 else
                     ApplyAttachedAreaRect(targetRect);
                 break;
@@ -1803,20 +1937,21 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     }
 
     void ApplyMainPanelRect(Rect targetRect, bool forceFixedFillMode,
-        bool updateAnchorFromPosition)
+        bool updateAnchorFromPosition, DialogueMainPanelDefinition overridePanel = null)
     {
-        if (layoutAsset == null || layoutAsset.MainPanel == null || resolved == null)
+        if (layoutAsset == null || resolved == null)
             return;
 
-        DialogueMainPanelDefinition panel = layoutAsset.MainPanel;
+        DialogueMainPanelDefinition panel = overridePanel != null ? overridePanel : layoutAsset.MainPanel;
+        if (panel == null) return;
         if (panel.CustomAnchor == null)
             panel.CustomAnchor = new DialogueCustomAnchorDefinition();
 
         targetRect = ClampRectInside(targetRect, resolved.CanvasRect);
+        targetRect = ConstrainRectToPanelMinMax(targetRect, panel);
         // Apply the same min/max clamping the resolver will apply before the anchor
         // offsets are derived; otherwise the dragged edge stops tracking the cursor
         // and the panel appears to drift or slide once a min/max limit is hit.
-        targetRect = ConstrainRectToPanelMinMax(targetRect);
         float anchorWidth = targetRect.width;
         float anchorHeight = targetRect.height;
 
@@ -1843,9 +1978,10 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         panel.CustomAnchor.OffsetY = targetRect.y - baseRect.y;
     }
 
-    Rect ConstrainRectToPanelMinMax(Rect rect)
+    Rect ConstrainRectToPanelMinMax(Rect rect, DialogueMainPanelDefinition panel = null)
     {
-        DialogueMainPanelDefinition panel = layoutAsset != null ? layoutAsset.MainPanel : null;
+        if (panel == null)
+            panel = layoutAsset != null ? layoutAsset.MainPanel : null;
         if (panel == null || panel.MinMax == null) return rect;
 
         DialogueMinMaxSize minMax = panel.MinMax;
@@ -1881,15 +2017,29 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         return new Rect(x, y, width, height);
     }
 
-    void ApplyInnerRegionRect(Rect targetRect)
+    void ApplyInnerRegionRect(Rect targetRect, DialogueInnerRegionDefinition region = null,
+        ResolvedDialogueAreaKind kind = ResolvedDialogueAreaKind.MainInner)
     {
-        if (layoutAsset == null || layoutAsset.MainPanel == null || layoutAsset.MainPanel.InnerRegion == null ||
-            resolved == null)
+        if (layoutAsset == null || resolved == null)
             return;
 
-        DialogueInnerRegionDefinition region = layoutAsset.MainPanel.InnerRegion;
-        Rect parentRect = DialogueVisualLayoutResolver.ShrinkRect(resolved.MainPanelRect,
-            layoutAsset.MainPanel.Padding);
+        if (kind == ResolvedDialogueAreaKind.ChoiceInner)
+        {
+            if (region == null && layoutAsset.ChoicePanel != null)
+                region = layoutAsset.ChoicePanel.InnerRegion;
+            if (region == null) return;
+        }
+        else if (region == null)
+        {
+            region = layoutAsset.MainPanel != null ? layoutAsset.MainPanel.InnerRegion : null;
+            if (region == null) return;
+        }
+
+        Rect parentRect = kind == ResolvedDialogueAreaKind.ChoiceInner
+            ? DialogueVisualLayoutResolver.ShrinkRect(resolved.ChoicePanelRect,
+                layoutAsset.ChoicePanel != null ? layoutAsset.ChoicePanel.Padding : null)
+            : DialogueVisualLayoutResolver.ShrinkRect(resolved.MainPanelRect,
+                layoutAsset.MainPanel != null ? layoutAsset.MainPanel.Padding : null);
         targetRect = ClampRectInside(targetRect, parentRect);
 
         bool changeWidth = DragChangesWidth(dragMode);
@@ -1899,7 +2049,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         // slots with the drag so resizing the region resizes it instead of sliding it.
         if (region.PartitionLevel > 0)
         {
-            ResolvedDialogueArea currentArea = FindAreaByKind(resolved, ResolvedDialogueAreaKind.MainInner);
+            ResolvedDialogueArea currentArea = FindAreaByKind(resolved, kind);
             Rect currentRect = currentArea != null ? currentArea.Rect : dragStartRect;
             ScalePartitionedSlotsForParentResize(region.Slots,
                 DialogueVisualEditorUtility.GetVisibleSlotCount(region), true,

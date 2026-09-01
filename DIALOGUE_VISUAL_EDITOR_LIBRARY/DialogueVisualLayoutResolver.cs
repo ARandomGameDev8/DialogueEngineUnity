@@ -8,6 +8,9 @@ public sealed class ResolvedDialogueLayout
     public Rect CanvasRect;
     public Rect MainPanelRect;
     public int MainPanelZ;
+    public bool ChoicePanelActive;
+    public Rect ChoicePanelRect;
+    public int ChoicePanelZ;
     public readonly List<ResolvedDialogueArea> Areas = new List<ResolvedDialogueArea>();
     public readonly List<ResolvedDialogueSlot> Slots = new List<ResolvedDialogueSlot>();
     public readonly List<ResolvedDialogueComponentRect> Components = new List<ResolvedDialogueComponentRect>();
@@ -19,7 +22,8 @@ public enum ResolvedDialogueAreaKind
     Top,
     Bottom,
     Left,
-    Right
+    Right,
+    ChoiceInner
 }
 
 [Serializable]
@@ -71,12 +75,25 @@ public static class DialogueVisualLayoutResolver
         resolved.MainPanelZ = asset.MainPanel.ZLayer;
 
         Rect mainInnerRect = ShrinkRect(resolved.MainPanelRect, asset.MainPanel.Padding);
-        ResolveInnerRegion(asset.MainPanel.InnerRegion, mainInnerRect, "Main Panel / Inner Region", resolved);
+        ResolveInnerRegion(asset.MainPanel.InnerRegion, mainInnerRect, "Main Panel / Inner Region", ResolvedDialogueAreaKind.MainInner, resolved);
 
         ResolveOuterArea(ShouldResolveAttachedArea(asset, ResolvedDialogueAreaKind.Top) ? asset.TopArea : null, resolved.MainPanelRect, canvasRect, resolved);
         ResolveOuterArea(ShouldResolveAttachedArea(asset, ResolvedDialogueAreaKind.Bottom) ? asset.BottomArea : null, resolved.MainPanelRect, canvasRect, resolved);
         ResolveOuterArea(ShouldResolveAttachedArea(asset, ResolvedDialogueAreaKind.Left) ? asset.LeftArea : null, resolved.MainPanelRect, canvasRect, resolved);
         ResolveOuterArea(ShouldResolveAttachedArea(asset, ResolvedDialogueAreaKind.Right) ? asset.RightArea : null, resolved.MainPanelRect, canvasRect, resolved);
+
+        // Choice event panel — a standalone panel that appears only while the
+        // player is taking a choice. Partitioning follows the same rules as the
+        // main inner region (1-3 terminal slots).
+        if (asset.ChoicePanelEnabled && asset.ChoicePanel != null && asset.ChoicePanel.Enabled)
+        {
+            resolved.ChoicePanelActive = true;
+            resolved.ChoicePanelRect = ResolveMainPanelRect(asset.ChoicePanel, canvasRect);
+            resolved.ChoicePanelZ = asset.ChoicePanel.ZLayer;
+            Rect choiceInner = ShrinkRect(resolved.ChoicePanelRect, asset.ChoicePanel.Padding);
+            ResolveInnerRegion(asset.ChoicePanel.InnerRegion, choiceInner,
+                "Choice Region", ResolvedDialogueAreaKind.ChoiceInner, resolved);
+        }
 
         return resolved;
     }
@@ -166,7 +183,7 @@ public static class DialogueVisualLayoutResolver
     }
 
     static void ResolveInnerRegion(DialogueInnerRegionDefinition def, Rect parentRect,
-        string areaName, ResolvedDialogueLayout resolved)
+        string areaName, ResolvedDialogueAreaKind kind, ResolvedDialogueLayout resolved)
     {
         if (def == null) return;
 
@@ -192,13 +209,13 @@ public static class DialogueVisualLayoutResolver
         resolved.Areas.Add(new ResolvedDialogueArea
         {
             Name = areaName,
-            AreaKind = ResolvedDialogueAreaKind.MainInner,
+            AreaKind = kind,
             Side = DialogueAttachedAreaSide.Top,
             Rect = areaRect,
             ZLayer = 0
         });
 
-        ResolveSlotsAndComponents(areaName, ResolvedDialogueAreaKind.MainInner,
+        ResolveSlotsAndComponents(areaName, kind,
             areaRect, true, GetPartitionSlotCount(def.PartitionLevel),
             def.InterSlotSpacing, def.Slots, resolved);
     }

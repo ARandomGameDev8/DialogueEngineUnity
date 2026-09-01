@@ -46,6 +46,43 @@ public sealed class DialogueLayoutAsset : ScriptableObject
             DisplayName = "Right Area"
         };
 
+    // ── Choice event UI ───────────────────────────────────────────────────────
+    // A second, fully customizable panel that appears ONLY while the player is
+    // taking a choice. Same customization surface as the main panel (anchor,
+    // fill, size, min/max, padding, background, border, shadow, opacity, z).
+    // Its inner region partitions into 1-3 terminal choice slots — one per
+    // option; the first text panel component in each slot becomes that
+    // option's live label.
+    public bool ChoicePanelEnabled;
+
+    public DialogueMainPanelDefinition ChoicePanel = new DialogueMainPanelDefinition
+    {
+        DisplayName = "Choice Panel",
+        Enabled = true,
+        AnchorPreset = DialogueAnchorPreset.Center,
+        Width = new DialogueSizeValue { Unit = DialogueSizeUnit.Percent, Value = 40f },
+        Height = new DialogueSizeValue { Unit = DialogueSizeUnit.Pixels, Value = 200f },
+        Padding = new DialoguePadding { Left = 16f, Right = 16f, Top = 12f, Bottom = 12f },
+        Background = new DialogueBackgroundStyle
+        {
+            Mode = DialogueBackgroundMode.SolidColor,
+            ColorA = new Color(0f, 0f, 0f, 0.92f)
+        },
+        Border = new DialogueBorderStyle { Enabled = true, BorderColor = new Color(1f, 1f, 1f, 0.35f) },
+        InnerRegion = new DialogueInnerRegionDefinition
+        {
+            DisplayName = "Choice Region",
+            PartitionLevel = 2,
+            InterSlotSpacing = 8f,
+            Slots = new List<DialogueSlotDefinition>
+            {
+                new DialogueSlotDefinition { SlotId = "A", DisplayName = "Choice 1" },
+                new DialogueSlotDefinition { SlotId = "B", DisplayName = "Choice 2" },
+                new DialogueSlotDefinition { SlotId = "C", DisplayName = "Choice 3" }
+            }
+        }
+    };
+
     // How the current speaker is emphasized against recently interrupted ones.
     public DialogueSpeakerEmphasisSettings SpeakerEmphasis =
         new DialogueSpeakerEmphasisSettings();

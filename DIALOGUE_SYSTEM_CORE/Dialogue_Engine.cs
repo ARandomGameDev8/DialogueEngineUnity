@@ -826,6 +826,14 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     Label         advanceHintLabel;
     VisualElement choiceContainer;
 
+    // Visual-layout runtime choice UI: the layout's own choice panel
+    // (ChoicePanel / ChoiceSlot{i} / ChoiceLabel{i}), designed in the visual
+    // editor. The engine only writes option texts, shows/hides and handles
+    // clicks — every rect and style belongs to the layout.
+    VisualElement choicePanelRoot;
+    readonly List<VisualElement> visualChoiceSlots = new List<VisualElement>();
+    readonly List<Label> visualChoiceLabels = new List<Label>();
+
     VisualElement toolbarPanel;
     VisualElement historyPanel;
     ScrollView    historyContent;
@@ -1064,6 +1072,32 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                 name     = docRoot.Q("VisualName" + i),
                 hidePanelWhenEmpty = visualPanel != null && visualPanel.ClassListContains("dlg-fig-hide")
             });
+        }
+
+        // Choice panel from the visual layout (may be absent — optional).
+        choicePanelRoot = docRoot.Q("ChoicePanel");
+        visualChoiceSlots.Clear();
+        visualChoiceLabels.Clear();
+        if (choicePanelRoot != null)
+        {
+            for (int i = 0; ; i++)
+            {
+                VisualElement slot = docRoot.Q("ChoiceSlot" + i);
+                if (slot == null) break;
+                visualChoiceSlots.Add(slot);
+                visualChoiceLabels.Add(docRoot.Q<Label>("ChoiceLabel" + i));
+
+                // Registered once per tree; the option list is read at click
+                // time and the current-token guard makes stale clicks no-ops.
+                int index = i;
+                slot.pickingMode = PickingMode.Position;
+                slot.RegisterCallback<ClickEvent>(_ =>
+                {
+                    if (currentChoiceToken == null) return;
+                    if (index < 0 || index >= choiceOptions.Count) return;
+                    OnOptionSelected(choiceOptions[index]);
+                });
+            }
         }
 
         // Portrait wrappers
@@ -1906,6 +1940,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         isTyping = false;
         isOpen = false;
         if (choiceContainer != null) choiceContainer.style.display = DisplayStyle.None;
+        if (choicePanelRoot != null) choicePanelRoot.style.display = DisplayStyle.None;
         ResetPortraitSlots();
     }
 
@@ -1979,6 +2014,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         else
         {
             if (choiceContainer != null) choiceContainer.style.display = DisplayStyle.None;
+        if (choicePanelRoot != null) choicePanelRoot.style.display = DisplayStyle.None;
             RenderDialogueText(currentFullText ?? "");
             isTyping = false;
             runtimeStatus = DialogueRuntimeStatus.WaitingForInput;
@@ -2546,14 +2582,16 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         }
 
         if (choiceContainer != null) choiceContainer.style.display = DisplayStyle.None;
+        if (choicePanelRoot != null) choicePanelRoot.style.display = DisplayStyle.None;
 
         Debug.Log($"Dialogue_Engine: [{ct.Speaker}]: {currentFullText}");
     }
 
     bool IsChoiceAwaitingSelection()
     {
-        return currentChoiceToken != null && choiceContainer != null &&
-               choiceContainer.style.display == DisplayStyle.Flex;
+        return currentChoiceToken != null &&
+               ((choiceContainer != null && choiceContainer.style.display == DisplayStyle.Flex) ||
+                (choicePanelRoot != null && choicePanelRoot.style.display == DisplayStyle.Flex));
     }
 
     // ─── ShowChoices ───────────────────────────────────────────────────────────
@@ -2561,6 +2599,14 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     {
         currentChoiceToken = choice;
         currentCharacterToken = null;
+
+        // Visual-layout runtime: the layout's own designed choice panel.
+        if (visualLayoutRuntimeActive && choicePanelRoot != null && visualChoiceSlots.Count > 0)
+        {
+            ShowVisualChoices(choice);
+            return;
+        }
+
         if (choiceContainer == null)
         { Debug.LogError("Dialogue_Engine: 'ChoiceContainer' not found in UXML."); return; }
 
@@ -2595,6 +2641,47 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         Debug.Log($"Dialogue_Engine: Showing {choice.Children.Count} choices.");
     }
 
+    // ─── Visual-layout choice rendering ───────────────────────────────────────
+    void ShowVisualChoices(ChoiceToken choice)
+    {
+        if (choiceContainer != null) choiceContainer.style.display = DisplayStyle.None;
+        if (choicePanelRoot != null) choicePanelRoot.style.display = DisplayStyle.None;
+        choiceButtons.Clear();
+        choiceOptions.Clear();
+        choiceHighlight = 0;
+
+        if (choice.Children != null)
+        {
+            foreach (var child in choice.Children)
+                if (child is OptionToken option)
+                    choiceOptions.Add(option);
+        }
+
+        if (choiceOptions.Count > visualChoiceSlots.Count)
+            Debug.LogWarning($"Dialogue_Engine: the layout has {visualChoiceSlots.Count} choice slots " +
+                             $"but this choice has {choiceOptions.Count} options — showing the first " +
+                             $"{visualChoiceSlots.Count}. Add more choice slots in the visual editor " +
+                             "(partition level, max 3).");
+
+        int shown = Mathf.Min(choiceOptions.Count, visualChoiceSlots.Count);
+        for (int i = 0; i < visualChoiceSlots.Count; i++)
+        {
+            VisualElement slot = visualChoiceSlots[i];
+            if (slot == null) continue;
+            bool active = i < shown;
+            slot.style.display = active ? DisplayStyle.Flex : DisplayStyle.None;
+            if (active && visualChoiceLabels != null && i < visualChoiceLabels.Count &&
+                visualChoiceLabels[i] != null)
+                visualChoiceLabels[i].text = choiceOptions[i].OptionText;
+        }
+        choicePanelRoot.style.display = DisplayStyle.Flex;
+
+        currentTextName = "CHOICE_" + choice.ChoiceIndex;
+        currentServiceText = string.Join(" | ", choiceOptions.ConvertAll(o => o.OptionText));
+        SetRuntimeStatus(DialogueRuntimeStatus.TakingChoice, "Waiting for a choice");
+        Debug.Log($"Dialogue_Engine: Showing {shown} choices on the visual choice panel.");
+    }
+
     // ─── OnOptionSelected ─────────────────────────────────────────────────────
     void OnOptionSelected(OptionToken option)
     {
@@ -2610,6 +2697,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
 
 
         if (choiceContainer != null) choiceContainer.style.display = DisplayStyle.None;
+        if (choicePanelRoot != null) choicePanelRoot.style.display = DisplayStyle.None;
 
         if (!string.IsNullOrEmpty(option.TargetSectionID) &&
             graph.AdjacencyList.TryGetValue(option.TargetSectionID, out SectionToken target))
@@ -3015,6 +3103,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         if (suspendedDialogues.Count > 0)
         {
             if (choiceContainer != null) choiceContainer.style.display = DisplayStyle.None;
+        if (choicePanelRoot != null) choicePanelRoot.style.display = DisplayStyle.None;
             RestorePlaybackState(suspendedDialogues.Pop());
             return;
         }
@@ -3047,6 +3136,7 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                 choiceContainer.Clear();
                 choiceContainer.style.display = DisplayStyle.None;
             }
+            if (choicePanelRoot != null) choicePanelRoot.style.display = DisplayStyle.None;
             history.Clear();
             shownText = "";
             RenderDialogueText("");

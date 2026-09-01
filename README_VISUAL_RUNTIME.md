@@ -148,3 +148,32 @@ If Play ever logs a UXML validation error, the raw generated XML is dumped to
 `dialogue_runtime_copy.invalid.txt` and the console prints the offending
 lines; the engine then falls back to a working layout instead of leaving the
 scene without a UI.
+
+## 10. Choice event UI (visual editor)
+
+Plain bland choice buttons are gone — the choice event gets the same design
+treatment as everything else:
+
+- Enable **Choice Panel Enabled** in the layout root inspector. A purple
+  panel appears on the canvas: that is the choice event panel, at the exact
+  rect and with the exact styles Play will use. It has the FULL main-panel
+  customization surface — anchor, fill mode, size, min/max, padding,
+  background, border, shadow, opacity, z-layer.
+- Its **Choice Region** partitions into 1-3 terminal slots (partition level
+  0-2, exactly like the main inner region; slots cannot be divided further).
+  One slot = one choice option.
+- Every slot is fully customizable (background, border, shadow, opacity,
+  padding, offset). Put a **Text Panel** component in each slot: the first
+  one becomes that option's live label with its complete text style (colour,
+  font size, spacing, weight, alignment). Image components render statically
+  next to it, so decorative option icons work too.
+- At Play the panel is hidden until a choice fires; then each option's text
+  lands on its designed slot and clicking a slot picks that option. More
+  options than slots logs a warning and shows the first N (add slots in the
+  editor — max 3).
+- The **True Preview** window has a **Peek Choice Panel** toggle so you can
+  design the panel without running a dialogue.
+
+Everything follows the one-builder rule: the visual editor writes the
+canonical UXML (including the hidden choice panel), and Play instantiates
+the exact same file.
