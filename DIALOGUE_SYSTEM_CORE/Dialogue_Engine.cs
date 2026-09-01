@@ -2711,8 +2711,14 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
             if (button == null) continue;
             if (k < rects.Count)
             {
-                button.style.left   = rects[k].x - holderSlotRect.x;
-                button.style.top    = rects[k].y - holderSlotRect.y;
+                // Relative to the holder slot element; clamped into its
+                // content rect so no button can ever be clipped away.
+                float x = Mathf.Clamp(rects[k].x, holderContent.xMin,
+                    Mathf.Max(holderContent.xMin, holderContent.xMax - rects[k].width));
+                float y = Mathf.Clamp(rects[k].y, holderContent.yMin,
+                    Mathf.Max(holderContent.yMin, holderContent.yMax - rects[k].height));
+                button.style.left   = x - holderSlotRect.x;
+                button.style.top    = y - holderSlotRect.y;
                 button.style.width  = rects[k].width;
                 button.style.height = rects[k].height;
             }

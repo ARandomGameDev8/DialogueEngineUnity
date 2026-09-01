@@ -344,7 +344,11 @@ public static class DialogueVisualEditorUxml
         var sb = new StringBuilder();
         // Surface styling lives on a child so the panel maps 1:1 onto canvas
         // coordinates, exactly like the main box.
-        sb.Append($@"<ui:VisualElement name=""ChoicePanel"" style=""position: absolute; left: {Pct(panelRect.x, resolved.CanvasRect.width)}; top: {Pct(panelRect.y, resolved.CanvasRect.height)}; width: {Pct(panelRect.width, resolved.CanvasRect.width)}; height: {Pct(panelRect.height, resolved.CanvasRect.height)}; display: none;"">
+        // The panel itself is PX (like every child inside it): the exact rect
+        // the editor resolved against the reference resolution. Percentages
+        // here would rescale against the live game view and clip the bottom
+        // of the region whenever the view differs from the reference.
+        sb.Append($@"<ui:VisualElement name=""ChoicePanel"" style=""position: absolute; left: {panelRect.x:0.#}px; top: {panelRect.y:0.#}px; width: {panelRect.width:0.#}px; height: {panelRect.height:0.#}px; display: none;"">
   <ui:VisualElement name=""ChoicePanelSurface"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0;{Join(SurfaceStyle(panel.Background, panel.Border, panel.Opacity))} overflow: hidden;"">
 ");
 
