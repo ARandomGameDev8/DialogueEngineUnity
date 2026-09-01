@@ -1227,6 +1227,16 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     /// runtime may change it freely, and the whole file is discarded when
     /// play mode ends (DialogueRuntimeUxmlIsolation deletes it).
     /// </summary>
+    /// <summary>
+    /// Hook installed by the visual editor assembly (DialogueVisualEditorUxml,
+    /// via [InitializeOnLoad]): builds/refreshes the canonical UXML owned by
+    /// the visual editor and returns its asset path. The engine deliberately
+    /// does NOT reference that class directly — editor scripts may live in an
+    /// "Editor" magic folder (a separate assembly the runtime assembly cannot
+    /// see), so the dependency is inverted: the editor pushes this hook in.
+    /// </summary>
+    public static Func<DialogueLayoutAsset, Dialogue_Engine, Vector2, string> EnsureVisualLayoutUxmlBuilt;
+
     VisualTreeAsset LoadRuntimeUxmlCopy()
     {
         // The visual layout asset wins when assigned, exactly like edit-time.
@@ -1246,15 +1256,25 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                 Vector2 canvas = panelSettings != null
                     ? new Vector2(panelSettings.referenceResolution.x, panelSettings.referenceResolution.y)
                     : new Vector2(1920f, 1080f);
-                // Single builder, owned by the editor: refreshes the canonical
-                // file only if the editor was not open to write it itself.
-                string canonicalPath = DialogueVisualEditorUxml.EnsureBuilt(visualLayoutAsset, this, canvas);
-                contents = File.ReadAllText(canonicalPath);
-                source = "visual editor UXML '" + Path.GetFileName(canonicalPath) + "'";
-                if (ValidateRuntimeUxml(contents, source))
-                    visualLayoutRuntimeActive = true;
+                // Single builder, owned by the editor — reached through the
+                // hook so this compiles regardless of editor folder layout.
+                string canonicalPath = EnsureVisualLayoutUxmlBuilt != null
+                    ? EnsureVisualLayoutUxmlBuilt(visualLayoutAsset, this, canvas)
+                    : null;
+                if (string.IsNullOrEmpty(canonicalPath))
+                {
+                    Debug.LogError("Dialogue_Engine: the visual editor UXML builder is not installed " +
+                                   "(editor scripts failed to compile or were not loaded). Falling back.");
+                }
                 else
-                    contents = null;
+                {
+                    contents = File.ReadAllText(canonicalPath);
+                    source = "visual editor UXML '" + Path.GetFileName(canonicalPath) + "'";
+                    if (ValidateRuntimeUxml(contents, source))
+                        visualLayoutRuntimeActive = true;
+                    else
+                        contents = null;
+                }
             }
             catch (Exception ex)
             {

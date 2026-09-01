@@ -27,8 +27,17 @@ using UnityEngine;
 /// runtime, so the engine keeps owning text, names, images and speaker
 /// emphasis while reproducing the edited layout exactly.
 /// </summary>
+[InitializeOnLoad]
 public static class DialogueVisualEditorUxml
 {
+    static DialogueVisualEditorUxml()
+    {
+        // Install the build hook on the engine. The engine cannot reference
+        // this class directly (editor scripts often live in an "Editor" magic
+        // folder = a separate assembly), so the dependency is inverted.
+        Dialogue_Engine.EnsureVisualLayoutUxmlBuilt = EnsureBuilt;
+    }
+
     // ─── Entry points ──────────────────────────────────────────────────────────
     /// <summary>Path of the canonical, editor-owned UXML for this asset.</summary>
     public static string BuildPathFor(DialogueLayoutAsset asset)
