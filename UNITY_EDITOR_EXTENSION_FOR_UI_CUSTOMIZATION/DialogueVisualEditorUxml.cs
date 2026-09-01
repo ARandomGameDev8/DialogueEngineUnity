@@ -460,7 +460,7 @@ public static class DialogueVisualEditorUxml
                 string buttonStyle = AbsStyle(leaf.Rect.x - groupSlot.Rect.x,
                     leaf.Rect.y - groupSlot.Rect.y, leaf.Rect.width, leaf.Rect.height) +
                     SurfaceStyle(preset.Background, preset.Border, preset.Opacity);
-                string pad = preset.Padding != null ? preset.Padding : new DialoguePadding();
+                DialoguePadding pad = preset.Padding != null ? preset.Padding : new DialoguePadding();
                 sb.Append($@"        <ui:VisualElement name=""ChoiceButton{k}"" class=""dlg-choice-btn"" style=""{buttonStyle}"">
 ");
                 sb.Append($@"          <ui:Label name=""ChoiceButtonText{k}"" text="""" style=""position: absolute; left: {pad.Left:0.#}px; top: {pad.Top:0.#}px; right: {pad.Right:0.#}px; bottom: {pad.Bottom:0.#}px;{TextStyle(preset.TextStyle)} white-space: normal;"" />
