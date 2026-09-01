@@ -395,31 +395,6 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         DialogueMainPanelDefinition mainPanel = layoutAsset.MainPanel;
         DialogueInnerRegionDefinition innerRegion = mainPanel != null ? mainPanel.InnerRegion : null;
 
-        // Choice event panel (drawn under its own region/slots/components,
-        // which resolve through the normal Areas/Slots/Components passes).
-        if (layout.ChoicePanelActive)
-        {
-            DialogueMainPanelDefinition choicePanel = layoutAsset.ChoicePanel;
-            DialogueVisualStylePreviewUtility.DrawStyledElement(
-                layout.ChoicePanelRect,
-                choicePanel != null ? choicePanel.Background : null,
-                choicePanel != null ? choicePanel.Border : null,
-                choicePanel != null ? choicePanel.Shadow : null,
-                choicePanel != null ? choicePanel.Opacity : null,
-                new Color(0.30f, 0.18f, 0.38f, 0.85f),
-                new Color(0.85f, 0.62f, 1f, 1f),
-                2f);
-            if (selection.Kind == SelectionKind.ChoicePanel)
-                DialogueVisualStylePreviewUtility.DrawSelectionOutline(
-                    layout.ChoicePanelRect,
-                    choicePanel != null ? choicePanel.Border : null,
-                    new Color(1f, 1f, 0.45f, 1f),
-                    2.5f);
-            if (showLabels)
-                GUI.Label(new Rect(layout.ChoicePanelRect.x + 6f, layout.ChoicePanelRect.y + 4f, 240f, 18f),
-                    "Choice Panel", EditorStyles.whiteBoldLabel);
-        }
-
         DialogueVisualStylePreviewUtility.DrawStyledElement(
             layout.MainPanelRect,
             mainPanel != null ? mainPanel.Background : null,
@@ -442,6 +417,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         for (int i = 0; i < layout.Areas.Count; i++)
         {
             ResolvedDialogueArea area = layout.Areas[i];
+            if (area.AreaKind == ResolvedDialogueAreaKind.ChoiceInner)
+                continue; // the choice subtree draws LAST, above everything
             DialogueBackgroundStyle background = null;
             DialogueBorderStyle border = null;
             DialogueShadowStyle shadow = null;
@@ -502,6 +479,10 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             for (int i = 0; i < layout.Slots.Count; i++)
             {
                 ResolvedDialogueSlot slot = layout.Slots[i];
+                if (slot.AreaKind == ResolvedDialogueAreaKind.ChoiceInner ||
+                    slot.AreaKind == ResolvedDialogueAreaKind.ChoiceGroup ||
+                    slot.AreaKind == ResolvedDialogueAreaKind.ChoiceLeaf)
+                    continue; // drawn with the choice subtree
                 DialogueSlotDefinition slotDef = DialogueVisualEditorUtility.GetSlot(layoutAsset, slot.AreaKind, slot.SlotIndex);
                 DialogueBackgroundStyle slotBg = slotDef != null ? slotDef.Background : null;
                 DialogueBorderStyle slotBorder = slotDef != null ? slotDef.Border : null;
@@ -548,6 +529,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             for (int i = 0; i < layout.Components.Count; i++)
             {
                 ResolvedDialogueComponentRect component = layout.Components[i];
+                if (component.AreaKind == ResolvedDialogueAreaKind.ChoiceInner)
+                    continue; // drawn with the choice subtree
                 DialogueComponentDefinition componentDef = DialogueVisualEditorUtility.GetComponent(
                     layoutAsset,
                     component.AreaKind,
@@ -582,8 +565,165 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             }
         }
 
+        DrawChoiceSubtree(layout);
+
         if (editMode)
             DrawSelectionHandles(layout);
+    }
+
+    // ─── Choice event subtree ─────────────────────────────────────────────────
+    // Draws LAST so the choice panel sits ABOVE the main panel, the portraits
+    // and the dialogue while editing — its exact runtime z-order. The holder
+    // shows the ACTUAL preview-count buttons partitioned inside it (never a
+    // separate ghost panel).
+    void DrawChoiceSubtree(ResolvedDialogueLayout layout)
+    {
+        if (layout == null || !layout.ChoicePanelActive || layoutAsset == null) return;
+
+        DialogueMainPanelDefinition choicePanel = layoutAsset.ChoicePanel;
+        DialogueInnerRegionDefinition choiceRegion = choicePanel != null ? choicePanel.InnerRegion : null;
+
+        DialogueVisualStylePreviewUtility.DrawStyledElement(
+            layout.ChoicePanelRect,
+            choicePanel != null ? choicePanel.Background : null,
+            choicePanel != null ? choicePanel.Border : null,
+            choicePanel != null ? choicePanel.Shadow : null,
+            choicePanel != null ? choicePanel.Opacity : null,
+            new Color(0.30f, 0.18f, 0.38f, 0.95f),
+            new Color(0.85f, 0.62f, 1f, 1f),
+            2f);
+        if (selection.Kind == SelectionKind.ChoicePanel)
+            DialogueVisualStylePreviewUtility.DrawSelectionOutline(
+                layout.ChoicePanelRect,
+                choicePanel != null ? choicePanel.Border : null,
+                new Color(1f, 1f, 0.45f, 1f),
+                2.5f);
+        if (showLabels)
+            GUI.Label(new Rect(layout.ChoicePanelRect.x + 6f, layout.ChoicePanelRect.y + 4f, 240f, 18f),
+                "Choice Panel", EditorStyles.whiteBoldLabel);
+
+        ResolvedDialogueArea regionArea = FindAreaByKind(layout, ResolvedDialogueAreaKind.ChoiceInner);
+        if (regionArea == null || choiceRegion == null) return;
+
+        DialogueVisualStylePreviewUtility.DrawStyledElement(
+            regionArea.Rect,
+            choiceRegion.Background,
+            choiceRegion.Border,
+            choiceRegion.Shadow,
+            choiceRegion.Opacity,
+            new Color(0.34f, 0.22f, 0.42f, 0.35f),
+            new Color(0.85f, 0.62f, 1f, 1f),
+            1.5f);
+        if (IsSelected(regionArea))
+            DialogueVisualStylePreviewUtility.DrawSelectionOutline(
+                regionArea.Rect, choiceRegion.Border, new Color(1f, 1f, 0.45f, 1f), 2f);
+        if (showLabels)
+            GUI.Label(new Rect(regionArea.Rect.x + 4f, regionArea.Rect.y + 2f, 220f, 18f),
+                regionArea.Name, EditorStyles.miniBoldLabel);
+
+        int holder = layout.ChoiceHolderSlotIndex;
+        int preview = Mathf.Clamp(layoutAsset.ChoicePreviewCount, 0, 6);
+
+        // Region slots (the holder is one of them — nothing duplicated).
+        for (int i = 0; i < layout.Slots.Count; i++)
+        {
+            ResolvedDialogueSlot slot = layout.Slots[i];
+            if (slot.AreaKind != ResolvedDialogueAreaKind.ChoiceInner) continue;
+            DialogueSlotDefinition slotDef = DialogueVisualEditorUtility.GetSlot(
+                layoutAsset, ResolvedDialogueAreaKind.ChoiceInner, slot.SlotIndex);
+            DialogueVisualStylePreviewUtility.DrawStyledElement(
+                slot.Rect,
+                slotDef != null ? slotDef.Background : null,
+                slotDef != null ? slotDef.Border : null,
+                slotDef != null ? slotDef.Shadow : null,
+                slotDef != null ? slotDef.Opacity : null,
+                new Color(1f, 0.84f, 0.40f, 0.08f),
+                new Color(1f, 0.84f, 0.40f, 1f),
+                1.2f);
+            if (IsSelected(slot))
+                DialogueVisualStylePreviewUtility.DrawSelectionOutline(
+                    slot.Rect, slotDef != null ? slotDef.Border : null,
+                    new Color(1f, 1f, 0.45f, 1f), 2f);
+            if (showLabels)
+                GUI.Label(new Rect(slot.Rect.x + 4f, slot.Rect.y + 2f, 120f, 18f),
+                    slot.SlotIndex == holder ? slot.SlotId + " (choices)" : slot.SlotId,
+                    EditorStyles.miniLabel);
+
+            // Non-holder slots keep their designed components.
+            if (slot.SlotIndex == holder) continue;
+            for (int c = 0; c < layout.Components.Count; c++)
+            {
+                ResolvedDialogueComponentRect component = layout.Components[c];
+                if (component.AreaKind != ResolvedDialogueAreaKind.ChoiceInner ||
+                    component.SlotIndex != slot.SlotIndex) continue;
+                DialogueComponentDefinition componentDef = DialogueVisualEditorUtility.GetComponent(
+                    layoutAsset, ResolvedDialogueAreaKind.ChoiceInner, component.SlotIndex, component.ComponentIndex);
+                DialogueVisualStylePreviewUtility.DrawStyledElement(
+                    component.Rect,
+                    componentDef != null ? componentDef.Background : null,
+                    componentDef != null ? componentDef.Border : null,
+                    componentDef != null ? componentDef.Shadow : null,
+                    componentDef != null ? componentDef.Opacity : null,
+                    GetComponentFill(component.ComponentType),
+                    component.ClipToSlot ? new Color(1f, 1f, 1f, 0.9f) : new Color(1f, 0.45f, 0.45f, 1f),
+                    1.4f);
+                if (IsSelected(component))
+                    DialogueVisualStylePreviewUtility.DrawSelectionOutline(
+                        component.Rect, componentDef != null ? componentDef.Border : null,
+                        new Color(1f, 1f, 0.45f, 1f), 2f);
+            }
+        }
+
+        // Button groups — only the ones the preview count actually uses.
+        for (int g = 0; g < layout.Slots.Count; g++)
+        {
+            ResolvedDialogueSlot groupSlot = layout.Slots[g];
+            if (groupSlot.AreaKind != ResolvedDialogueAreaKind.ChoiceGroup) continue;
+            if (groupSlot.SlotIndex * 2 >= preview) continue;
+
+            DialogueSlotDefinition groupDef = DialogueVisualEditorUtility.GetSlot(
+                layoutAsset, ResolvedDialogueAreaKind.ChoiceGroup, groupSlot.SlotIndex);
+            DialogueVisualStylePreviewUtility.DrawStyledElement(
+                groupSlot.Rect,
+                groupDef != null ? groupDef.Background : null,
+                groupDef != null ? groupDef.Border : null,
+                groupDef != null ? groupDef.Shadow : null,
+                groupDef != null ? groupDef.Opacity : null,
+                new Color(0.34f, 0.22f, 0.42f, 0.20f),
+                new Color(0.85f, 0.62f, 1f, 0.9f),
+                1.1f);
+            if (IsSelected(groupSlot))
+                DialogueVisualStylePreviewUtility.DrawSelectionOutline(
+                    groupSlot.Rect, groupDef != null ? groupDef.Border : null,
+                    new Color(1f, 1f, 0.45f, 1f), 2f);
+        }
+
+        // The buttons themselves — inside the holder, preset-styled, only the
+        // hypothetical preview count of them.
+        if (layoutAsset.ChoiceButtons != null)
+        {
+            DialogueChoiceButtonSettings preset = layoutAsset.ChoiceButtons;
+            for (int k = 0; k < preview; k++)
+            {
+                ResolvedDialogueSlot leaf = FindResolvedSlot(layout, ResolvedDialogueAreaKind.ChoiceLeaf, k);
+                if (leaf == null) continue;
+                DialogueVisualStylePreviewUtility.DrawStyledElement(
+                    leaf.Rect,
+                    preset.Background,
+                    preset.Border,
+                    preset.Shadow,
+                    preset.Opacity,
+                    new Color(0.36f, 0.55f, 0.95f, 0.30f),
+                    new Color(0.62f, 0.78f, 1f, 1f),
+                    1.2f);
+                if (IsSelected(leaf))
+                    DialogueVisualStylePreviewUtility.DrawSelectionOutline(
+                        leaf.Rect, preset.Border, new Color(1f, 1f, 0.45f, 1f), 2f);
+                if (showLabels)
+                    GUI.Label(new Rect(leaf.Rect.x + 4f, leaf.Rect.y + 2f, 160f, 18f),
+                        "Choice " + (k + 1), EditorStyles.whiteMiniLabel);
+            }
+        }
     }
 
     void DrawSelectionHandles(ResolvedDialogueLayout layout)
@@ -1074,10 +1214,12 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         DrawHierarchyButton("Main Panel", SelectionKind.MainPanel, ResolvedDialogueAreaKind.MainInner, -1, -1, 0);
         DrawHierarchyButton("Inner Region", SelectionKind.Area, ResolvedDialogueAreaKind.MainInner, -1, -1, 1);
         DrawHierarchySlots(ResolvedDialogueAreaKind.MainInner, 2);
+        DialogueVisualEditorUtility.EnsureChoiceGroups(layoutAsset);
+        DrawHierarchyButton(
+            layoutAsset.ChoicePanelEnabled ? "Choice Panel" : "Choice Panel (disabled — click to design it)",
+            SelectionKind.ChoicePanel, ResolvedDialogueAreaKind.ChoiceInner, -1, -1, 0);
         if (layoutAsset.ChoicePanelEnabled && layoutAsset.ChoicePanel != null)
         {
-            DialogueVisualEditorUtility.EnsureChoiceGroups(layoutAsset);
-            DrawHierarchyButton("Choice Panel", SelectionKind.ChoicePanel, ResolvedDialogueAreaKind.ChoiceInner, -1, -1, 0);
             DrawHierarchyButton("Choice Region", SelectionKind.Area, ResolvedDialogueAreaKind.ChoiceInner, -1, -1, 1);
 
             DialogueInnerRegionDefinition choiceRegion = layoutAsset.ChoicePanel.InnerRegion;
@@ -1260,6 +1402,23 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     {
         DialogueMainPanelDefinition panel = layoutAsset.ChoicePanel;
         if (panel == null) return;
+
+        if (!layoutAsset.ChoicePanelEnabled)
+        {
+            EditorGUILayout.HelpBox(
+                "The choice event panel is DISABLED — choices fall back to plain buttons at Play. " +
+                "Enable it to design the choice event: the panel, its region, the holder slot and every button.",
+                MessageType.Warning);
+            if (GUILayout.Button("Enable Choice Event Panel", GUILayout.Height(28f)))
+            {
+                RecordLayoutAndEngine("Enable Choice Panel");
+                layoutAsset.ChoicePanelEnabled = true;
+                CommitLayoutMutation();
+            }
+            EditorGUILayout.Space(8f);
+        }
+
+        layoutAsset.ChoicePanelEnabled = EditorGUILayout.Toggle("Panel Enabled", layoutAsset.ChoicePanelEnabled);
         panel.DisplayName = EditorGUILayout.TextField("Display Name", panel.DisplayName);
         panel.Enabled = EditorGUILayout.Toggle("Enabled", panel.Enabled);
         panel.AnchorPreset = (DialogueAnchorPreset)EditorGUILayout.EnumPopup("Anchor", panel.AnchorPreset);
@@ -1297,25 +1456,10 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         holderPopup = EditorGUILayout.Popup("Button Holder Slot", holderPopup, holderOptions.ToArray());
         layoutAsset.ChoiceHolderSlotIndex = holderPopup - 1;
 
-        int groupCount = Mathf.Clamp(layoutAsset.ChoiceGroups.Count, 1, 3);
-        int newGroupCount = EditorGUILayout.IntSlider(
-            new GUIContent("Button Groups", "The holder slot partitions into up to 3 button groups; each group holds up to 2 buttons → up to 6 visual choices."),
-            groupCount, 1, 3);
-        if (newGroupCount != groupCount)
-        {
-            while (layoutAsset.ChoiceGroups.Count > newGroupCount)
-                layoutAsset.ChoiceGroups.RemoveAt(layoutAsset.ChoiceGroups.Count - 1);
-            while (layoutAsset.ChoiceGroups.Count < newGroupCount)
-            {
-                var group = new DialogueSlotDefinition
-                {
-                    SlotId = "G" + (layoutAsset.ChoiceGroups.Count + 1),
-                    DisplayName = "Button Group " + (layoutAsset.ChoiceGroups.Count + 1)
-                };
-                DialogueVisualEditorUtility.SetChoiceGroupLeafCount(group, 2);
-                layoutAsset.ChoiceGroups.Add(group);
-            }
-        }
+        layoutAsset.ChoicePreviewCount = EditorGUILayout.IntSlider(
+            new GUIContent("Preview Choice Count",
+                "Hypothetical choice count while designing (0-6). The holder partitions itself AUTOMATICALLY — at Play the ACTUAL option count decides how many buttons appear (up to 6; the DSL is unlimited)."),
+            Mathf.Clamp(layoutAsset.ChoicePreviewCount, 0, 6), 0, 6);
 
         EditorGUILayout.Space(6f);
         GUILayout.Label("Choice Button Preset", EditorStyles.boldLabel);
@@ -1418,21 +1562,15 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             bool isHolder = EffectiveChoiceHolderIndex() == selection.SlotIndex;
             bool setHolder = EditorGUILayout.Toggle(
                 new GUIContent("Holds The Choice Buttons",
-                    "This slot's content becomes the choice buttons (up to 3 groups x 2 buttons). The other slots hold whatever components you like. Default is the bottom-most slot."),
+                    "This region slot itself becomes the choice area — its content partitions AUTOMATICALLY into the actual number of choice buttons (up to 6) at Play; Preview Choice Count on the Choice Panel previews it here. At partition level 0 the whole region is the choice area. Other slots hold whatever components you like. Default is the bottom-most slot."),
                 isHolder);
             if (setHolder != isHolder)
                 layoutAsset.ChoiceHolderSlotIndex = setHolder ? selection.SlotIndex : -1;
         }
         if (selection.AreaKind == ResolvedDialogueAreaKind.ChoiceGroup)
         {
-            int leaves = slot.Children != null ? Mathf.Clamp(slot.Children.Count, 1, 2) : 1;
-            int newLeaves = EditorGUILayout.IntSlider(
-                new GUIContent("Buttons In This Group", "Each group partitions into at most 2 choice buttons."),
-                leaves, 1, 2);
-            if (newLeaves != leaves)
-                DialogueVisualEditorUtility.SetChoiceGroupLeafCount(slot, newLeaves);
             EditorGUILayout.HelpBox(
-                "A button group is a layout container inside the choice holder: up to 2 choice buttons, your own background/border/spacing. Groups and buttons accept no components — the buttons are styled by the shared Choice Button Preset.",
+                "A button group is one row (or column) of the choice holder. Partitioning is AUTOMATIC: at Play the actual option count decides how many groups and buttons appear (up to 3 groups x 2 buttons = 6). The 'Preview Choice Count' on the Choice Panel shows any hypothetical count here. Style the group freely; the buttons come from the shared Choice Button Preset.",
                 MessageType.None);
         }
         if (selection.AreaKind == ResolvedDialogueAreaKind.ChoiceLeaf)

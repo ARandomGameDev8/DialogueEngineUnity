@@ -72,7 +72,7 @@ public sealed class DialogueLayoutAsset : ScriptableObject
         InnerRegion = new DialogueInnerRegionDefinition
         {
             DisplayName = "Choice Region",
-            PartitionLevel = 2,
+            PartitionLevel = 0,
             InterSlotSpacing = 8f,
             Slots = new List<DialogueSlotDefinition>
             {
@@ -87,6 +87,10 @@ public sealed class DialogueLayoutAsset : ScriptableObject
     // "bottom-most" slot), Horizontal = side-by-side columns.
     public DialogueChoiceRegionOrientation ChoiceRegionOrientation =
         DialogueChoiceRegionOrientation.Vertical;
+
+    // Hypothetical choice count for DESIGNING (0-6). The holder partitions
+    // itself automatically — at Play the ACTUAL option count decides.
+    [Range(0, 6)] public int ChoicePreviewCount = 3;
 
     // Which choice-region slot holds the buttons. -1 = automatic: the
     // bottom-most (last) visible slot when partitioned, the slot itself at

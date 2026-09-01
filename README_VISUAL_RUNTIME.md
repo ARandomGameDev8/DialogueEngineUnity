@@ -172,9 +172,12 @@ treatment as everything else:
   the bottom-most slot (or the slot itself at partition level 0); the other
   slots hold whatever components you like. Region orientation Vertical
   (stacked rows, default) or Horizontal (columns).
-- The holder slot partitions into up to **3 button groups**, each with up to
-  **2 choice buttons** (its Children) → up to 6 visual choices. Groups are
-  styleable layout containers; all drag/resize tools work on everything.
+- The holder slot partitions **AUTOMATICALLY** from the actual choice count
+  (at Play) — up to 3 button groups x 2 choice buttons = 6 visual choices.
+  While designing, **Preview Choice Count (0-6)** on the Choice Panel shows
+  any hypothetical count, rendered INSIDE the holder slot at its rightful
+  place (never a separate ghost panel). The choice subtree draws ABOVE the
+  main panel and portraits while editing — its exact runtime z-order.
 - The **Choice Button Preset** (on the Choice Panel inspector) styles every
   button: background, border, shadow, opacity, text padding, full text style,
   hover colour. Every instance shares it EXACTLY. Sizing: **Fixed** = one
