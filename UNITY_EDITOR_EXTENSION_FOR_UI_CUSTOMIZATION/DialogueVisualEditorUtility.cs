@@ -25,6 +25,8 @@ public static class DialogueVisualEditorUtility
         if (asset == null) return false;
         if (kind == ResolvedDialogueAreaKind.ChoiceInner)
             return asset.ChoicePanelEnabled && asset.ChoicePanel != null && asset.ChoicePanel.Enabled;
+        if (kind == ResolvedDialogueAreaKind.FreeInner)
+            return asset.FreePanelEnabled && asset.FreePanel != null && asset.FreePanel.Enabled;
         switch (kind)
         {
             case ResolvedDialogueAreaKind.Top: return asset.TopAreaEnabled;
@@ -43,6 +45,12 @@ public static class DialogueVisualEditorUtility
         {
             asset.ChoicePanelEnabled = enabled;
             if (asset.ChoicePanel != null) asset.ChoicePanel.Enabled = enabled;
+            return;
+        }
+        if (kind == ResolvedDialogueAreaKind.FreeInner)
+        {
+            asset.FreePanelEnabled = enabled;
+            if (asset.FreePanel != null) asset.FreePanel.Enabled = enabled;
             return;
         }
         switch (kind)
@@ -66,6 +74,9 @@ public static class DialogueVisualEditorUtility
         if (kind == ResolvedDialogueAreaKind.ChoiceInner)
             return asset.ChoicePanel != null && asset.ChoicePanel.InnerRegion != null
                 ? asset.ChoicePanel.InnerRegion.Slots : null;
+        if (kind == ResolvedDialogueAreaKind.FreeInner)
+            return asset.FreePanel != null && asset.FreePanel.InnerRegion != null
+                ? asset.FreePanel.InnerRegion.Slots : null;
         if (kind == ResolvedDialogueAreaKind.ChoiceGroup)
             return asset.ChoiceGroups;
         if (kind == ResolvedDialogueAreaKind.ChoiceLeaf)
@@ -172,6 +183,8 @@ public static class DialogueVisualEditorUtility
             EnsureSlots(asset.ChoicePanel != null ? asset.ChoicePanel.InnerRegion : null);
             EnsureChoiceGroups(asset);
         }
+        if (asset.FreePanelEnabled)
+            EnsureSlots(asset.FreePanel != null ? asset.FreePanel.InnerRegion : null);
         EnsureSlots(asset.TopArea);
         EnsureSlots(asset.BottomArea);
         EnsureSlots(asset.LeftArea);

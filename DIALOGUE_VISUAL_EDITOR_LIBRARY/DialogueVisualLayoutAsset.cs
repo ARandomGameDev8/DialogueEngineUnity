@@ -140,6 +140,27 @@ public sealed class DialogueLayoutAsset : ScriptableObject
         };
     }
 
+    // ── Free-floating UI panel ─────────────────────────────────────────────────
+    // A standalone, fully customizable panel: anchor it anywhere (left/right/
+    // top/bottom/center/custom), move & resize it exactly like the main panel.
+    // Its internal region partitions into 1-3 slots holding any components.
+    public bool FreePanelEnabled;
+
+    public DialogueMainPanelDefinition FreePanel = new DialogueMainPanelDefinition
+    {
+        DisplayName = "Free Panel",
+        Enabled = true,
+        AnchorPreset = DialogueAnchorPreset.Center,
+        Width = new DialogueSizeValue { Unit = DialogueSizeUnit.Pixels, Value = 320f },
+        Height = new DialogueSizeValue { Unit = DialogueSizeUnit.Pixels, Value = 180f },
+        Background = new DialogueBackgroundStyle
+        {
+            Mode = DialogueBackgroundMode.SolidColor,
+            ColorA = new Color(0.07f, 0.10f, 0.16f, 0.85f)
+        },
+        Border = new DialogueBorderStyle { Enabled = true, BorderColor = new Color(0.55f, 0.75f, 1f, 0.5f) }
+    };
+
     // How the current speaker is emphasized against recently interrupted ones.
     public DialogueSpeakerEmphasisSettings SpeakerEmphasis =
         new DialogueSpeakerEmphasisSettings();
@@ -308,6 +329,13 @@ public sealed class DialogueMainPanelDefinition
 
     [Range(-10, 10)] public int ZLayer;
 
+    // Image-based panel: the panel's own surface goes invisible at Play and
+    // this image becomes the panel body, stretched exactly with the panel
+    // (bigger panel = bigger image). Children stay fully visible; the editor
+    // canvas shows the panel outline faintly on top of the image.
+    public bool UseImageBackground;
+    public string ImageBackgroundPath = "";
+
     public DialogueInnerRegionDefinition InnerRegion =
         new DialogueInnerRegionDefinition();
 }
@@ -395,6 +423,10 @@ public sealed class DialogueAttachedAreaDefinition
         new DialogueOpacitySettings();
 
     [Range(-10, 10)] public int ZLayer;
+
+    // Image-based area (same behavior as the image-based main panel).
+    public bool UseImageBackground;
+    public string ImageBackgroundPath = "";
 
     public List<DialogueSlotDefinition> Slots =
         new List<DialogueSlotDefinition>

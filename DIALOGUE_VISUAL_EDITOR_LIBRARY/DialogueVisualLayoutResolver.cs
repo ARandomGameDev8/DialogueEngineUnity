@@ -13,6 +13,9 @@ public sealed class ResolvedDialogueLayout
     public int ChoicePanelZ;
     public int ChoiceHolderSlotIndex = -1;
     public bool ChoiceButtonsResolved;
+    public bool FreePanelActive;
+    public Rect FreePanelRect;
+    public int FreePanelZ;
     public readonly List<ResolvedDialogueArea> Areas = new List<ResolvedDialogueArea>();
     public readonly List<ResolvedDialogueSlot> Slots = new List<ResolvedDialogueSlot>();
     public readonly List<ResolvedDialogueComponentRect> Components = new List<ResolvedDialogueComponentRect>();
@@ -27,7 +30,8 @@ public enum ResolvedDialogueAreaKind
     Right,
     ChoiceInner,
     ChoiceGroup,
-    ChoiceLeaf
+    ChoiceLeaf,
+    FreeInner
 }
 
 [Serializable]
@@ -99,6 +103,18 @@ public static class DialogueVisualLayoutResolver
                 "Choice Region", ResolvedDialogueAreaKind.ChoiceInner,
                 asset.ChoiceRegionOrientation == DialogueChoiceRegionOrientation.Horizontal, resolved);
             ResolveChoiceButtons(asset, resolved);
+        }
+
+        // Free-floating UI panel — a standalone panel with its own internal
+        // region (1-3 slots, any components).
+        if (asset.FreePanelEnabled && asset.FreePanel != null && asset.FreePanel.Enabled)
+        {
+            resolved.FreePanelActive = true;
+            resolved.FreePanelRect = ResolveMainPanelRect(asset.FreePanel, canvasRect);
+            resolved.FreePanelZ = asset.FreePanel.ZLayer;
+            Rect freeInner = ShrinkRect(resolved.FreePanelRect, asset.FreePanel.Padding);
+            ResolveInnerRegion(asset.FreePanel.InnerRegion, freeInner,
+                "Free Region", ResolvedDialogueAreaKind.FreeInner, true, resolved);
         }
 
         return resolved;

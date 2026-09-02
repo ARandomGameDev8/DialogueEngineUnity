@@ -81,6 +81,10 @@ public static class DialogueVisualEditorUxml
         ResolvedDialogueLayout resolved = DialogueVisualLayoutResolver.Resolve(
             asset, new Rect(0f, 0f, canvas.x, canvas.y));
 
+        // Image-based panels import their images into the project so the
+        // runtime UXML (and the True Preview) can render them via project: URLs.
+        var media = new DialogueUiMediaImport(BuildPathFor(asset));
+
         var body = new StringBuilder();
         var uss = new StringBuilder();
 
@@ -123,7 +127,7 @@ public static class DialogueVisualEditorUxml
         // nested rects map 1:1 onto canvas coordinates.
         boxEl.Append(AbsEl("VisualPanelSurface",
             "position: absolute; left: 0; top: 0; right: 0; bottom: 0; " +
-            SurfaceStyle(asset.MainPanel.Background, asset.MainPanel.Border, asset.MainPanel.Opacity) + " overflow: hidden;", null));
+            PanelSurfaceStyle(asset.MainPanel, media) + " overflow: hidden;", null));
         boxEl.Append(AbsEl("BackgroundLayer",
             "position: absolute; left: 0; top: 0; right: 0; bottom: 0; display: none;", null));
 
@@ -199,9 +203,13 @@ public static class DialogueVisualEditorUxml
                 }
             }
 
+            DialogueAttachedAreaDefinition areaDef = GetArea(asset, area.AreaKind);
+            string areaSurface = areaDef != null && areaDef.UseImageBackground
+                ? media.ImageStyleFor(areaDef.ImageBackgroundPath)
+                : SurfaceStyle(bg, border, opacity);
             boxEl.Append(AbsEl(null,
                 AbsStyle(area.Rect.x - box.x, area.Rect.y - box.y, area.Rect.width, area.Rect.height) +
-                SurfaceStyle(bg, border, opacity) + " overflow: hidden;",
+                areaSurface + " overflow: hidden;",
                 areaEl.ToString()));
         }
 
@@ -223,7 +231,10 @@ public static class DialogueVisualEditorUxml
         body.Append(portraits);
 
         // ── Choice event panel — hidden until the player takes a choice ──────
-        body.Append(ChoicePanelXml(resolved, asset));
+        body.Append(ChoicePanelXml(resolved, asset, media));
+
+        // ── Free-floating UI panel — always visible, fully static ───────────
+        body.Append(FreePanelXml(resolved, asset, media));
 
         // ── Standard chrome the engine binds to ────────────────────────────────
         body.Append("<ui:VisualElement name=\"BorderLayer\" style=\"position: absolute; overflow: hidden; display: none; picking-mode: Ignore;\" />" + "\n");
@@ -333,7 +344,8 @@ public static class DialogueVisualEditorUxml
     }
 
     // ─── Choice event panel ─────────────────────────────────────────────────────
-    static string ChoicePanelXml(ResolvedDialogueLayout resolved, DialogueLayoutAsset asset)
+    static string ChoicePanelXml(ResolvedDialogueLayout resolved, DialogueLayoutAsset asset,
+        DialogueUiMediaImport media)
     {
         if (!resolved.ChoicePanelActive) return "";
 
@@ -349,7 +361,7 @@ public static class DialogueVisualEditorUxml
         // here would rescale against the live game view and clip the bottom
         // of the region whenever the view differs from the reference.
         sb.Append($@"<ui:VisualElement name=""ChoicePanel"" style=""position: absolute; left: {panelRect.x:0.#}px; top: {panelRect.y:0.#}px; width: {panelRect.width:0.#}px; height: {panelRect.height:0.#}px; display: none;"">
-  <ui:VisualElement name=""ChoicePanelSurface"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0;{Join(SurfaceStyle(panel.Background, panel.Border, panel.Opacity))} overflow: hidden;"">
+  <ui:VisualElement name=""ChoicePanelSurface"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0;{Join(PanelSurfaceStyle(panel, media))} overflow: hidden;"">
 ");
 
         if (region != null)
@@ -477,6 +489,84 @@ public static class DialogueVisualEditorUxml
         // layout (the public entry re-resolves; this mirrors its core).
         return DialogueVisualLayoutResolver.ResolveChoiceButtonRectsFromLayout(asset, resolved,
             count, out slotRect, out content, out rects);
+    }
+
+    /// <summary>Surface style for a panel definition: image-based panels emit
+    /// ONLY the stretched background image (their own surface is invisible at
+    /// Play); normal panels emit background/border/opacity as before.</summary>
+    static string PanelSurfaceStyle(DialogueMainPanelDefinition panel, DialogueUiMediaImport media)
+    {
+        if (panel == null) return "";
+        if (panel.UseImageBackground && media != null)
+        {
+            string img = media.ImageStyleFor(panel.ImageBackgroundPath);
+            if (!string.IsNullOrEmpty(img)) return img;
+        }
+        return SurfaceStyle(panel.Background, panel.Border, panel.Opacity);
+    }
+
+    // ─── Free-floating UI panel ────────────────────────────────────────────────
+    static string FreePanelXml(ResolvedDialogueLayout resolved, DialogueLayoutAsset asset,
+        DialogueUiMediaImport media)
+    {
+        if (!resolved.FreePanelActive) return "";
+
+        DialogueMainPanelDefinition panel = asset.FreePanel;
+        DialogueInnerRegionDefinition region = panel != null ? panel.InnerRegion : null;
+        Rect panelRect = resolved.FreePanelRect;
+
+        var sb = new StringBuilder();
+        sb.Append($@"<ui:VisualElement name=""FreePanel"" style=""position: absolute; left: {panelRect.x:0.#}px; top: {panelRect.y:0.#}px; width: {panelRect.width:0.#}px; height: {panelRect.height:0.#}px;"">
+  <ui:VisualElement name=""FreePanelSurface"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0;{Join(PanelSurfaceStyle(panel, media))} overflow: hidden;"">
+");
+
+        if (region != null)
+        {
+            ResolvedDialogueArea area = null;
+            for (int i = 0; i < resolved.Areas.Count; i++)
+                if (resolved.Areas[i].AreaKind == ResolvedDialogueAreaKind.FreeInner)
+                { area = resolved.Areas[i]; break; }
+
+            if (area != null)
+            {
+                var areaEl = new StringBuilder();
+                areaEl.Append($@"    <ui:VisualElement style=""{AbsStyle(area.Rect.x - panelRect.x, area.Rect.y - panelRect.y, area.Rect.width, area.Rect.height)}{Join(SurfaceStyle(region.Background, region.Border, region.Opacity))} overflow: hidden;"">
+");
+                int slotCount = Mathf.Clamp(1 + Mathf.Clamp(region.PartitionLevel, 0, 2), 1, 3);
+                for (int i = 0; i < slotCount; i++)
+                {
+                    ResolvedDialogueSlot slot = FindSlot(resolved, ResolvedDialogueAreaKind.FreeInner, i);
+                    DialogueSlotDefinition slotDef = region.Slots != null && i < region.Slots.Count
+                        ? region.Slots[i] : null;
+                    if (slot == null || slotDef == null) continue;
+
+                    var slotEl = new StringBuilder();
+                    if (slotDef.Components != null)
+                    {
+                        for (int c = 0; c < slotDef.Components.Count; c++)
+                        {
+                            DialogueComponentDefinition comp = slotDef.Components[c];
+                            ResolvedDialogueComponentRect compRect = FindComponent(
+                                resolved, ResolvedDialogueAreaKind.FreeInner, i, c);
+                            if (comp == null || compRect == null) continue;
+                            slotEl.Append(StaticComponentXml(comp, Relative(compRect.Rect, slot.Rect)));
+                        }
+                    }
+                    areaEl.Append("    <ui:VisualElement style=\"" +
+                        AbsStyle(slot.Rect.x - area.Rect.x, slot.Rect.y - area.Rect.y,
+                            slot.Rect.width, slot.Rect.height) +
+                        Join(SurfaceStyle(slotDef.Background, slotDef.Border, slotDef.Opacity)) +
+                        " overflow: hidden;\">\n");
+                    areaEl.Append(slotEl);
+                    areaEl.Append("    </ui:VisualElement>\n");
+                }
+                areaEl.Append("    </ui:VisualElement>\n");
+                sb.Append(areaEl);
+            }
+        }
+
+        sb.Append("  </ui:VisualElement>\n</ui:VisualElement>\n");
+        return sb.ToString();
     }
 
     /// <summary>Joins an inline style fragment into a style attribute: ensures
@@ -859,6 +949,54 @@ $@"<ui:Button name=""ToolbarToggle"" class=""dlg-toolbar-button"" text=""Menu"" 
     static string Escape(string s)
     {
         return string.IsNullOrEmpty(s) ? "" : s.Replace("&", "&amp;").Replace("<", "&lt;").Replace("\"", "&quot;");
+    }
+}
+// ─── Image-based panel media import ─────────────────────────────────────────
+/// <summary>
+/// Copies image-based-panel source images into the project (dialogue_ui_media/
+/// next to the canonical UXML) and returns project: URL style fragments, so
+/// the runtime UXML and the True Preview render the images with no runtime
+/// file access. Cached per source path; recopied when the source is newer.
+/// </summary>
+sealed class DialogueUiMediaImport
+{
+    readonly string folder;
+    readonly Dictionary<string, string> cache = new Dictionary<string, string>();
+
+    public DialogueUiMediaImport(string canonicalUxmlPath)
+    {
+        folder = string.IsNullOrEmpty(canonicalUxmlPath)
+            ? "Assets/dialogue_ui_media"
+            : Path.Combine(Path.GetDirectoryName(canonicalUxmlPath), "dialogue_ui_media");
+    }
+
+    public string ImageStyleFor(string sourcePath)
+    {
+        if (string.IsNullOrEmpty(sourcePath) || !File.Exists(sourcePath)) return "";
+        if (cache.TryGetValue(sourcePath, out string cached)) return cached;
+        try
+        {
+            Directory.CreateDirectory(folder);
+            string ext = Path.GetExtension(sourcePath);
+            byte[] hash = System.Security.Cryptography.SHA256.Create()
+                .ComputeHash(System.Text.Encoding.UTF8.GetBytes(sourcePath));
+            string tag = System.BitConverter.ToString(hash).Replace("-", "").Substring(0, 8);
+            string dest = Path.Combine(folder,
+                Path.GetFileNameWithoutExtension(sourcePath) + "_" + tag + ext).Replace('\\', '/');
+            if (!File.Exists(dest) || File.GetLastWriteTimeUtc(dest) < File.GetLastWriteTimeUtc(sourcePath))
+                File.Copy(sourcePath, dest, true);
+            AssetDatabase.ImportAsset(dest);
+            string style = "background-image: url('project:" + dest + "'); background-size: 100% 100%; ";
+            cache[sourcePath] = style;
+            return style;
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogWarning("Dialogue visual editor: failed to import panel image '" +
+                sourcePath + "': " + ex.Message);
+            cache[sourcePath] = "";
+            return "";
+        }
     }
 }
 #endif
