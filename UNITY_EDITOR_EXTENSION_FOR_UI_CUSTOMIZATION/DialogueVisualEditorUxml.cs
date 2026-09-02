@@ -505,29 +505,29 @@ public static class DialogueVisualEditorUxml
         return SurfaceStyle(panel.Background, panel.Border, panel.Opacity);
     }
 
-    // ─── Free-floating UI panel ────────────────────────────────────────────────
+    // ─── Free-floating UI panels (as many as the layout declares) ─────────────
     static string FreePanelXml(ResolvedDialogueLayout resolved, DialogueLayoutAsset asset,
         DialogueUiMediaImport media)
     {
-        if (!resolved.FreePanelActive) return "";
+        if (asset.FreePanels == null || asset.FreePanels.Count == 0) return "";
 
-        DialogueMainPanelDefinition panel = asset.FreePanel;
-        DialogueInnerRegionDefinition region = panel != null ? panel.InnerRegion : null;
-        Rect panelRect = resolved.FreePanelRect;
+        var all = new StringBuilder();
+        int rectIndex = 0;
+        for (int f = 0; f < asset.FreePanels.Count; f++)
+        {
+            DialogueMainPanelDefinition panel = asset.FreePanels[f];
+            if (panel == null || !panel.Enabled) continue;
+            if (rectIndex >= resolved.FreePanelRects.Count) break;
+            Rect panelRect = resolved.FreePanelRects[rectIndex++];
+            DialogueInnerRegionDefinition region = panel.InnerRegion;
 
-        var sb = new StringBuilder();
-        sb.Append($@"<ui:VisualElement name=""FreePanel"" style=""position: absolute; left: {panelRect.x:0.#}px; top: {panelRect.y:0.#}px; width: {panelRect.width:0.#}px; height: {panelRect.height:0.#}px;"">
-  <ui:VisualElement name=""FreePanelSurface"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0;{Join(PanelSurfaceStyle(panel, media))} overflow: hidden;"">
+            var sb = new StringBuilder();
+            sb.Append($@"<ui:VisualElement name=""FreePanel{f}"" style=""position: absolute; left: {panelRect.x:0.#}px; top: {panelRect.y:0.#}px; width: {panelRect.width:0.#}px; height: {panelRect.height:0.#}px;"">
+  <ui:VisualElement name=""FreePanelSurface{f}"" style=""position: absolute; left: 0; top: 0; right: 0; bottom: 0;{Join(PanelSurfaceStyle(panel, media))} overflow: hidden;"">
 ");
 
-        if (region != null)
-        {
-            ResolvedDialogueArea area = null;
-            for (int i = 0; i < resolved.Areas.Count; i++)
-                if (resolved.Areas[i].AreaKind == ResolvedDialogueAreaKind.FreeInner)
-                { area = resolved.Areas[i]; break; }
-
-            if (area != null)
+            ResolvedDialogueArea area = FindFreeArea(resolved, f);
+            if (region != null && area != null)
             {
                 var areaEl = new StringBuilder();
                 areaEl.Append($@"    <ui:VisualElement style=""{AbsStyle(area.Rect.x - panelRect.x, area.Rect.y - panelRect.y, area.Rect.width, area.Rect.height)}{Join(SurfaceStyle(region.Background, region.Border, region.Opacity))} overflow: hidden;"">
@@ -535,7 +535,7 @@ public static class DialogueVisualEditorUxml
                 int slotCount = Mathf.Clamp(1 + Mathf.Clamp(region.PartitionLevel, 0, 2), 1, 3);
                 for (int i = 0; i < slotCount; i++)
                 {
-                    ResolvedDialogueSlot slot = FindSlot(resolved, ResolvedDialogueAreaKind.FreeInner, i);
+                    ResolvedDialogueSlot slot = FindFreeSlot(resolved, f, i);
                     DialogueSlotDefinition slotDef = region.Slots != null && i < region.Slots.Count
                         ? region.Slots[i] : null;
                     if (slot == null || slotDef == null) continue;
@@ -546,8 +546,7 @@ public static class DialogueVisualEditorUxml
                         for (int c = 0; c < slotDef.Components.Count; c++)
                         {
                             DialogueComponentDefinition comp = slotDef.Components[c];
-                            ResolvedDialogueComponentRect compRect = FindComponent(
-                                resolved, ResolvedDialogueAreaKind.FreeInner, i, c);
+                            ResolvedDialogueComponentRect compRect = FindFreeComponent(resolved, f, i, c);
                             if (comp == null || compRect == null) continue;
                             slotEl.Append(StaticComponentXml(comp, Relative(compRect.Rect, slot.Rect)));
                         }
@@ -563,10 +562,42 @@ public static class DialogueVisualEditorUxml
                 areaEl.Append("    </ui:VisualElement>\n");
                 sb.Append(areaEl);
             }
-        }
 
-        sb.Append("  </ui:VisualElement>\n</ui:VisualElement>\n");
-        return sb.ToString();
+            sb.Append("  </ui:VisualElement>\n</ui:VisualElement>\n");
+            all.Append(sb);
+        }
+        return all.ToString();
+    }
+
+    static ResolvedDialogueArea FindFreeArea(ResolvedDialogueLayout resolved, int panelIndex)
+    {
+        for (int i = 0; i < resolved.Areas.Count; i++)
+            if (resolved.Areas[i].AreaKind == ResolvedDialogueAreaKind.FreeInner &&
+                resolved.Areas[i].FreePanelIndex == panelIndex)
+                return resolved.Areas[i];
+        return null;
+    }
+
+    static ResolvedDialogueSlot FindFreeSlot(ResolvedDialogueLayout resolved, int panelIndex, int slotIndex)
+    {
+        for (int i = 0; i < resolved.Slots.Count; i++)
+            if (resolved.Slots[i].AreaKind == ResolvedDialogueAreaKind.FreeInner &&
+                resolved.Slots[i].FreePanelIndex == panelIndex &&
+                resolved.Slots[i].SlotIndex == slotIndex)
+                return resolved.Slots[i];
+        return null;
+    }
+
+    static ResolvedDialogueComponentRect FindFreeComponent(ResolvedDialogueLayout resolved,
+        int panelIndex, int slotIndex, int componentIndex)
+    {
+        for (int i = 0; i < resolved.Components.Count; i++)
+            if (resolved.Components[i].AreaKind == ResolvedDialogueAreaKind.FreeInner &&
+                resolved.Components[i].FreePanelIndex == panelIndex &&
+                resolved.Components[i].SlotIndex == slotIndex &&
+                resolved.Components[i].ComponentIndex == componentIndex)
+                return resolved.Components[i];
+        return null;
     }
 
     /// <summary>Joins an inline style fragment into a style attribute: ensures

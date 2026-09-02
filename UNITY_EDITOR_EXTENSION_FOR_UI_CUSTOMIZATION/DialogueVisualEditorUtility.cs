@@ -26,7 +26,7 @@ public static class DialogueVisualEditorUtility
         if (kind == ResolvedDialogueAreaKind.ChoiceInner)
             return asset.ChoicePanelEnabled && asset.ChoicePanel != null && asset.ChoicePanel.Enabled;
         if (kind == ResolvedDialogueAreaKind.FreeInner)
-            return asset.FreePanelEnabled && asset.FreePanel != null && asset.FreePanel.Enabled;
+            return true; // free panels are managed individually per panel
         switch (kind)
         {
             case ResolvedDialogueAreaKind.Top: return asset.TopAreaEnabled;
@@ -48,11 +48,7 @@ public static class DialogueVisualEditorUtility
             return;
         }
         if (kind == ResolvedDialogueAreaKind.FreeInner)
-        {
-            asset.FreePanelEnabled = enabled;
-            if (asset.FreePanel != null) asset.FreePanel.Enabled = enabled;
-            return;
-        }
+            return; // free panels are managed individually per panel
         switch (kind)
         {
             case ResolvedDialogueAreaKind.Top: asset.TopAreaEnabled = enabled; break;
@@ -75,8 +71,7 @@ public static class DialogueVisualEditorUtility
             return asset.ChoicePanel != null && asset.ChoicePanel.InnerRegion != null
                 ? asset.ChoicePanel.InnerRegion.Slots : null;
         if (kind == ResolvedDialogueAreaKind.FreeInner)
-            return asset.FreePanel != null && asset.FreePanel.InnerRegion != null
-                ? asset.FreePanel.InnerRegion.Slots : null;
+            return null; // use GetFreePanelSlots(asset, panelIndex)
         if (kind == ResolvedDialogueAreaKind.ChoiceGroup)
             return asset.ChoiceGroups;
         if (kind == ResolvedDialogueAreaKind.ChoiceLeaf)
@@ -96,9 +91,28 @@ public static class DialogueVisualEditorUtility
         return area != null ? area.Slots : null;
     }
 
-    public static DialogueSlotDefinition GetSlot(DialogueLayoutAsset asset,
-        ResolvedDialogueAreaKind kind, int slotIndex)
+    public static DialogueMainPanelDefinition FreePanelAt(DialogueLayoutAsset asset, int index)
     {
+        if (asset == null || asset.FreePanels == null ||
+            index < 0 || index >= asset.FreePanels.Count) return null;
+        return asset.FreePanels[index];
+    }
+
+    public static List<DialogueSlotDefinition> GetFreePanelSlots(DialogueLayoutAsset asset, int index)
+    {
+        DialogueMainPanelDefinition panel = FreePanelAt(asset, index);
+        return panel != null && panel.InnerRegion != null ? panel.InnerRegion.Slots : null;
+    }
+
+    public static DialogueSlotDefinition GetSlot(DialogueLayoutAsset asset,
+        ResolvedDialogueAreaKind kind, int slotIndex, int freePanelIndex = -1)
+    {
+        if (kind == ResolvedDialogueAreaKind.FreeInner)
+        {
+            List<DialogueSlotDefinition> slots = GetFreePanelSlots(asset, freePanelIndex);
+            return slots != null && slotIndex >= 0 && slotIndex < slots.Count
+                ? slots[slotIndex] : null;
+        }
         if (kind == ResolvedDialogueAreaKind.ChoiceLeaf)
         {
             List<DialogueSlotDefinition> groups = asset != null ? asset.ChoiceGroups : null;
@@ -156,9 +170,9 @@ public static class DialogueVisualEditorUtility
     }
 
     public static DialogueComponentDefinition GetComponent(DialogueLayoutAsset asset,
-        ResolvedDialogueAreaKind kind, int slotIndex, int componentIndex)
+        ResolvedDialogueAreaKind kind, int slotIndex, int componentIndex, int freePanelIndex = -1)
     {
-        DialogueSlotDefinition slot = GetSlot(asset, kind, slotIndex);
+        DialogueSlotDefinition slot = GetSlot(asset, kind, slotIndex, freePanelIndex);
         return slot != null && slot.Components != null &&
                componentIndex >= 0 && componentIndex < slot.Components.Count
             ? slot.Components[componentIndex] : null;
@@ -183,8 +197,9 @@ public static class DialogueVisualEditorUtility
             EnsureSlots(asset.ChoicePanel != null ? asset.ChoicePanel.InnerRegion : null);
             EnsureChoiceGroups(asset);
         }
-        if (asset.FreePanelEnabled)
-            EnsureSlots(asset.FreePanel != null ? asset.FreePanel.InnerRegion : null);
+        if (asset.FreePanels != null)
+            for (int i = 0; i < asset.FreePanels.Count; i++)
+                EnsureSlots(asset.FreePanels[i] != null ? asset.FreePanels[i].InnerRegion : null);
         EnsureSlots(asset.TopArea);
         EnsureSlots(asset.BottomArea);
         EnsureSlots(asset.LeftArea);

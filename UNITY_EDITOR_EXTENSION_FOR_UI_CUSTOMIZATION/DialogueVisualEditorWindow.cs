@@ -53,6 +53,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         public ResolvedDialogueAreaKind AreaKind;
         public int SlotIndex;
         public int ComponentIndex;
+        // Which free-floating panel (only meaningful for FreePanel/FreeInner
+        // selections; -1 otherwise).
+        public int FreePanelIndex;
 
         public static SelectionState None
         {
@@ -63,7 +66,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                     Kind = SelectionKind.None,
                     AreaKind = ResolvedDialogueAreaKind.MainInner,
                     SlotIndex = -1,
-                    ComponentIndex = -1
+                    ComponentIndex = -1,
+                    FreePanelIndex = -1
                 };
             }
         }
@@ -597,90 +601,100 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             DrawSelectionHandles(layout);
     }
 
-    // ─── Free-floating UI panel subtree ───────────────────────────────────────
-    // Draws the free panel ABOVE the main layout (its own coherent unit):
-    // body (image-based or styled), region, slots and components.
+    // ─── Free-floating UI panels subtree ──────────────────────────────────────
+    // Draws EVERY free panel ABOVE the main layout (each its own coherent
+    // unit): body (image-based or styled), region, slots and components.
     void DrawFreeSubtree(ResolvedDialogueLayout layout)
     {
-        if (layout == null || !layout.FreePanelActive || layoutAsset == null) return;
-        DialogueMainPanelDefinition freePanel = layoutAsset.FreePanel;
-        if (freePanel == null) return;
+        if (layout == null || layoutAsset == null || layoutAsset.FreePanels == null) return;
 
-        bool isImage = freePanel.UseImageBackground &&
-                       TryDrawImageBackground(layout.FreePanelRect, freePanel.ImageBackgroundPath);
-        if (!isImage)
+        int rectIndex = 0;
+        for (int f = 0; f < layoutAsset.FreePanels.Count; f++)
         {
-            DialogueVisualStylePreviewUtility.DrawStyledElement(
-                layout.FreePanelRect,
-                freePanel.Background,
-                freePanel.Border,
-                freePanel.Shadow,
-                freePanel.Opacity,
-                new Color(0.10f, 0.28f, 0.30f, 0.85f),
-                new Color(0.62f, 0.95f, 0.92f, 1f),
-                2f);
-        }
-        if (selection.Kind == SelectionKind.FreePanel)
-            DialogueVisualStylePreviewUtility.DrawSelectionOutline(
-                layout.FreePanelRect, freePanel.Border, new Color(1f, 1f, 0.45f, 1f), 2.5f);
-        if (showLabels)
-            GUI.Label(new Rect(layout.FreePanelRect.x + 6f, layout.FreePanelRect.y + 4f, 240f, 18f),
-                "Free Panel", EditorStyles.whiteBoldLabel);
+            DialogueMainPanelDefinition freePanel = layoutAsset.FreePanels[f];
+            if (freePanel == null || !freePanel.Enabled) continue;
+            if (rectIndex >= layout.FreePanelRects.Count) break;
+            Rect panelRect = layout.FreePanelRects[rectIndex++];
 
-        ResolvedDialogueArea regionArea = FindAreaByKind(layout, ResolvedDialogueAreaKind.FreeInner);
-        DialogueInnerRegionDefinition region = freePanel.InnerRegion;
-        if (regionArea == null || region == null) return;
-
-        DialogueVisualStylePreviewUtility.DrawStyledElement(
-            regionArea.Rect, region.Background, region.Border, region.Shadow, region.Opacity,
-            new Color(0.14f, 0.34f, 0.36f, 0.30f), new Color(0.62f, 0.95f, 0.92f, 1f), 1.5f);
-        if (IsSelected(regionArea))
-            DialogueVisualStylePreviewUtility.DrawSelectionOutline(
-                regionArea.Rect, region.Border, new Color(1f, 1f, 0.45f, 1f), 2f);
-        if (showLabels)
-            GUI.Label(new Rect(regionArea.Rect.x + 4f, regionArea.Rect.y + 2f, 220f, 18f),
-                regionArea.Name, EditorStyles.miniBoldLabel);
-
-        for (int i = 0; i < layout.Slots.Count; i++)
-        {
-            ResolvedDialogueSlot slot = layout.Slots[i];
-            if (slot.AreaKind != ResolvedDialogueAreaKind.FreeInner) continue;
-            DialogueSlotDefinition slotDef = DialogueVisualEditorUtility.GetSlot(
-                layoutAsset, ResolvedDialogueAreaKind.FreeInner, slot.SlotIndex);
-            DialogueVisualStylePreviewUtility.DrawStyledElement(
-                slot.Rect,
-                slotDef != null ? slotDef.Background : null,
-                slotDef != null ? slotDef.Border : null,
-                slotDef != null ? slotDef.Shadow : null,
-                slotDef != null ? slotDef.Opacity : null,
-                new Color(1f, 0.84f, 0.40f, 0.08f), new Color(1f, 0.84f, 0.40f, 1f), 1.2f);
-            if (IsSelected(slot))
+            bool isImage = freePanel.UseImageBackground &&
+                           TryDrawImageBackground(panelRect, freePanel.ImageBackgroundPath);
+            if (!isImage)
+            {
+                DialogueVisualStylePreviewUtility.DrawStyledElement(
+                    panelRect,
+                    freePanel.Background,
+                    freePanel.Border,
+                    freePanel.Shadow,
+                    freePanel.Opacity,
+                    new Color(0.10f, 0.28f, 0.30f, 0.85f),
+                    new Color(0.62f, 0.95f, 0.92f, 1f),
+                    2f);
+            }
+            if (selection.Kind == SelectionKind.FreePanel && selection.FreePanelIndex == f)
                 DialogueVisualStylePreviewUtility.DrawSelectionOutline(
-                    slot.Rect, slotDef != null ? slotDef.Border : null, new Color(1f, 1f, 0.45f, 1f), 2f);
+                    panelRect, freePanel.Border, new Color(1f, 1f, 0.45f, 1f), 2.5f);
             if (showLabels)
-                GUI.Label(new Rect(slot.Rect.x + 4f, slot.Rect.y + 2f, 120f, 18f),
-                    slot.SlotId, EditorStyles.miniLabel);
-        }
+                GUI.Label(new Rect(panelRect.x + 6f, panelRect.y + 4f, 240f, 18f),
+                    freePanel.DisplayName, EditorStyles.whiteBoldLabel);
 
-        for (int c = 0; c < layout.Components.Count; c++)
-        {
-            ResolvedDialogueComponentRect component = layout.Components[c];
-            if (component.AreaKind != ResolvedDialogueAreaKind.FreeInner) continue;
-            DialogueComponentDefinition componentDef = DialogueVisualEditorUtility.GetComponent(
-                layoutAsset, ResolvedDialogueAreaKind.FreeInner, component.SlotIndex, component.ComponentIndex);
+            ResolvedDialogueArea regionArea = FindFreeArea(layout, f);
+            DialogueInnerRegionDefinition region = freePanel.InnerRegion;
+            if (regionArea == null || region == null) continue;
+
             DialogueVisualStylePreviewUtility.DrawStyledElement(
-                component.Rect,
-                componentDef != null ? componentDef.Background : null,
-                componentDef != null ? componentDef.Border : null,
-                componentDef != null ? componentDef.Shadow : null,
-                componentDef != null ? componentDef.Opacity : null,
-                GetComponentFill(component.ComponentType),
-                component.ClipToSlot ? new Color(1f, 1f, 1f, 0.9f) : new Color(1f, 0.45f, 0.45f, 1f),
-                1.4f);
-            if (IsSelected(component))
+                regionArea.Rect, region.Background, region.Border, region.Shadow, region.Opacity,
+                new Color(0.14f, 0.34f, 0.36f, 0.30f), new Color(0.62f, 0.95f, 0.92f, 1f), 1.5f);
+            if (IsSelected(regionArea))
                 DialogueVisualStylePreviewUtility.DrawSelectionOutline(
-                    component.Rect, componentDef != null ? componentDef.Border : null,
-                    new Color(1f, 1f, 0.45f, 1f), 2f);
+                    regionArea.Rect, region.Border, new Color(1f, 1f, 0.45f, 1f), 2f);
+            if (showLabels)
+                GUI.Label(new Rect(regionArea.Rect.x + 4f, regionArea.Rect.y + 2f, 220f, 18f),
+                    regionArea.Name, EditorStyles.miniBoldLabel);
+
+            for (int i = 0; i < layout.Slots.Count; i++)
+            {
+                ResolvedDialogueSlot slot = layout.Slots[i];
+                if (slot.AreaKind != ResolvedDialogueAreaKind.FreeInner ||
+                    slot.FreePanelIndex != f) continue;
+                DialogueSlotDefinition slotDef = DialogueVisualEditorUtility.GetSlot(
+                    layoutAsset, ResolvedDialogueAreaKind.FreeInner, slot.SlotIndex, f);
+                DialogueVisualStylePreviewUtility.DrawStyledElement(
+                    slot.Rect,
+                    slotDef != null ? slotDef.Background : null,
+                    slotDef != null ? slotDef.Border : null,
+                    slotDef != null ? slotDef.Shadow : null,
+                    slotDef != null ? slotDef.Opacity : null,
+                    new Color(1f, 0.84f, 0.40f, 0.08f), new Color(1f, 0.84f, 0.40f, 1f), 1.2f);
+                if (IsSelected(slot))
+                    DialogueVisualStylePreviewUtility.DrawSelectionOutline(
+                        slot.Rect, slotDef != null ? slotDef.Border : null, new Color(1f, 1f, 0.45f, 1f), 2f);
+                if (showLabels)
+                    GUI.Label(new Rect(slot.Rect.x + 4f, slot.Rect.y + 2f, 120f, 18f),
+                        slot.SlotId, EditorStyles.miniLabel);
+            }
+
+            for (int c = 0; c < layout.Components.Count; c++)
+            {
+                ResolvedDialogueComponentRect component = layout.Components[c];
+                if (component.AreaKind != ResolvedDialogueAreaKind.FreeInner ||
+                    component.FreePanelIndex != f) continue;
+                DialogueComponentDefinition componentDef = DialogueVisualEditorUtility.GetComponent(
+                    layoutAsset, ResolvedDialogueAreaKind.FreeInner, component.SlotIndex,
+                    component.ComponentIndex, f);
+                DialogueVisualStylePreviewUtility.DrawStyledElement(
+                    component.Rect,
+                    componentDef != null ? componentDef.Background : null,
+                    componentDef != null ? componentDef.Border : null,
+                    componentDef != null ? componentDef.Shadow : null,
+                    componentDef != null ? componentDef.Opacity : null,
+                    GetComponentFill(component.ComponentType),
+                    component.ClipToSlot ? new Color(1f, 1f, 1f, 0.9f) : new Color(1f, 0.45f, 0.45f, 1f),
+                    1.4f);
+                if (IsSelected(component))
+                    DialogueVisualStylePreviewUtility.DrawSelectionOutline(
+                        component.Rect, componentDef != null ? componentDef.Border : null,
+                        new Color(1f, 1f, 0.45f, 1f), 2f);
+            }
         }
     }
 
@@ -1112,7 +1126,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
             case SelectionKind.Slot:
                 DialogueSlotDefinition slot = DialogueVisualEditorUtility.GetSlot(layoutAsset,
-                    selection.AreaKind, selection.SlotIndex);
+                    selection.AreaKind, selection.SlotIndex, selection.FreePanelIndex);
                 if (slot != null) dragStartSelectionOffset = slot.Offset;
                 break;
 
@@ -1149,7 +1163,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 else if (selection.Kind == SelectionKind.ChoicePanel)
                     ApplyMainPanelRect(movedRect, false, true, layoutAsset.ChoicePanel);
                 else if (selection.Kind == SelectionKind.FreePanel)
-                    ApplyMainPanelRect(movedRect, false, true, layoutAsset.FreePanel);
+                    ApplyMainPanelRect(movedRect, false, true,
+                        DialogueVisualEditorUtility.FreePanelAt(layoutAsset, selection.FreePanelIndex));
                 else
                     ApplyRectToCurrentSelection(movedRect);
                 break;
@@ -1339,13 +1354,37 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                         ResolvedDialogueAreaKind.ChoiceLeaf, k, -1, 3);
             }
         }
-        DrawHierarchyButton(
-            layoutAsset.FreePanelEnabled ? "Free Panel" : "Free Panel (disabled — click to design it)",
-            SelectionKind.FreePanel, ResolvedDialogueAreaKind.FreeInner, -1, -1, 0);
-        if (layoutAsset.FreePanelEnabled && layoutAsset.FreePanel != null)
+        if (layoutAsset.FreePanels != null)
         {
-            DrawHierarchyButton("Free Region", SelectionKind.Area, ResolvedDialogueAreaKind.FreeInner, -1, -1, 1);
-            DrawHierarchySlots(ResolvedDialogueAreaKind.FreeInner, 2);
+            for (int f = 0; f < layoutAsset.FreePanels.Count; f++)
+            {
+                DialogueMainPanelDefinition freePanel = layoutAsset.FreePanels[f];
+                if (freePanel == null) continue;
+                DrawHierarchyButton(
+                    (freePanel.Enabled ? freePanel.DisplayName : freePanel.DisplayName + " (disabled)"),
+                    SelectionKind.FreePanel, ResolvedDialogueAreaKind.FreeInner, -1, -1, 0, f);
+                if (!freePanel.Enabled) continue;
+                DrawHierarchyButton("Free Region", SelectionKind.Area,
+                    ResolvedDialogueAreaKind.FreeInner, -1, -1, 1, f);
+
+                List<DialogueSlotDefinition> freeSlots = DialogueVisualEditorUtility.GetFreePanelSlots(layoutAsset, f);
+                if (freeSlots == null) continue;
+                int freeVisible = DialogueVisualEditorUtility.GetVisibleSlotCount(freePanel.InnerRegion);
+                for (int i = 0; i < freeVisible && i < freeSlots.Count; i++)
+                {
+                    DialogueSlotDefinition slot = freeSlots[i];
+                    if (slot == null) continue;
+                    DrawHierarchyButton(slot.DisplayName, SelectionKind.Slot,
+                        ResolvedDialogueAreaKind.FreeInner, i, -1, 2, f);
+                    if (slot.Components == null) continue;
+                    for (int c = 0; c < slot.Components.Count; c++)
+                    {
+                        if (slot.Components[c] == null) continue;
+                        DrawHierarchyButton(slot.Components[c].DisplayName, SelectionKind.Component,
+                            ResolvedDialogueAreaKind.FreeInner, i, c, 3, f);
+                    }
+                }
+            }
         }
         DrawHierarchyArea(ResolvedDialogueAreaKind.Top, "Top Area");
         DrawHierarchyArea(ResolvedDialogueAreaKind.Bottom, "Bottom Area");
@@ -1388,13 +1427,14 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
     void DrawHierarchyButton(string label, SelectionKind kind,
         ResolvedDialogueAreaKind areaKind, int slotIndex, int componentIndex,
-        int indent)
+        int indent, int freePanelIndex = -1)
     {
         Rect row = EditorGUILayout.GetControlRect(false, 20f);
         row.xMin += indent * 16f;
         bool selected = selection.Kind == kind && selection.AreaKind == areaKind &&
                         selection.SlotIndex == slotIndex &&
-                        selection.ComponentIndex == componentIndex;
+                        selection.ComponentIndex == componentIndex &&
+                        selection.FreePanelIndex == freePanelIndex;
         if (selected) EditorGUI.DrawRect(row, new Color(0.25f, 0.42f, 0.75f, 0.45f));
         if (GUI.Button(row, label, EditorStyles.label))
         {
@@ -1403,7 +1443,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 Kind = kind,
                 AreaKind = areaKind,
                 SlotIndex = slotIndex,
-                ComponentIndex = componentIndex
+                ComponentIndex = componentIndex,
+                FreePanelIndex = freePanelIndex
             };
             Repaint();
         }
@@ -1432,6 +1473,36 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             new GUIContent("Choice Panel Enabled",
                 "Design the choice event UI: a standalone panel with up to 3 fully customizable option slots that appears only while the player is taking a choice."),
             layoutAsset.ChoicePanelEnabled);
+
+        EditorGUILayout.Space(6f);
+        GUILayout.Label("Free-Floating Panels", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField("Count",
+            (layoutAsset.FreePanels != null ? layoutAsset.FreePanels.Count : 0).ToString());
+        if (GUILayout.Button("Add Free-Floating Panel", GUILayout.Height(24f)))
+        {
+            RecordLayoutAndEngine("Add Free Panel");
+            if (layoutAsset.FreePanels == null)
+                layoutAsset.FreePanels = new List<DialogueMainPanelDefinition>();
+            layoutAsset.FreePanels.Add(new DialogueMainPanelDefinition
+            {
+                DisplayName = "Free Panel " + (layoutAsset.FreePanels.Count + 1),
+                AnchorPreset = DialogueAnchorPreset.Center,
+                Width = new DialogueSizeValue { Unit = DialogueSizeUnit.Pixels, Value = 320f },
+                Height = new DialogueSizeValue { Unit = DialogueSizeUnit.Pixels, Value = 180f },
+                Background = new DialogueBackgroundStyle
+                { Mode = DialogueBackgroundMode.SolidColor, ColorA = new Color(0.07f, 0.10f, 0.16f, 0.85f) },
+                Border = new DialogueBorderStyle { Enabled = true, BorderColor = new Color(0.55f, 0.75f, 1f, 0.5f) }
+            });
+            selection = new SelectionState
+            {
+                Kind = SelectionKind.FreePanel,
+                AreaKind = ResolvedDialogueAreaKind.FreeInner,
+                SlotIndex = -1,
+                ComponentIndex = -1,
+                FreePanelIndex = layoutAsset.FreePanels.Count - 1
+            };
+            CommitLayoutMutation();
+        }
 
         EditorGUILayout.Space(8f);
         DrawSpeakerEmphasisInspector();
@@ -1503,24 +1574,23 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
     void DrawFreePanelInspector()
     {
-        DialogueMainPanelDefinition panel = layoutAsset.FreePanel;
-        if (panel == null) return;
-
-        if (!layoutAsset.FreePanelEnabled)
+        DialogueMainPanelDefinition panel = DialogueVisualEditorUtility.FreePanelAt(
+            layoutAsset, selection.FreePanelIndex);
+        if (panel == null)
         {
-            EditorGUILayout.HelpBox(
-                "The free-floating UI panel is DISABLED. Enable it to add a standalone panel anywhere on the canvas — full customization, its own region (1-3 slots, any components), anchored and moved exactly like the main panel.",
-                MessageType.Warning);
-            if (GUILayout.Button("Enable Free-Floating Panel", GUILayout.Height(28f)))
-            {
-                RecordLayoutAndEngine("Enable Free Panel");
-                layoutAsset.FreePanelEnabled = true;
-                CommitLayoutMutation();
-            }
-            EditorGUILayout.Space(8f);
+            EditorGUILayout.HelpBox("This free panel no longer exists.", MessageType.Warning);
+            return;
         }
 
-        layoutAsset.FreePanelEnabled = EditorGUILayout.Toggle("Panel Enabled", layoutAsset.FreePanelEnabled);
+        if (GUILayout.Button("Delete This Free Panel", GUILayout.Height(24f)))
+        {
+            RecordLayoutAndEngine("Delete Free Panel");
+            layoutAsset.FreePanels.RemoveAt(selection.FreePanelIndex);
+            selection = SelectionState.None;
+            CommitLayoutMutation();
+            return;
+        }
+
         panel.DisplayName = EditorGUILayout.TextField("Display Name", panel.DisplayName);
         panel.Enabled = EditorGUILayout.Toggle("Enabled", panel.Enabled);
         panel.AnchorPreset = (DialogueAnchorPreset)EditorGUILayout.EnumPopup("Anchor", panel.AnchorPreset);
@@ -1553,7 +1623,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
         EditorGUILayout.Space(8f);
         EditorGUILayout.HelpBox(
-            "The Free Region inside this panel partitions into 1-3 terminal slots holding any components (text, name, image panels...). Select it on the canvas or in the hierarchy — every editing tool works exactly like on the main panel.",
+            "The Free Region inside this panel partitions into 1-3 terminal slots holding any components (text, name, image panels...). Select it on the canvas or in the hierarchy — every editing tool works exactly like on the main panel. Add more free panels from the layout root.",
             MessageType.None);
     }
 
@@ -1745,8 +1815,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         }
         if (selection.AreaKind == ResolvedDialogueAreaKind.FreeInner)
         {
-            DrawInnerRegionInspector(layoutAsset.FreePanel != null
-                ? layoutAsset.FreePanel.InnerRegion : null);
+            DialogueMainPanelDefinition freeDef = DialogueVisualEditorUtility.FreePanelAt(
+                layoutAsset, selection.FreePanelIndex);
+            DrawInnerRegionInspector(freeDef != null ? freeDef.InnerRegion : null);
             return;
         }
         DialogueAttachedAreaDefinition area = DialogueVisualEditorUtility.GetArea(layoutAsset, selection.AreaKind);
@@ -1794,7 +1865,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
     void DrawSlotInspector()
     {
-        DialogueSlotDefinition slot = DialogueVisualEditorUtility.GetSlot(layoutAsset, selection.AreaKind, selection.SlotIndex);
+        DialogueSlotDefinition slot = DialogueVisualEditorUtility.GetSlot(layoutAsset, selection.AreaKind, selection.SlotIndex, selection.FreePanelIndex);
         if (slot == null) return;
         slot.DisplayName = EditorGUILayout.TextField("Display Name", slot.DisplayName);
         slot.Enabled = EditorGUILayout.Toggle("Enabled", slot.Enabled);
@@ -1924,11 +1995,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             return DialogueVisualEditorUtility.GetVisibleSlotCount(region);
         }
         if (kind == ResolvedDialogueAreaKind.FreeInner)
-        {
-            DialogueInnerRegionDefinition region = layoutAsset.FreePanel != null
-                ? layoutAsset.FreePanel.InnerRegion : null;
-            return DialogueVisualEditorUtility.GetVisibleSlotCount(region);
-        }
+            return 0; // free panels list their slots individually
         if (kind == ResolvedDialogueAreaKind.ChoiceGroup)
             return 0; // structural only — never drawn or listed
         if (kind == ResolvedDialogueAreaKind.ChoiceLeaf)
@@ -2184,7 +2251,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             return;
         }
         DialogueSlotDefinition slot = DialogueVisualEditorUtility.GetSlot(layoutAsset,
-            slotSelection.AreaKind, slotSelection.SlotIndex);
+            slotSelection.AreaKind, slotSelection.SlotIndex, slotSelection.FreePanelIndex);
         if (slot == null) return;
         RecordLayoutAndEngine("Add Dialogue Component");
         DialogueComponentDefinition component = DialogueVisualEditorUtility.CreateComponent(type);
@@ -2194,7 +2261,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             Kind = SelectionKind.Component,
             AreaKind = slotSelection.AreaKind,
             SlotIndex = slotSelection.SlotIndex,
-            ComponentIndex = slot.Components.Count - 1
+            ComponentIndex = slot.Components.Count - 1,
+            FreePanelIndex = slotSelection.FreePanelIndex
         };
         toolMode = ToolMode.Select;
         CommitLayoutMutation();
@@ -2203,7 +2271,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     void RemoveSelectedComponent()
     {
         DialogueSlotDefinition slot = DialogueVisualEditorUtility.GetSlot(layoutAsset,
-            selection.AreaKind, selection.SlotIndex);
+            selection.AreaKind, selection.SlotIndex, selection.FreePanelIndex);
         if (slot == null || slot.Components == null ||
             selection.ComponentIndex < 0 || selection.ComponentIndex >= slot.Components.Count) return;
         RecordLayoutAndEngine("Remove Dialogue Component");
@@ -2224,7 +2292,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                     Kind = SelectionKind.Component,
                     AreaKind = resolved.Components[i].AreaKind,
                     SlotIndex = resolved.Components[i].SlotIndex,
-                    ComponentIndex = resolved.Components[i].ComponentIndex
+                    ComponentIndex = resolved.Components[i].ComponentIndex,
+                    FreePanelIndex = resolved.Components[i].FreePanelIndex
                 };
             }
         }
@@ -2237,7 +2306,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                     Kind = SelectionKind.Slot,
                     AreaKind = resolved.Slots[i].AreaKind,
                     SlotIndex = resolved.Slots[i].SlotIndex,
-                    ComponentIndex = -1
+                    ComponentIndex = -1,
+                    FreePanelIndex = resolved.Slots[i].FreePanelIndex
                 };
             }
         }
@@ -2264,15 +2334,19 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 ComponentIndex = -1
             };
         }
-        if (resolved.FreePanelActive && resolved.FreePanelRect.Contains(mouse))
+        for (int f = resolved.FreePanelRects.Count - 1; f >= 0; f--)
         {
-            return new SelectionState
+            if (resolved.FreePanelRects[f].Contains(mouse))
             {
-                Kind = SelectionKind.FreePanel,
-                AreaKind = ResolvedDialogueAreaKind.FreeInner,
-                SlotIndex = -1,
-                ComponentIndex = -1
-            };
+                return new SelectionState
+                {
+                    Kind = SelectionKind.FreePanel,
+                    AreaKind = ResolvedDialogueAreaKind.FreeInner,
+                    SlotIndex = -1,
+                    ComponentIndex = -1,
+                    FreePanelIndex = f
+                };
+            }
         }
         if (resolved.MainPanelRect.Contains(mouse))
         {
@@ -2300,13 +2374,26 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     DialogueComponentDefinition GetSelectedComponentDefinition()
     {
         return DialogueVisualEditorUtility.GetComponent(layoutAsset,
-            selection.AreaKind, selection.SlotIndex, selection.ComponentIndex);
+            selection.AreaKind, selection.SlotIndex, selection.ComponentIndex,
+            selection.FreePanelIndex);
     }
 
     ResolvedDialogueArea FindSelectedArea(ResolvedDialogueLayout layout)
     {
         if (layout == null || selection.Kind != SelectionKind.Area) return null;
+        if (selection.AreaKind == ResolvedDialogueAreaKind.FreeInner)
+            return FindFreeArea(layout, selection.FreePanelIndex);
         return FindAreaByKind(layout, selection.AreaKind);
+    }
+
+    static ResolvedDialogueArea FindFreeArea(ResolvedDialogueLayout layout, int panelIndex)
+    {
+        if (layout == null) return null;
+        for (int i = 0; i < layout.Areas.Count; i++)
+            if (layout.Areas[i].AreaKind == ResolvedDialogueAreaKind.FreeInner &&
+                layout.Areas[i].FreePanelIndex == panelIndex)
+                return layout.Areas[i];
+        return null;
     }
 
     ResolvedDialogueArea FindAreaByKind(ResolvedDialogueLayout layout,
@@ -2327,7 +2414,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             ResolvedDialogueComponentRect component = layout.Components[i];
             if (component.AreaKind == selection.AreaKind &&
                 component.SlotIndex == selection.SlotIndex &&
-                component.ComponentIndex == selection.ComponentIndex)
+                component.ComponentIndex == selection.ComponentIndex &&
+                (component.AreaKind != ResolvedDialogueAreaKind.FreeInner ||
+                 component.FreePanelIndex == selection.FreePanelIndex))
                 return component;
         }
         return null;
@@ -2336,14 +2425,18 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     bool IsSelected(ResolvedDialogueArea area)
     {
         return selection.Kind == SelectionKind.Area &&
-               selection.AreaKind == area.AreaKind;
+               selection.AreaKind == area.AreaKind &&
+               (area.AreaKind != ResolvedDialogueAreaKind.FreeInner ||
+                selection.FreePanelIndex == area.FreePanelIndex);
     }
 
     bool IsSelected(ResolvedDialogueSlot slot)
     {
         return selection.Kind == SelectionKind.Slot &&
                selection.AreaKind == slot.AreaKind &&
-               selection.SlotIndex == slot.SlotIndex;
+               selection.SlotIndex == slot.SlotIndex &&
+               (slot.AreaKind != ResolvedDialogueAreaKind.FreeInner ||
+                selection.FreePanelIndex == slot.FreePanelIndex);
     }
 
     bool IsSelected(ResolvedDialogueComponentRect component)
@@ -2351,7 +2444,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         return selection.Kind == SelectionKind.Component &&
                selection.AreaKind == component.AreaKind &&
                selection.SlotIndex == component.SlotIndex &&
-               selection.ComponentIndex == component.ComponentIndex;
+               selection.ComponentIndex == component.ComponentIndex &&
+               (component.AreaKind != ResolvedDialogueAreaKind.FreeInner ||
+                selection.FreePanelIndex == component.FreePanelIndex);
     }
 
     ResolvedDialogueSlot FindSelectedSlot(ResolvedDialogueLayout layout)
@@ -2362,7 +2457,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         for (int i = 0; i < layout.Slots.Count; i++)
         {
             ResolvedDialogueSlot slot = layout.Slots[i];
-            if (slot.AreaKind == selection.AreaKind && slot.SlotIndex == selection.SlotIndex)
+            if (slot.AreaKind == selection.AreaKind && slot.SlotIndex == selection.SlotIndex &&
+                (slot.AreaKind != ResolvedDialogueAreaKind.FreeInner ||
+                 slot.FreePanelIndex == selection.FreePanelIndex))
                 return slot;
         }
 
@@ -2379,7 +2476,12 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         {
             ResolvedDialogueSlot slot = layout.Slots[i];
             if (slot.AreaKind == areaKind && slot.SlotIndex == slotIndex)
+            {
+                if (areaKind == ResolvedDialogueAreaKind.FreeInner &&
+                    slot.FreePanelIndex != selection.FreePanelIndex)
+                    continue;
                 return slot;
+            }
         }
 
         return null;
@@ -2403,8 +2505,10 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 return rect.width > 0f && rect.height > 0f;
 
             case SelectionKind.FreePanel:
-                if (!layout.FreePanelActive) return false;
-                rect = layout.FreePanelRect;
+                if (layout.FreePanelRects == null ||
+                    selection.FreePanelIndex < 0 ||
+                    selection.FreePanelIndex >= layout.FreePanelRects.Count) return false;
+                rect = layout.FreePanelRects[selection.FreePanelIndex];
                 return rect.width > 0f && rect.height > 0f;
 
             case SelectionKind.Area:
@@ -2452,13 +2556,22 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                             layoutAsset != null && layoutAsset.ChoicePanel != null ? layoutAsset.ChoicePanel.Padding : null)
                         : resolved.CanvasRect;
                 if (selection.AreaKind == ResolvedDialogueAreaKind.FreeInner)
-                    return resolved.FreePanelActive
-                        ? DialogueVisualLayoutResolver.ShrinkRect(resolved.FreePanelRect,
-                            layoutAsset != null && layoutAsset.FreePanel != null ? layoutAsset.FreePanel.Padding : null)
+                {
+                    ResolvedDialogueArea freeArea = FindFreeArea(resolved, selection.FreePanelIndex);
+                    DialogueMainPanelDefinition freeDef = DialogueVisualEditorUtility.FreePanelAt(layoutAsset, selection.FreePanelIndex);
+                    return freeArea != null
+                        ? DialogueVisualLayoutResolver.ShrinkRect(freeArea.Rect,
+                            freeDef != null ? freeDef.Padding : null)
                         : resolved.CanvasRect;
+                }
                 return resolved.CanvasRect;
 
             case SelectionKind.Slot:
+                if (selection.AreaKind == ResolvedDialogueAreaKind.FreeInner)
+                {
+                    ResolvedDialogueArea freeArea = FindFreeArea(resolved, selection.FreePanelIndex);
+                    return freeArea != null ? freeArea.Rect : resolved.CanvasRect;
+                }
                 if (selection.AreaKind == ResolvedDialogueAreaKind.ChoiceLeaf)
                 {
                     // Buttons live inside the holder slot's content rect.
@@ -2477,7 +2590,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 ResolvedDialogueSlot slot = FindResolvedSlot(resolved, selection.AreaKind, selection.SlotIndex);
                 if (slot == null)
                     return resolved.CanvasRect;
-                DialogueSlotDefinition slotDef = DialogueVisualEditorUtility.GetSlot(layoutAsset, selection.AreaKind, selection.SlotIndex);
+                DialogueSlotDefinition slotDef = DialogueVisualEditorUtility.GetSlot(layoutAsset, selection.AreaKind, selection.SlotIndex, selection.FreePanelIndex);
                 Rect slotContent = DialogueVisualLayoutResolver.ShrinkRect(slot.Rect, slotDef != null ? slotDef.Padding : null);
                 DialogueComponentDefinition component = GetSelectedComponentDefinition();
                 return DialogueVisualLayoutResolver.ShrinkRect(slotContent, component != null ? component.Padding : null);
@@ -2498,7 +2611,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 ApplyMainPanelRect(targetRect, true, false, layoutAsset.ChoicePanel);
                 break;
             case SelectionKind.FreePanel:
-                ApplyMainPanelRect(targetRect, true, false, layoutAsset.FreePanel);
+                ApplyMainPanelRect(targetRect, true, false,
+                    DialogueVisualEditorUtility.FreePanelAt(layoutAsset, selection.FreePanelIndex));
                 break;
             case SelectionKind.Area:
                 if (selection.AreaKind == ResolvedDialogueAreaKind.MainInner)
@@ -2508,9 +2622,13 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                         layoutAsset.ChoicePanel != null ? layoutAsset.ChoicePanel.InnerRegion : null,
                         ResolvedDialogueAreaKind.ChoiceInner);
                 else if (selection.AreaKind == ResolvedDialogueAreaKind.FreeInner)
+                {
+                    DialogueMainPanelDefinition freeDef = DialogueVisualEditorUtility.FreePanelAt(
+                        layoutAsset, selection.FreePanelIndex);
                     ApplyInnerRegionRect(targetRect,
-                        layoutAsset.FreePanel != null ? layoutAsset.FreePanel.InnerRegion : null,
-                        ResolvedDialogueAreaKind.FreeInner);
+                        freeDef != null ? freeDef.InnerRegion : null,
+                        ResolvedDialogueAreaKind.FreeInner, selection.FreePanelIndex);
+                }
                 else
                     ApplyAttachedAreaRect(targetRect);
                 break;
@@ -2605,7 +2723,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     }
 
     void ApplyInnerRegionRect(Rect targetRect, DialogueInnerRegionDefinition region = null,
-        ResolvedDialogueAreaKind kind = ResolvedDialogueAreaKind.MainInner)
+        ResolvedDialogueAreaKind kind = ResolvedDialogueAreaKind.MainInner, int freePanelIndex = -1)
     {
         if (layoutAsset == null || resolved == null)
             return;
@@ -2614,6 +2732,13 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         {
             if (region == null && layoutAsset.ChoicePanel != null)
                 region = layoutAsset.ChoicePanel.InnerRegion;
+            if (region == null) return;
+        }
+        else if (kind == ResolvedDialogueAreaKind.FreeInner)
+        {
+            if (region == null)
+                region = DialogueVisualEditorUtility.FreePanelAt(layoutAsset, freePanelIndex) != null
+                    ? DialogueVisualEditorUtility.FreePanelAt(layoutAsset, freePanelIndex).InnerRegion : null;
             if (region == null) return;
         }
         else if (region == null)
@@ -2627,8 +2752,14 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             parentRect = DialogueVisualLayoutResolver.ShrinkRect(resolved.ChoicePanelRect,
                 layoutAsset.ChoicePanel != null ? layoutAsset.ChoicePanel.Padding : null);
         else if (kind == ResolvedDialogueAreaKind.FreeInner)
-            parentRect = DialogueVisualLayoutResolver.ShrinkRect(resolved.FreePanelRect,
-                layoutAsset.FreePanel != null ? layoutAsset.FreePanel.Padding : null);
+        {
+            DialogueMainPanelDefinition freeDef = DialogueVisualEditorUtility.FreePanelAt(layoutAsset, freePanelIndex);
+            Rect freeRect = resolved.FreePanelRects != null &&
+                freePanelIndex >= 0 && freePanelIndex < resolved.FreePanelRects.Count
+                ? resolved.FreePanelRects[freePanelIndex] : Rect.zero;
+            parentRect = DialogueVisualLayoutResolver.ShrinkRect(freeRect,
+                freeDef != null ? freeDef.Padding : null);
+        }
         else
             parentRect = DialogueVisualLayoutResolver.ShrinkRect(resolved.MainPanelRect,
                 layoutAsset.MainPanel != null ? layoutAsset.MainPanel.Padding : null);
@@ -2641,7 +2772,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         // slots with the drag so resizing the region resizes it instead of sliding it.
         if (region.PartitionLevel > 0)
         {
-            ResolvedDialogueArea currentArea = FindAreaByKind(resolved, kind);
+            ResolvedDialogueArea currentArea = kind == ResolvedDialogueAreaKind.FreeInner
+                ? FindFreeArea(resolved, freePanelIndex)
+                : FindAreaByKind(resolved, kind);
             Rect currentRect = currentArea != null ? currentArea.Rect : dragStartRect;
             ScalePartitionedSlotsForParentResize(region.Slots,
                 DialogueVisualEditorUtility.GetVisibleSlotCount(region), true,
@@ -2826,7 +2959,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
     void ApplySlotRect(Rect targetRect)
     {
-        DialogueSlotDefinition slot = DialogueVisualEditorUtility.GetSlot(layoutAsset, selection.AreaKind, selection.SlotIndex);
+        DialogueSlotDefinition slot = DialogueVisualEditorUtility.GetSlot(layoutAsset, selection.AreaKind, selection.SlotIndex, selection.FreePanelIndex);
         if (slot == null || resolved == null)
             return;
 

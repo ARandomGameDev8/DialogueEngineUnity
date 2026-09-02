@@ -13,9 +13,8 @@ public sealed class ResolvedDialogueLayout
     public int ChoicePanelZ;
     public int ChoiceHolderSlotIndex = -1;
     public bool ChoiceButtonsResolved;
-    public bool FreePanelActive;
-    public Rect FreePanelRect;
-    public int FreePanelZ;
+    public readonly List<Rect> FreePanelRects = new List<Rect>();
+    public readonly List<int> FreePanelZs = new List<int>();
     public readonly List<ResolvedDialogueArea> Areas = new List<ResolvedDialogueArea>();
     public readonly List<ResolvedDialogueSlot> Slots = new List<ResolvedDialogueSlot>();
     public readonly List<ResolvedDialogueComponentRect> Components = new List<ResolvedDialogueComponentRect>();
@@ -42,6 +41,8 @@ public sealed class ResolvedDialogueArea
     public DialogueAttachedAreaSide Side;
     public Rect Rect;
     public int ZLayer;
+    // Which free-floating panel this belongs to (-1 = not a free panel).
+    public int FreePanelIndex = -1;
 }
 
 [Serializable]
@@ -52,6 +53,7 @@ public sealed class ResolvedDialogueSlot
     public int SlotIndex;
     public string SlotId;
     public Rect Rect;
+    public int FreePanelIndex = -1;
 }
 
 [Serializable]
@@ -67,6 +69,7 @@ public sealed class ResolvedDialogueComponentRect
     public Rect Rect;
     public bool ClipToSlot;
     public int ZLayer;
+    public int FreePanelIndex = -1;
 }
 
 public static class DialogueVisualLayoutResolver
@@ -105,16 +108,23 @@ public static class DialogueVisualLayoutResolver
             ResolveChoiceButtons(asset, resolved);
         }
 
-        // Free-floating UI panel — a standalone panel with its own internal
-        // region (1-3 slots, any components).
-        if (asset.FreePanelEnabled && asset.FreePanel != null && asset.FreePanel.Enabled)
+        // Free-floating UI panels — as many as the layout declares. Each is a
+        // standalone panel with its own internal region (1-3 slots, any
+        // components), tagged with its panel index for lookups.
+        if (asset.FreePanels != null)
         {
-            resolved.FreePanelActive = true;
-            resolved.FreePanelRect = ResolveMainPanelRect(asset.FreePanel, canvasRect);
-            resolved.FreePanelZ = asset.FreePanel.ZLayer;
-            Rect freeInner = ShrinkRect(resolved.FreePanelRect, asset.FreePanel.Padding);
-            ResolveInnerRegion(asset.FreePanel.InnerRegion, freeInner,
-                "Free Region", ResolvedDialogueAreaKind.FreeInner, true, resolved);
+            for (int f = 0; f < asset.FreePanels.Count; f++)
+            {
+                DialogueMainPanelDefinition freePanel = asset.FreePanels[f];
+                if (freePanel == null || !freePanel.Enabled) continue;
+                Rect freeRect = ResolveMainPanelRect(freePanel, canvasRect);
+                resolved.FreePanelRects.Add(freeRect);
+                resolved.FreePanelZs.Add(freePanel.ZLayer);
+                Rect freeInner = ShrinkRect(freeRect, freePanel.Padding);
+                ResolveInnerRegion(freePanel.InnerRegion, freeInner,
+                    freePanel.DisplayName + " / Free Region",
+                    ResolvedDialogueAreaKind.FreeInner, true, resolved, f);
+            }
         }
 
         return resolved;
@@ -205,7 +215,8 @@ public static class DialogueVisualLayoutResolver
     }
 
     static void ResolveInnerRegion(DialogueInnerRegionDefinition def, Rect parentRect,
-        string areaName, ResolvedDialogueAreaKind kind, bool horizontal, ResolvedDialogueLayout resolved)
+        string areaName, ResolvedDialogueAreaKind kind, bool horizontal, ResolvedDialogueLayout resolved,
+        int freePanelIndex = -1)
     {
         if (def == null) return;
 
@@ -234,12 +245,13 @@ public static class DialogueVisualLayoutResolver
             AreaKind = kind,
             Side = DialogueAttachedAreaSide.Top,
             Rect = areaRect,
-            ZLayer = 0
+            ZLayer = 0,
+            FreePanelIndex = freePanelIndex
         });
 
         ResolveSlotsAndComponents(areaName, kind,
             areaRect, horizontal, GetPartitionSlotCount(def.PartitionLevel),
-            def.InterSlotSpacing, def.Slots, resolved);
+            def.InterSlotSpacing, def.Slots, resolved, freePanelIndex);
     }
 
     /// <summary>
@@ -450,17 +462,19 @@ public static class DialogueVisualLayoutResolver
     static void ResolveSlotsAndComponents(string areaName,
         ResolvedDialogueAreaKind areaKind, Rect areaRect, bool horizontal,
         int slotCount, float interSlotSpacing,
-        List<DialogueSlotDefinition> slots, ResolvedDialogueLayout resolved)
+        List<DialogueSlotDefinition> slots, ResolvedDialogueLayout resolved,
+        int freePanelIndex = -1)
     {
         if (slots == null || slots.Count == 0) return;
         int clampedSlotCount = Mathf.Clamp(slotCount, 1, 3);
         ResolveSlotRow(areaName, areaKind, areaRect, horizontal, 0, clampedSlotCount,
-            interSlotSpacing, slots, resolved, 0);
+            interSlotSpacing, slots, resolved, 0, freePanelIndex);
     }
 
     static void ResolveSlotRow(string areaName, ResolvedDialogueAreaKind areaKind,
         Rect rowRect, bool horizontal, int startIndex, int slotCount, float spacing,
-        List<DialogueSlotDefinition> slots, ResolvedDialogueLayout resolved, int slotOffset)
+        List<DialogueSlotDefinition> slots, ResolvedDialogueLayout resolved, int slotOffset,
+        int freePanelIndex = -1)
     {
         if (slotCount <= 0) return;
 
@@ -511,7 +525,8 @@ public static class DialogueVisualLayoutResolver
                 AreaKind = areaKind,
                 SlotIndex = slotIndex,
                 SlotId = slot.SlotId,
-                Rect = slotRect
+                Rect = slotRect,
+                FreePanelIndex = freePanelIndex
             });
 
             Rect contentRect = ShrinkRect(slotRect, slot.Padding);
@@ -533,7 +548,8 @@ public static class DialogueVisualLayoutResolver
                     ComponentType = component.ComponentType,
                     Rect = componentRect,
                     ClipToSlot = component.ClipToSlot,
-                    ZLayer = component.ZLayer
+                    ZLayer = component.ZLayer,
+                    FreePanelIndex = freePanelIndex
                 });
             }
         }

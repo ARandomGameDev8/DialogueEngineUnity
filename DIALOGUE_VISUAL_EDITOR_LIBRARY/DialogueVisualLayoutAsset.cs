@@ -140,26 +140,11 @@ public sealed class DialogueLayoutAsset : ScriptableObject
         };
     }
 
-    // ── Free-floating UI panel ─────────────────────────────────────────────────
-    // A standalone, fully customizable panel: anchor it anywhere (left/right/
-    // top/bottom/center/custom), move & resize it exactly like the main panel.
-    // Its internal region partitions into 1-3 slots holding any components.
-    public bool FreePanelEnabled;
-
-    public DialogueMainPanelDefinition FreePanel = new DialogueMainPanelDefinition
-    {
-        DisplayName = "Free Panel",
-        Enabled = true,
-        AnchorPreset = DialogueAnchorPreset.Center,
-        Width = new DialogueSizeValue { Unit = DialogueSizeUnit.Pixels, Value = 320f },
-        Height = new DialogueSizeValue { Unit = DialogueSizeUnit.Pixels, Value = 180f },
-        Background = new DialogueBackgroundStyle
-        {
-            Mode = DialogueBackgroundMode.SolidColor,
-            ColorA = new Color(0.07f, 0.10f, 0.16f, 0.85f)
-        },
-        Border = new DialogueBorderStyle { Enabled = true, BorderColor = new Color(0.55f, 0.75f, 1f, 0.5f) }
-    };
+    // ── Free-floating UI panels ────────────────────────────────────────────────
+    // Add as many standalone panels as you wish. Each is a full panel citizen
+    // (anchor anywhere, main-panel move/resize model, own region with 1-3
+    // slots, any components, full style stack, optional image background).
+    public List<DialogueMainPanelDefinition> FreePanels = new List<DialogueMainPanelDefinition>();
 
     // How the current speaker is emphasized against recently interrupted ones.
     public DialogueSpeakerEmphasisSettings SpeakerEmphasis =
