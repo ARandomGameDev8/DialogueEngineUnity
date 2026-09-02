@@ -109,9 +109,9 @@ public static class DialogueVisualEditorUtility
     {
         if (kind == ResolvedDialogueAreaKind.FreeInner)
         {
-            List<DialogueSlotDefinition> slots = GetFreePanelSlots(asset, freePanelIndex);
-            return slots != null && slotIndex >= 0 && slotIndex < slots.Count
-                ? slots[slotIndex] : null;
+            List<DialogueSlotDefinition> freeSlots = GetFreePanelSlots(asset, freePanelIndex);
+            return freeSlots != null && slotIndex >= 0 && slotIndex < freeSlots.Count
+                ? freeSlots[slotIndex] : null;
         }
         if (kind == ResolvedDialogueAreaKind.ChoiceLeaf)
         {
