@@ -1001,10 +1001,11 @@ sealed class DialogueUiMediaImport
             : Path.Combine(Path.GetDirectoryName(canonicalUxmlPath), "dialogue_ui_media");
     }
 
-    public string ImageStyleFor(string sourcePath)
+    /// <summary>Copies the image into dialogue_ui_media/ (when newer) and
+    /// imports it; returns the project path (Assets/...) or null.</summary>
+    public string ImportToProject(string sourcePath)
     {
-        if (string.IsNullOrEmpty(sourcePath) || !File.Exists(sourcePath)) return "";
-        if (cache.TryGetValue(sourcePath, out string cached)) return cached;
+        if (string.IsNullOrEmpty(sourcePath) || !File.Exists(sourcePath)) return null;
         try
         {
             Directory.CreateDirectory(folder);
@@ -1017,17 +1018,26 @@ sealed class DialogueUiMediaImport
             if (!File.Exists(dest) || File.GetLastWriteTimeUtc(dest) < File.GetLastWriteTimeUtc(sourcePath))
                 File.Copy(sourcePath, dest, true);
             AssetDatabase.ImportAsset(dest);
-            string style = "background-image: url('project:" + dest + "'); background-size: 100% 100%; ";
-            cache[sourcePath] = style;
-            return style;
+            return dest;
         }
         catch (System.Exception ex)
         {
             Debug.LogWarning("Dialogue visual editor: failed to import panel image '" +
                 sourcePath + "': " + ex.Message);
-            cache[sourcePath] = "";
-            return "";
+            return null;
         }
+    }
+
+    public string ImageStyleFor(string sourcePath)
+    {
+        if (string.IsNullOrEmpty(sourcePath) || !File.Exists(sourcePath)) return "";
+        if (cache.TryGetValue(sourcePath, out string cached)) return cached;
+        string dest = ImportToProject(sourcePath);
+        string style = string.IsNullOrEmpty(dest)
+            ? ""
+            : "background-image: url('project:" + dest + "'); background-size: 100% 100%; ";
+        cache[sourcePath] = style;
+        return style;
     }
 }
 #endif

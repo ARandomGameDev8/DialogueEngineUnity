@@ -1660,9 +1660,23 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         }
         EditorGUILayout.EndHorizontal();
         if (!System.IO.File.Exists(path))
+        {
             EditorGUILayout.HelpBox(
                 "Image file not found — the panel keeps its normal surface until a valid image is set.",
                 MessageType.Warning);
+            return;
+        }
+
+        string ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
+        if (ext == ".svg")
+            EditorGUILayout.HelpBox(
+                "SVG requires Unity's VectorGraphics package (Window → Package Manager → Unity Registry → 'Vector Graphics', or add com.unity.vectorgraphics by name). Without it Unity cannot import SVG at all — editor AND runtime stay empty. If it still does not render after installing, convert the SVG to PNG: PNG works everywhere.",
+                MessageType.Info);
+        else if (ext != ".png" && ext != ".jpg" && ext != ".jpeg")
+            EditorGUILayout.HelpBox(
+                "PNG and JPG always work (editor preview + runtime). This format (" + ext +
+                ") previews through Unity's importer and renders at runtime only if Unity imports it as a texture.",
+                MessageType.Info);
     }
 
     readonly Dictionary<string, Texture2D> panelImageCache = new Dictionary<string, Texture2D>();
@@ -1671,6 +1685,28 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     {
         if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path)) return null;
         if (panelImageCache.TryGetValue(path, out Texture2D cached)) return cached;
+
+        // Route 1 — through Unity's importer, i.e. the EXACT asset the runtime
+        // UXML references: supports every format Unity imports, including SVG
+        // when the VectorGraphics package is installed.
+        try
+        {
+            var media = new DialogueUiMediaImport(
+                DialogueVisualEditorUxml.BuildPathFor(layoutAsset));
+            string dest = media.ImportToProject(path);
+            if (!string.IsNullOrEmpty(dest))
+            {
+                Texture2D imported = AssetDatabase.LoadAssetAtPath<Texture2D>(dest);
+                if (imported != null)
+                {
+                    panelImageCache[path] = imported;
+                    return imported;
+                }
+            }
+        }
+        catch { }
+
+        // Route 2 — direct byte decode (PNG/JPG only).
         try
         {
             byte[] bytes = System.IO.File.ReadAllBytes(path);
@@ -1689,7 +1725,18 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     bool TryDrawImageBackground(Rect rect, string path)
     {
         Texture2D tex = LoadPanelImage(path);
-        if (tex == null) return false;
+        if (tex == null)
+        {
+            // A SET but unloadable image must be LOUD, never a silent fallback
+            // to the normal panel — that reads as "nothing happened".
+            DialogueVisualStylePreviewUtility.DrawStyledElement(rect, null, null, null, null,
+                new Color(1f, 0.35f, 0.35f, 0.12f), new Color(1f, 0.45f, 0.45f, 0.8f), 1.5f);
+            if (showLabels)
+                GUI.Label(new Rect(rect.x + 6f, rect.y + 2f, 360f, 18f),
+                    "Image not loadable: " + System.IO.Path.GetExtension(path) +
+                    " (see inspector)", EditorStyles.whiteMiniLabel);
+            return false;
+        }
         GUI.DrawTexture(rect, tex, ScaleMode.StretchToFill, true);
         DialogueVisualStylePreviewUtility.DrawStyledElement(rect, null, null, null, null,
             new Color(0.55f, 0.75f, 1f, 0.04f), new Color(0.55f, 0.75f, 1f, 0.30f), 1f);
