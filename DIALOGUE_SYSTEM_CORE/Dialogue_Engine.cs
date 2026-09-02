@@ -2996,18 +2996,10 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         if (nameLetterMode == LetterMode.Normal)
         {
             var lbl = new Label(displayName);
-            if (!visualLayoutRuntimeActive)
-            {
-                // Classic UI: the engine's inspector fields style the name.
-                lbl.style.color = new StyleColor(nameColour);
-                lbl.style.fontSize = nameFontSize;
-                lbl.style.letterSpacing = new StyleLength(nameLetterSpacing);
-            }
-            // Visual-layout runtime: the name element carries the component's
-            // DESIGNED TextStyle (baked in the UXML) — colour, size, spacing
-            // and alignment are inherited exactly as designed; the engine
-            // never drifts them with its own inspector values.
+            lbl.style.color = new StyleColor(nameColour);
+            lbl.style.fontSize = nameFontSize;
             if (nameFont != null) lbl.style.unityFont = new StyleFont(nameFont);
+            lbl.style.letterSpacing = new StyleLength(nameLetterSpacing);
             lbl.style.whiteSpace = WhiteSpace.NoWrap;
             nameContainer.Add(lbl);
         }

@@ -205,9 +205,14 @@ public static class DialogueVisualEditorUxml
             }
 
             DialogueAttachedAreaDefinition areaDef = GetArea(asset, area.AreaKind);
-            string areaSurface = areaDef != null && areaDef.UseImageBackground
-                ? media.ImageStyleFor(areaDef.ImageBackgroundPath)
-                : SurfaceStyle(bg, border, opacity);
+            string areaSurface = SurfaceStyle(bg, border, opacity);
+            if (areaDef != null && areaDef.UseImageBackground)
+            {
+                // Missing/invalid image keeps the area's NORMAL surface —
+                // never an empty one.
+                string imgStyle = media.ImageStyleFor(areaDef.ImageBackgroundPath);
+                if (!string.IsNullOrEmpty(imgStyle)) areaSurface = imgStyle;
+            }
             boxEl.Append(AbsEl(null,
                 AbsStyle(area.Rect.x - box.x, area.Rect.y - box.y, area.Rect.width, area.Rect.height) +
                 areaSurface + " overflow: hidden;",
@@ -296,8 +301,7 @@ public static class DialogueVisualEditorUxml
                 "partition, or auto-hidden by the main-panel anchor). Using the emergency " +
                 "nameplate above the dialogue box — move the panel into a visible slot to " +
                 "place it properly.");
-            nameRect = new Rect(box.x + 8f + index * 14f, box.y - 30f - index * 6f,
-                Mathf.Min(box.width * 0.5f, 360f), 26f);
+            nameRect = new Rect(box.x + 8f, box.y - 30f, Mathf.Min(box.width * 0.5f, 360f), 26f);
         }
         if (img != null && (imageRect.width < 1f || imageRect.height < 1f))
         {
@@ -305,7 +309,7 @@ public static class DialogueVisualEditorUxml
                 "' has no resolved rect (its slot/area is disabled, beyond the visible " +
                 "partition, or auto-hidden by the main-panel anchor). Using the emergency " +
                 "portrait rect beside the dialogue box.");
-            imageRect = new Rect(box.x - 120f - index * 14f, box.y - 120f - index * 14f, 96f, 96f);
+            imageRect = new Rect(box.x - 120f, box.y - 120f, 96f, 96f);
         }
         // Icon slot with no name panel anywhere in the layout: keep the classic
         // nameplate above the image so speaker names never vanish.
@@ -339,14 +343,6 @@ public static class DialogueVisualEditorUxml
             ? SurfaceStyle(nm.Background, nm.Border, nm.Opacity)
             : "";
 
-        // The name text is EXACTLY the component's designed TextStyle (colour,
-        // size, spacing, alignment) — baked here so the engine's inspector
-        // fields can never drift the runtime text away from the design. The
-        // alignment maps the component's H/V alignment onto the container
-        // (justify/align) AND the text itself (-unity-text-align).
-        string nameText = nm != null && nm.TextStyle != null ? NameTextStyle(nm.TextStyle) : "";
-        string nameAlign = nm != null ? NameAlignStyle(nm) : "justify-content: center; align-items: center;";
-
         var sb = new StringBuilder();
         sb.Append($@"<ui:VisualElement name=""VisualSlot{index}Wrapper"" style=""position: absolute; left: 0; top: 0; width: 0; height: 0; display: none;"">
 ");
@@ -361,7 +357,7 @@ public static class DialogueVisualEditorUxml
         }
         if (nm != null || (img != null && !anyNamePanels))
         {
-            sb.Append($@"  <ui:VisualElement name=""VisualName{index}"" style=""position: absolute; left: {nameRect.x:0.#}px; top: {nameRect.y:0.#}px; width: {nameRect.width:0.#}px; height: {nameRect.height:0.#}px; overflow: hidden;{Join(nameSurface)} {nameAlign}{Join(nameText)}"" />
+            sb.Append($@"  <ui:VisualElement name=""VisualName{index}"" style=""position: absolute; left: {nameRect.x:0.#}px; top: {nameRect.y:0.#}px; width: {nameRect.width:0.#}px; height: {nameRect.height:0.#}px; justify-content: center; overflow: hidden;{Join(nameSurface)}"" />
 ");
         }
         sb.Append("</ui:VisualElement>" + "\n");
@@ -623,29 +619,6 @@ public static class DialogueVisualEditorUxml
                 resolved.Components[i].ComponentIndex == componentIndex)
                 return resolved.Components[i];
         return null;
-    }
-
-    static string NameAlignStyle(DialogueNamePanelDefinition nm)
-    {
-        DialogueHorizontalAlignment h = nm.TextAlignmentHorizontalSafe();
-        DialogueVerticalAlignment v = nm.TextAlignmentVerticalSafe();
-        string justify = h == DialogueHorizontalAlignment.Left ? "flex-start"
-            : h == DialogueHorizontalAlignment.Right ? "flex-end" : "center";
-        string align = v == DialogueVerticalAlignment.Top ? "flex-start"
-            : v == DialogueVerticalAlignment.Bottom ? "flex-end" : "center";
-        return "justify-content: " + justify + "; align-items: " + align + ";";
-    }
-
-    static string NameTextStyle(DialogueTextStyle style)
-    {
-        var sb = new StringBuilder();
-        sb.Append($"color: {Rgba(style.Color)}; ");
-        sb.Append($"font-size: {Mathf.Max(1f, style.FontSize):0.#}px; ");
-        sb.Append($"letter-spacing: {style.LetterSpacing:0.#}px; ");
-        sb.Append($"-unity-text-align: {TextAlign(style.HorizontalAlignment, style.VerticalAlignment)}; ");
-        if (style.FontWeight == DialogueFontWeight.Bold || style.FontWeight == DialogueFontWeight.SemiBold)
-            sb.Append("-unity-font-style: bold; ");
-        return sb.ToString();
     }
 
     /// <summary>Joins an inline style fragment into a style attribute: ensures
@@ -920,15 +893,6 @@ $@"<ui:Button name=""ToolbarToggle"" class=""dlg-toolbar-button"" text=""Menu"" 
         if (kind == ResolvedDialogueAreaKind.MainInner)
             return asset.MainPanel != null && asset.MainPanel.InnerRegion != null
                 ? asset.MainPanel.InnerRegion.Slots : null;
-        if (kind == ResolvedDialogueAreaKind.ChoiceInner)
-            return asset.ChoicePanel != null && asset.ChoicePanel.InnerRegion != null
-                ? asset.ChoicePanel.InnerRegion.Slots : null;
-        if (kind == ResolvedDialogueAreaKind.FreeInner)
-        {
-            // Multiple free panels share the kind; FindComponentRect callers
-            // validate by ReferenceEquals against every panel's slots below.
-            return null;
-        }
         DialogueAttachedAreaDefinition area = GetArea(asset, kind);
         return area != null ? area.Slots : null;
     }
@@ -936,36 +900,23 @@ $@"<ui:Button name=""ToolbarToggle"" class=""dlg-toolbar-button"" text=""Menu"" 
     static void CollectComponents<T>(DialogueLayoutAsset asset, List<T> sink) where T : DialogueComponentDefinition
     {
         if (asset == null) return;
-        // ONLY VISIBLE slots (up to each region's partition level, 1-3) count
-        // as live. A panel in a slot beyond the visible partition is invisible
-        // content — collecting it would give it no resolved rect and trigger
-        // the emergency fallback placement.
         CollectInSlots(asset.MainPanel != null && asset.MainPanel.InnerRegion != null
-            ? asset.MainPanel.InnerRegion.Slots : null,
-            asset.MainPanel != null && asset.MainPanel.InnerRegion != null
-                ? asset.MainPanel.InnerRegion.PartitionLevel : 0, sink);
-        CollectInSlots(asset.TopArea != null ? asset.TopArea.Slots : null,
-            asset.TopArea != null ? asset.TopArea.PartitionLevel : 0, sink);
-        CollectInSlots(asset.BottomArea != null ? asset.BottomArea.Slots : null,
-            asset.BottomArea != null ? asset.BottomArea.PartitionLevel : 0, sink);
-        CollectInSlots(asset.LeftArea != null ? asset.LeftArea.Slots : null,
-            asset.LeftArea != null ? asset.LeftArea.PartitionLevel : 0, sink);
-        CollectInSlots(asset.RightArea != null ? asset.RightArea.Slots : null,
-            asset.RightArea != null ? asset.RightArea.PartitionLevel : 0, sink);
+            ? asset.MainPanel.InnerRegion.Slots : null, sink);
+        CollectInSlots(asset.TopArea != null ? asset.TopArea.Slots : null, sink);
+        CollectInSlots(asset.BottomArea != null ? asset.BottomArea.Slots : null, sink);
+        CollectInSlots(asset.LeftArea != null ? asset.LeftArea.Slots : null, sink);
+        CollectInSlots(asset.RightArea != null ? asset.RightArea.Slots : null, sink);
     }
 
-    static void CollectInSlots<T>(List<DialogueSlotDefinition> slots, int partitionLevel, List<T> sink)
-        where T : DialogueComponentDefinition
+    static void CollectInSlots<T>(List<DialogueSlotDefinition> slots, List<T> sink) where T : DialogueComponentDefinition
     {
         if (slots == null) return;
-        int visible = Mathf.Clamp(1 + Mathf.Clamp(partitionLevel, 0, 2), 1, 3);
-        for (int i = 0; i < visible && i < slots.Count; i++)
+        for (int i = 0; i < slots.Count; i++)
         {
             DialogueSlotDefinition slot = slots[i];
-            if (slot == null || !slot.Enabled || slot.Components == null) continue;
+            if (slot == null || slot.Components == null) continue;
             for (int c = 0; c < slot.Components.Count; c++)
-                if (slot.Components[c] != null && slot.Components[c].Enabled &&
-                    slot.Components[c] is T match) sink.Add(match);
+                if (slot.Components[c] is T match) sink.Add(match);
         }
     }
 
@@ -1026,20 +977,7 @@ $@"<ui:Button name=""ToolbarToggle"" class=""dlg-toolbar-button"" text=""Menu"" 
         for (int i = 0; i < resolved.Components.Count; i++)
         {
             ResolvedDialogueComponentRect c = resolved.Components[i];
-            if (c.AreaKind == ResolvedDialogueAreaKind.ChoiceGroup ||
-                c.AreaKind == ResolvedDialogueAreaKind.ChoiceLeaf)
-                continue; // preset-driven, never referenced by id
             List<DialogueSlotDefinition> slots = GetSlots(asset, c.AreaKind);
-            if (slots == null)
-            {
-                if (c.AreaKind != ResolvedDialogueAreaKind.FreeInner ||
-                    asset.FreePanels == null || c.FreePanelIndex < 0 ||
-                    c.FreePanelIndex >= asset.FreePanels.Count ||
-                    asset.FreePanels[c.FreePanelIndex] == null ||
-                    asset.FreePanels[c.FreePanelIndex].InnerRegion == null)
-                    continue;
-                slots = asset.FreePanels[c.FreePanelIndex].InnerRegion.Slots;
-            }
             if (slots == null || c.SlotIndex >= slots.Count || slots[c.SlotIndex] == null) continue;
             DialogueSlotDefinition slot = slots[c.SlotIndex];
             if (slot.Components == null || c.ComponentIndex >= slot.Components.Count) continue;
