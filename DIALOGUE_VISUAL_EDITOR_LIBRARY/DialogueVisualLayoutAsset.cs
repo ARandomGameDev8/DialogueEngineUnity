@@ -531,6 +531,16 @@ public sealed class DialogueTextPanelDefinition : DialogueComponentDefinition
 [Serializable]
 public sealed class DialogueNamePanelDefinition : DialogueComponentDefinition
 {
+    public DialogueHorizontalAlignment TextAlignmentHorizontalSafe()
+    {
+        return TextStyle != null ? TextStyle.HorizontalAlignment : DialogueHorizontalAlignment.Center;
+    }
+
+    public DialogueVerticalAlignment TextAlignmentVerticalSafe()
+    {
+        return TextStyle != null ? TextStyle.VerticalAlignment : DialogueVerticalAlignment.Center;
+    }
+
     public DialogueTextStyle TextStyle = new DialogueTextStyle();
     public bool TypewriterEnabled;
     public float CharactersPerSecond = 30f;

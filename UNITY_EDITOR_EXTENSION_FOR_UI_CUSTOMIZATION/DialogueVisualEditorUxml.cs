@@ -287,6 +287,8 @@ public static class DialogueVisualEditorUxml
         // A name panel that is not currently resolved (e.g. inside an attached
         // area auto-hidden by the main-panel anchor) must still show a name:
         // fall back to a nameplate just above the box — and SAY SO, loudly.
+        // Each unresolved panel is OFFSET BY INDEX so they never pile into one
+        // blob that reads as a single misplaced panel.
         if (nm != null && (nameRect.width < 1f || nameRect.height < 1f))
         {
             Debug.LogWarning("Dialogue visual editor: name panel '" + nm.DisplayName +
@@ -294,7 +296,8 @@ public static class DialogueVisualEditorUxml
                 "partition, or auto-hidden by the main-panel anchor). Using the emergency " +
                 "nameplate above the dialogue box — move the panel into a visible slot to " +
                 "place it properly.");
-            nameRect = new Rect(box.x + 8f, box.y - 30f, Mathf.Min(box.width * 0.5f, 360f), 26f);
+            nameRect = new Rect(box.x + 8f + index * 14f, box.y - 30f - index * 6f,
+                Mathf.Min(box.width * 0.5f, 360f), 26f);
         }
         if (img != null && (imageRect.width < 1f || imageRect.height < 1f))
         {
@@ -302,7 +305,7 @@ public static class DialogueVisualEditorUxml
                 "' has no resolved rect (its slot/area is disabled, beyond the visible " +
                 "partition, or auto-hidden by the main-panel anchor). Using the emergency " +
                 "portrait rect beside the dialogue box.");
-            imageRect = new Rect(box.x - 120f, box.y - 120f, 96f, 96f);
+            imageRect = new Rect(box.x - 120f - index * 14f, box.y - 120f - index * 14f, 96f, 96f);
         }
         // Icon slot with no name panel anywhere in the layout: keep the classic
         // nameplate above the image so speaker names never vanish.
@@ -336,6 +339,14 @@ public static class DialogueVisualEditorUxml
             ? SurfaceStyle(nm.Background, nm.Border, nm.Opacity)
             : "";
 
+        // The name text is EXACTLY the component's designed TextStyle (colour,
+        // size, spacing, alignment) — baked here so the engine's inspector
+        // fields can never drift the runtime text away from the design. The
+        // alignment maps the component's H/V alignment onto the container
+        // (justify/align) AND the text itself (-unity-text-align).
+        string nameText = nm != null && nm.TextStyle != null ? NameTextStyle(nm.TextStyle) : "";
+        string nameAlign = nm != null ? NameAlignStyle(nm) : "justify-content: center; align-items: center;";
+
         var sb = new StringBuilder();
         sb.Append($@"<ui:VisualElement name=""VisualSlot{index}Wrapper"" style=""position: absolute; left: 0; top: 0; width: 0; height: 0; display: none;"">
 ");
@@ -350,7 +361,7 @@ public static class DialogueVisualEditorUxml
         }
         if (nm != null || (img != null && !anyNamePanels))
         {
-            sb.Append($@"  <ui:VisualElement name=""VisualName{index}"" style=""position: absolute; left: {nameRect.x:0.#}px; top: {nameRect.y:0.#}px; width: {nameRect.width:0.#}px; height: {nameRect.height:0.#}px; justify-content: center; overflow: hidden;{Join(nameSurface)}"" />
+            sb.Append($@"  <ui:VisualElement name=""VisualName{index}"" style=""position: absolute; left: {nameRect.x:0.#}px; top: {nameRect.y:0.#}px; width: {nameRect.width:0.#}px; height: {nameRect.height:0.#}px; overflow: hidden;{Join(nameSurface)} {nameAlign}{Join(nameText)}"" />
 ");
         }
         sb.Append("</ui:VisualElement>" + "\n");
@@ -612,6 +623,29 @@ public static class DialogueVisualEditorUxml
                 resolved.Components[i].ComponentIndex == componentIndex)
                 return resolved.Components[i];
         return null;
+    }
+
+    static string NameAlignStyle(DialogueNamePanelDefinition nm)
+    {
+        DialogueHorizontalAlignment h = nm.TextAlignmentHorizontalSafe();
+        DialogueVerticalAlignment v = nm.TextAlignmentVerticalSafe();
+        string justify = h == DialogueHorizontalAlignment.Left ? "flex-start"
+            : h == DialogueHorizontalAlignment.Right ? "flex-end" : "center";
+        string align = v == DialogueVerticalAlignment.Top ? "flex-start"
+            : v == DialogueVerticalAlignment.Bottom ? "flex-end" : "center";
+        return "justify-content: " + justify + "; align-items: " + align + ";";
+    }
+
+    static string NameTextStyle(DialogueTextStyle style)
+    {
+        var sb = new StringBuilder();
+        sb.Append($"color: {Rgba(style.Color)}; ");
+        sb.Append($"font-size: {Mathf.Max(1f, style.FontSize):0.#}px; ");
+        sb.Append($"letter-spacing: {style.LetterSpacing:0.#}px; ");
+        sb.Append($"-unity-text-align: {TextAlign(style.HorizontalAlignment, style.VerticalAlignment)}; ");
+        if (style.FontWeight == DialogueFontWeight.Bold || style.FontWeight == DialogueFontWeight.SemiBold)
+            sb.Append("-unity-font-style: bold; ");
+        return sb.ToString();
     }
 
     /// <summary>Joins an inline style fragment into a style attribute: ensures
