@@ -717,9 +717,10 @@ public enum DialogueChoiceRegionOrientation
 
 public enum DialogueChoiceButtonSizing
 {
-    // One size for every button instance, relative to the choice holder.
+    // One size for every button instance, relative to the cell the
+    // auto-arrangement gives that button (always inside the holder).
     Fixed,
-    // Each button may size itself individually.
+    // Each button may size itself individually (per its cell).
     Variable
 }
 
