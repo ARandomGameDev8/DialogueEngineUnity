@@ -76,7 +76,7 @@ public static class DialogueVisualLayoutResolver
 {
     /// <summary>Stamped in the Choice Panel inspector so it is obvious at a
     /// glance whether the loaded DLLs contain the button-containment fix.</summary>
-    public const string ChoiceLayoutRevision = "choice-buttons-contained rev2";
+    public const string ChoiceLayoutRevision = "choice-buttons-contained rev3 (option slots)";
 
     public static ResolvedDialogueLayout Resolve(DialogueLayoutAsset asset, Rect canvasRect)
     {
