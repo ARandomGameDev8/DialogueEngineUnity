@@ -174,7 +174,17 @@ treatment as everything else:
   only shows a placeholder tint so you can see it while editing). Picking a
   colour switches the mode to Solid Colour for you, and the same goes for a
   border: editing a colour/thickness on an `Enabled = false` or fully
-  transparent border switches it on.
+  transparent border switches it on. A panel whose background paints nothing
+  says so on the canvas label (`background: NONE (placeholder tint — pick a
+  colour)`), because that placeholder is NOT your colour.
+- Every panel inspector ends its style block with a one-line report —
+  `MAIN PANEL paints:  background SolidColor rgba(24, 20, 32, 0.75) | border
+  4px rgba(...) | overall opacity 1 | padding 20` — computed from the same
+  values the canvas and the emitter use. If a colour change ever looks
+  ineffective, that line names the reason: Mode None, a colour whose ALPHA
+  is 0, background/overall opacity 0, a 0px or disabled border, an
+  image-background panel (the image replaces the surface, so the colours are
+  ignored on purpose), or padding 0 (the region covers the background).
 - Its **Choice Region** IS an inner region — exactly the same object, the
   same resolver math and the same inspector as the **Inner Region** of the
   main panel: Display Name, Enabled, Width/Height (percent of the panel!),

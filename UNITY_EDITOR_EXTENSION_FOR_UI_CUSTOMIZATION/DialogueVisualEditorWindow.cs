@@ -427,8 +427,10 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 new Color(1f, 1f, 0.45f, 1f),
                 2.5f);
         if (showLabels)
-            GUI.Label(new Rect(layout.MainPanelRect.x + 6f, layout.MainPanelRect.y + 4f, 240f, 18f),
-                "Main Panel", EditorStyles.whiteBoldLabel);
+            GUI.Label(new Rect(layout.MainPanelRect.x + 6f, layout.MainPanelRect.y + 4f, 300f, 18f),
+                "Main Panel" + (PanelBackgroundPaintsNothing(mainPanel)
+                    ? "  ·  background: NONE (placeholder tint — pick a colour)" : ""),
+                EditorStyles.whiteBoldLabel);
 
         // Areas paint in Z order (ties keep their resolved order), so an inner
         // region's Z Layer — main OR choice region — behaves like every other
@@ -630,6 +632,125 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             DrawSelectionHandles(layout);
     }
 
+    /// <summary>
+    /// True when the panel paints NO background whatsoever with its colours:
+    /// Mode = None, an invisible colour (alpha 0 / opacity 0) or overall
+    /// opacity 0. The canvas then only shows a placeholder tint, so the label
+    /// says so instead of letting a colour edit look like it did nothing.
+    /// </summary>
+    static bool PanelBackgroundPaintsNothing(DialogueMainPanelDefinition panel)
+    {
+        if (panel == null) return true;
+        if (panel.UseImageBackground && System.IO.File.Exists(panel.ImageBackgroundPath))
+            return false; // the image is the panel body, not the colours
+        float overall = panel.Opacity != null ? Mathf.Clamp01(panel.Opacity.Opacity) : 1f;
+        if (overall <= 0.0001f) return true;
+        DialogueBackgroundStyle bg = panel.Background;
+        if (bg == null || bg.Mode == DialogueBackgroundMode.None) return true;
+        return bg.ColorA.a * Mathf.Clamp01(bg.Opacity) * overall <= 0.0001f;
+    }
+
+    /// <summary>
+    /// One line that says EXACTLY what a panel paints, computed from the same
+    /// values the canvas and the UXML emitter use. This is the answer to "I
+    /// changed the colour and nothing happened": the inspector states whether
+    /// the surface paints a colour, and every silent state is called out.
+    /// </summary>
+    void DrawPanelSurfaceSummary(string what, DialogueMainPanelDefinition panel)
+    {
+        if (panel == null) return;
+
+        if (panel.UseImageBackground && System.IO.File.Exists(panel.ImageBackgroundPath))
+        {
+            EditorGUILayout.HelpBox(
+                what + ": the body is the IMAGE '" + System.IO.Path.GetFileName(panel.ImageBackgroundPath) +
+                "', stretched over the panel. While that is on, the background and border COLOURS below are " +
+                "ignored on the canvas and at Play — turn Image Background off to paint with colours.",
+                MessageType.Warning);
+            return;
+        }
+
+        var sb = new StringBuilder();
+        bool problem = false;
+        float overall = panel.Opacity != null ? Mathf.Clamp01(panel.Opacity.Opacity) : 1f;
+
+        DialogueBackgroundStyle bg = panel.Background;
+        if (bg == null || bg.Mode == DialogueBackgroundMode.None)
+        {
+            sb.Append("background NONE — paints nothing (the canvas shows a placeholder tint, Play shows through)");
+            problem = true;
+        }
+        else
+        {
+            Color c = bg.ColorA;
+            float a = Mathf.Clamp01(c.a * Mathf.Clamp01(bg.Opacity) * overall);
+            if (a <= 0.0001f)
+            {
+                sb.Append("background ").Append(bg.Mode)
+                  .Append(" but fully TRANSPARENT (colour alpha ").Append(c.a.ToString("0.##"))
+                  .Append(" x background opacity ").Append(Mathf.Clamp01(bg.Opacity).ToString("0.##"))
+                  .Append(" x overall opacity ").Append(overall.ToString("0.##"))
+                  .Append(") — raise the ALPHA in the colour picker");
+                problem = true;
+            }
+            else
+            {
+                sb.Append("background ").Append(bg.Mode).Append(" rgba(")
+                  .Append(Mathf.RoundToInt(c.r * 255f)).Append(", ")
+                  .Append(Mathf.RoundToInt(c.g * 255f)).Append(", ")
+                  .Append(Mathf.RoundToInt(c.b * 255f)).Append(", ")
+                  .Append(a.ToString("0.##")).Append(")");
+            }
+        }
+
+        DialogueBorderStyle bd = panel.Border;
+        if (bd == null || !bd.Enabled)
+        {
+            sb.Append("  |  border OFF");
+            problem = true;
+        }
+        else
+        {
+            float thickness = Mathf.Max(Mathf.Max(bd.LeftThickness, bd.RightThickness),
+                Mathf.Max(bd.TopThickness, bd.BottomThickness));
+            float ba = Mathf.Clamp01(bd.BorderColor.a * Mathf.Clamp01(bd.Opacity) * overall);
+            if (thickness <= 0f || ba <= 0.0001f)
+            {
+                sb.Append("  |  border ON but ").Append(thickness <= 0f ? "0px thick" : "fully transparent");
+                problem = true;
+            }
+            else
+            {
+                Color bc = bd.BorderColor;
+                sb.Append("  |  border ").Append(thickness.ToString("0.#")).Append("px rgba(")
+                  .Append(Mathf.RoundToInt(bc.r * 255f)).Append(", ")
+                  .Append(Mathf.RoundToInt(bc.g * 255f)).Append(", ")
+                  .Append(Mathf.RoundToInt(bc.b * 255f)).Append(", ")
+                  .Append(ba.ToString("0.##")).Append(")");
+            }
+        }
+
+        if (overall <= 0.0001f)
+        {
+            sb.Append("  |  OVERALL OPACITY 0 — nothing of this panel shows at all");
+            problem = true;
+        }
+        else
+        {
+            sb.Append("  |  overall opacity ").Append(overall.ToString("0.##"));
+        }
+
+        float thinnestPadding = panel.Padding != null
+            ? Mathf.Min(Mathf.Min(panel.Padding.Left, panel.Padding.Right),
+                Mathf.Min(panel.Padding.Top, panel.Padding.Bottom))
+            : 0f;
+        if (thinnestPadding <= 0f)
+            sb.Append("  |  padding 0: the region covers the panel's background (the border still shows)");
+
+        EditorGUILayout.HelpBox(what + " paints:  " + sb,
+            problem ? MessageType.Warning : MessageType.None);
+    }
+
     // A panel's border, drawn ON TOP of its children — the canvas mirror of
     // the runtime border overlay (PanelBorderOverlay in the UXML). Children are
     // always painted after their parent, so a region, slot or component that
@@ -683,8 +804,10 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 DialogueVisualStylePreviewUtility.DrawSelectionOutline(
                     panelRect, freePanel.Border, new Color(1f, 1f, 0.45f, 1f), 2.5f);
             if (showLabels)
-                GUI.Label(new Rect(panelRect.x + 6f, panelRect.y + 4f, 240f, 18f),
-                    freePanel.DisplayName, EditorStyles.whiteBoldLabel);
+                GUI.Label(new Rect(panelRect.x + 6f, panelRect.y + 4f, 300f, 18f),
+                    freePanel.DisplayName + (PanelBackgroundPaintsNothing(freePanel)
+                        ? "  ·  background: NONE (placeholder tint — pick a colour)" : ""),
+                    EditorStyles.whiteBoldLabel);
 
             ResolvedDialogueArea regionArea = FindFreeArea(layout, f);
             DialogueInnerRegionDefinition region = freePanel.InnerRegion;
@@ -787,8 +910,10 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 new Color(1f, 1f, 0.45f, 1f),
                 2.5f);
         if (showLabels)
-            GUI.Label(new Rect(layout.ChoicePanelRect.x + 6f, layout.ChoicePanelRect.y + 4f, 240f, 18f),
-                "Choice Panel", EditorStyles.whiteBoldLabel);
+            GUI.Label(new Rect(layout.ChoicePanelRect.x + 6f, layout.ChoicePanelRect.y + 4f, 300f, 18f),
+                "Choice Panel" + (PanelBackgroundPaintsNothing(choicePanel)
+                    ? "  ·  background: NONE (placeholder tint — pick a colour)" : ""),
+                EditorStyles.whiteBoldLabel);
 
         ResolvedDialogueArea regionArea = FindAreaByKind(layout, ResolvedDialogueAreaKind.ChoiceInner);
         if (regionArea == null || choiceRegion == null) return;
@@ -1724,6 +1849,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         DrawBorderStyle(panel.Border);
         DrawShadowStyle(panel.Shadow);
         DrawOpacity(panel.Opacity);
+        DrawPanelSurfaceSummary("MAIN PANEL", panel);
 
         EditorGUILayout.Space(8f);
         EditorGUILayout.HelpBox(
@@ -1782,6 +1908,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         DrawBorderStyle(panel.Border);
         DrawShadowStyle(panel.Shadow);
         DrawOpacity(panel.Opacity);
+        DrawPanelSurfaceSummary("THIS FREE PANEL", panel);
 
         EditorGUILayout.Space(8f);
         EditorGUILayout.HelpBox(
@@ -1956,10 +2083,11 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         DrawShadowStyle(panel.Shadow);
         DrawOpacity(panel.Opacity);
         EditorGUILayout.HelpBox(
-            "Background and Border below belong to the CHOICE PANEL itself, exactly like Main Panel Style does for the main box. " +
-            "Padding decides how much of this surface shows around the Choice Region, and the panel's border stays visible above its children. " +
+            "These background/border/shadow/opacity fields are THIS CHOICE PANEL's — exactly like Main Panel Style is for the main box. " +
+            "Padding decides how much of this surface shows around the Choice Region; the panel's border stays visible above its children. " +
             "The button preset further down styles the BUTTONS only.",
             MessageType.None);
+        DrawPanelSurfaceSummary("THE CHOICE PANEL", panel);
 
         EditorGUILayout.Space(6f);
         GUILayout.Label("Choice Layout", EditorStyles.boldLabel);
@@ -2547,17 +2675,20 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         style.Opacity = EditorGUILayout.Slider("Opacity", style.Opacity, 0f, 1f);
 
         // Same reasoning as the background: editing a border that is switched
-        // off (or fully transparent) must not silently do nothing.
-        bool edited = ColourChanged(style.BorderColor, borderColourBefore) ||
+        // off (or fully transparent) must not silently do nothing. The colour
+        // and thickness edits switch it on; dragging Opacity itself is the
+        // user's own choice and is respected as-is.
+        bool colourOrSizeEdited = ColourChanged(style.BorderColor, borderColourBefore) ||
                       !Mathf.Approximately(style.LeftThickness, leftBefore) ||
                       !Mathf.Approximately(style.RightThickness, rightBefore) ||
                       !Mathf.Approximately(style.TopThickness, topBefore) ||
-                      !Mathf.Approximately(style.BottomThickness, bottomBefore) ||
-                      !Mathf.Approximately(style.Opacity, opacityBefore);
-        if (edited && (!style.Enabled || style.Opacity <= 0.001f) && style.Opacity > 0f)
+                      !Mathf.Approximately(style.BottomThickness, bottomBefore);
+        if (colourOrSizeEdited && (!style.Enabled || opacityBefore <= 0.001f))
+        {
             style.Enabled = true;
-        if (edited && style.Opacity <= 0.001f)
-            style.Opacity = 1f;
+            if (opacityBefore <= 0.001f)
+                style.Opacity = 1f; // was invisible: give the new colour a visible opacity
+        }
         if (style.Enabled && style.LeftThickness <= 0f && style.RightThickness <= 0f &&
             style.TopThickness <= 0f && style.BottomThickness <= 0f)
             EditorGUILayout.HelpBox(
