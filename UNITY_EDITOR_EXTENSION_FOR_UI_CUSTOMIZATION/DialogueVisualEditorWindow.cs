@@ -457,8 +457,14 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             DialogueBorderStyle border = null;
             DialogueShadowStyle shadow = null;
             DialogueOpacitySettings opacity = null;
+            // The MAIN panel's inner region stops tinting the panel while the
+            // panel itself is selected (same rule as the choice panel): the
+            // placeholder fill fades so panel colour/border edits are obvious.
+            bool editingThisPanel = area.AreaKind == ResolvedDialogueAreaKind.MainInner &&
+                                    selection.Kind == SelectionKind.MainPanel;
             Color fallbackFill = area.AreaKind == ResolvedDialogueAreaKind.MainInner
-                ? new Color(0.22f, 0.26f, 0.30f, 0.30f)
+                ? (editingThisPanel ? new Color(0.22f, 0.26f, 0.30f, 0.08f)
+                                    : new Color(0.22f, 0.26f, 0.30f, 0.30f))
                 : area.AreaKind == ResolvedDialogueAreaKind.ChoiceInner
                     ? new Color(0.34f, 0.22f, 0.42f, 0.35f)
                     : new Color(0.16f, 0.36f, 0.24f, 0.40f);
@@ -611,11 +617,37 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             }
         }
 
+        // The main panel's own border paints above its children — region, slot
+        // and component placeholder fills must never hide the panel's border
+        // (the runtime emits the same overlay). Drawn before the free/choice
+        // subtrees so those still sit above the main box, its runtime z-order.
+        DrawPanelBorderOverlay(layout.MainPanelRect, mainPanel, mainIsImage);
+
         DrawFreeSubtree(layout);
         DrawChoiceSubtree(layout);
 
         if (editMode)
             DrawSelectionHandles(layout);
+    }
+
+    // A panel's border, drawn ON TOP of its children — the canvas mirror of
+    // the runtime border overlay (PanelBorderOverlay in the UXML). Children are
+    // always painted after their parent, so a region, slot or component that
+    // covers the panel's surface would otherwise hide the panel's border.
+    // Image-based panels draw no overlay (the image replaces the whole
+    // surface), exactly like the runtime emit.
+    void DrawPanelBorderOverlay(Rect rect, DialogueMainPanelDefinition panel, bool imagePanel)
+    {
+        if (panel == null || imagePanel) return;
+        DialogueVisualStylePreviewUtility.DrawStyledElement(
+            rect,
+            null,                     // no fill: the panel's own body was drawn earlier
+            panel.Border,
+            null,                     // no shadow: drawn with the body
+            panel.Opacity,
+            new Color(0f, 0f, 0f, 0f),
+            new Color(0f, 0f, 0f, 0f), // no fallback outline: never invent a border
+            0f);
     }
 
     // ─── Free-floating UI panels subtree ──────────────────────────────────────
@@ -656,7 +688,11 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
             ResolvedDialogueArea regionArea = FindFreeArea(layout, f);
             DialogueInnerRegionDefinition region = freePanel.InnerRegion;
-            if (regionArea == null || region == null) continue;
+            if (regionArea == null || region == null)
+            {
+                DrawPanelBorderOverlay(panelRect, freePanel, isImage);
+                continue;
+            }
 
             DialogueVisualStylePreviewUtility.DrawStyledElement(
                 regionArea.Rect, region.Background, region.Border, region.Shadow, region.Opacity,
@@ -712,6 +748,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                         component.Rect, componentDef != null ? componentDef.Border : null,
                         new Color(1f, 1f, 0.45f, 1f), 2f);
             }
+
+            // This panel's own border, above its region/slots/components.
+            DrawPanelBorderOverlay(panelRect, freePanel, isImage);
         }
     }
 
@@ -753,15 +792,21 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
         ResolvedDialogueArea regionArea = FindAreaByKind(layout, ResolvedDialogueAreaKind.ChoiceInner);
         if (regionArea == null || choiceRegion == null) return;
-
+        // While the CHOICE PANEL itself is selected, the region and the slots
+        // stop tinting it: their placeholder fills fade so every colour and
+        // border change on the panel is plainly visible while editing.
+        bool editingPanel = selection.Kind == SelectionKind.ChoicePanel;
+        Color regionPlaceholder = editingPanel
+            ? new Color(0.34f, 0.22f, 0.42f, 0.08f)
+            : new Color(0.34f, 0.22f, 0.42f, 0.35f);
         DialogueVisualStylePreviewUtility.DrawStyledElement(
             regionArea.Rect,
             choiceRegion.Background,
             choiceRegion.Border,
             choiceRegion.Shadow,
             choiceRegion.Opacity,
-            new Color(0.34f, 0.22f, 0.42f, 0.35f),
-            new Color(0.85f, 0.62f, 1f, 1f),
+            regionPlaceholder,
+            new Color(0.85f, 0.62f, 1f, editingPanel ? 0.45f : 1f),
             1.5f);
         if (IsSelected(regionArea))
             DialogueVisualStylePreviewUtility.DrawSelectionOutline(
@@ -879,6 +924,12 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                         "Choice " + (k + 1), EditorStyles.whiteMiniLabel);
             }
         }
+
+        // The panel's own border paints LAST — above the region, the option
+        // slots and the buttons — so the panel's surface customization is
+        // always visible no matter how much of it its children cover (exactly
+        // how the runtime border overlay is emitted into the UXML).
+        DrawPanelBorderOverlay(layout.ChoicePanelRect, choicePanel, choiceIsImage);
     }
 
     void DrawSelectionHandles(ResolvedDialogueLayout layout)
@@ -1885,6 +1936,22 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         panel.CustomAnchor.OffsetX = EditorGUILayout.FloatField("Anchor Offset X", panel.CustomAnchor.OffsetX);
         panel.CustomAnchor.OffsetY = EditorGUILayout.FloatField("Anchor Offset Y", panel.CustomAnchor.OffsetY);
 
+        // ── THIS panel's own surface — first, exactly like the main panel, so
+        //    it is never confused with the button preset's background/border.
+        EditorGUILayout.Space(8f);
+        GUILayout.Label("Choice Panel Surface (this panel)", EditorStyles.boldLabel);
+        EditorGUILayout.Space(2f);
+        DrawImageBackgroundFields(panel);
+        DrawBackgroundStyle(panel.Background);
+        DrawBorderStyle(panel.Border);
+        DrawShadowStyle(panel.Shadow);
+        DrawOpacity(panel.Opacity);
+        EditorGUILayout.HelpBox(
+            "Background and Border below belong to the CHOICE PANEL itself, exactly like Main Panel Style does for the main box. " +
+            "Padding decides how much of this surface shows around the Choice Region, and the panel's border stays visible above its children. " +
+            "The button preset further down styles the BUTTONS only.",
+            MessageType.None);
+
         EditorGUILayout.Space(6f);
         GUILayout.Label("Choice Layout", EditorStyles.boldLabel);
         layoutAsset.ChoiceRegionOrientation = (DialogueChoiceRegionOrientation)EditorGUILayout.EnumPopup(
@@ -1915,8 +1982,12 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             "DIALOGUE UI REVISION          " + DialogueVisualLayoutResolver.ChoiceLayoutRevision,
             MessageType.None);
 
-        EditorGUILayout.Space(6f);
-        GUILayout.Label("Choice Button Preset", EditorStyles.boldLabel);
+        EditorGUILayout.Space(8f);
+        GUILayout.Label("Choice Button Preset — styles the BUTTONS only", EditorStyles.boldLabel);
+        EditorGUILayout.HelpBox(
+            "Everything below belongs to the shared button preset (the buttons inside the holder slot), NOT to the choice panel. " +
+            "The panel's own background and border live in 'Choice Panel Surface' at the top of this inspector.",
+            MessageType.Info);
         DialogueChoiceButtonSettings preset = layoutAsset.ChoiceButtons;
         if (preset == null) { preset = new DialogueChoiceButtonSettings(); layoutAsset.ChoiceButtons = preset; }
         preset.SizingMode = (DialogueChoiceButtonSizing)EditorGUILayout.EnumPopup(
@@ -1940,20 +2011,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             "Widths/heights are relative to the button's own cell — the holder split into the rows/columns the arrangement needs (1 button per row up to 3 options, then 2 per row). 100% fills the cell, so buttons stay inside the holder however many options you preview.",
             MessageType.None);
 
-        EditorGUILayout.Space(6f);
-        GUILayout.Label("Image Background", EditorStyles.boldLabel);
-        DrawImageBackgroundFields(panel);
-
-        EditorGUILayout.Space(8f);
-        GUILayout.Label("Choice Panel Style", EditorStyles.boldLabel);
-        DrawBackgroundStyle(panel.Background);
-        DrawBorderStyle(panel.Border);
-        DrawShadowStyle(panel.Shadow);
-        DrawOpacity(panel.Opacity);
-
         EditorGUILayout.Space(8f);
         EditorGUILayout.HelpBox(
-            "The Choice Panel appears at Play ONLY while the player is taking a choice, exactly at this rect with these styles. Its Choice Region partitions into 1-3 terminal slots (partition level 0-2) — one per option. Put a Text Panel component in each slot: the first one becomes that option's live label (full text styling). Selecting an option is click-only.",
+            "The Choice Panel appears at Play ONLY while the player is taking a choice, exactly at this rect with these styles. Its Choice Region is an inner region: partition level 0 = the region itself holds the buttons, level 1-2 = each non-holder slot is one choice option with its own components. Option text lands in each slot's first Text Panel; clicking a button or an option slot picks that option.",
             MessageType.None);
     }
 
@@ -2421,11 +2481,34 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         EditorGUILayout.Space(4f);
         GUILayout.Label("Background", EditorStyles.boldLabel);
         style.Mode = (DialogueBackgroundMode)EditorGUILayout.EnumPopup("Mode", style.Mode);
+
+        Color colorABefore = style.ColorA;
+        Color colorBBefore = style.ColorB;
+        float backgroundOpacityBefore = style.Opacity;
         style.ColorA = EditorGUILayout.ColorField("Color A", style.ColorA);
         style.ColorB = EditorGUILayout.ColorField("Color B", style.ColorB);
         style.Opacity = EditorGUILayout.Slider("Opacity", style.Opacity, 0f, 1f);
         style.SpriteSourceKey = EditorGUILayout.TextField("Sprite Source Key", style.SpriteSourceKey);
         style.GradientDirection = (DialogueGradientDirection)EditorGUILayout.EnumPopup("Gradient Direction", style.GradientDirection);
+
+        // Mode = None paints NOTHING — the canvas only shows a placeholder tint
+        // so the element stays visible while editing. Picking a colour on such
+        // an element therefore looks like "customization does nothing", so an
+        // actual colour/opacity edit switches the mode for the user.
+        if (style.Mode == DialogueBackgroundMode.None &&
+            (ColourChanged(style.ColorA, colorABefore) ||
+             ColourChanged(style.ColorB, colorBBefore) ||
+             !Mathf.Approximately(style.Opacity, backgroundOpacityBefore)))
+            style.Mode = DialogueBackgroundMode.SolidColor;
+
+        if (style.Mode == DialogueBackgroundMode.None)
+            EditorGUILayout.HelpBox(
+                "Mode = None: this element paints NO background at all (the canvas shows a placeholder tint while editing). Choose Solid Colour / Gradient / Sprite above — or just pick a colour and the mode switches for you.",
+                MessageType.Info);
+        else if (style.Opacity <= 0.001f)
+            EditorGUILayout.HelpBox(
+                "Background Opacity is 0: the background is fully see-through. Raise it to paint the element.",
+                MessageType.Warning);
     }
 
     void DrawBorderStyle(DialogueBorderStyle style)
@@ -2434,6 +2517,14 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         EditorGUILayout.Space(4f);
         GUILayout.Label("Border", EditorStyles.boldLabel);
         style.Enabled = EditorGUILayout.Toggle("Enabled", style.Enabled);
+
+        float leftBefore = style.LeftThickness;
+        float rightBefore = style.RightThickness;
+        float topBefore = style.TopThickness;
+        float bottomBefore = style.BottomThickness;
+        Color borderColourBefore = style.BorderColor;
+        float opacityBefore = style.Opacity;
+
         style.LeftThickness = EditorGUILayout.FloatField("Left Thickness", style.LeftThickness);
         style.RightThickness = EditorGUILayout.FloatField("Right Thickness", style.RightThickness);
         style.TopThickness = EditorGUILayout.FloatField("Top Thickness", style.TopThickness);
@@ -2445,6 +2536,34 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         style.CornerRadiusBottomRight = EditorGUILayout.FloatField("Radius BR", style.CornerRadiusBottomRight);
         style.BorderSpriteSourceKey = EditorGUILayout.TextField("Border Sprite Source Key", style.BorderSpriteSourceKey);
         style.Opacity = EditorGUILayout.Slider("Opacity", style.Opacity, 0f, 1f);
+
+        // Same reasoning as the background: editing a border that is switched
+        // off (or fully transparent) must not silently do nothing.
+        bool edited = ColourChanged(style.BorderColor, borderColourBefore) ||
+                      !Mathf.Approximately(style.LeftThickness, leftBefore) ||
+                      !Mathf.Approximately(style.RightThickness, rightBefore) ||
+                      !Mathf.Approximately(style.TopThickness, topBefore) ||
+                      !Mathf.Approximately(style.BottomThickness, bottomBefore) ||
+                      !Mathf.Approximately(style.Opacity, opacityBefore);
+        if (edited && (!style.Enabled || style.Opacity <= 0.001f) && style.Opacity > 0f)
+            style.Enabled = true;
+        if (edited && style.Opacity <= 0.001f)
+            style.Opacity = 1f;
+        if (style.Enabled && style.LeftThickness <= 0f && style.RightThickness <= 0f &&
+            style.TopThickness <= 0f && style.BottomThickness <= 0f)
+            EditorGUILayout.HelpBox(
+                "Border is ON but every thickness is 0 — raise a thickness to see it. Thickness is in reference-resolution pixels.",
+                MessageType.Warning);
+        if (!style.Enabled)
+            EditorGUILayout.HelpBox(
+                "Border is OFF: pick a colour or a thickness above and it switches on, or tick Enabled.",
+                MessageType.Info);
+    }
+
+    static bool ColourChanged(Color a, Color b)
+    {
+        return Mathf.Abs(a.r - b.r) > 0.0001f || Mathf.Abs(a.g - b.g) > 0.0001f ||
+               Mathf.Abs(a.b - b.b) > 0.0001f || Mathf.Abs(a.a - b.a) > 0.0001f;
     }
 
     void DrawShadowStyle(DialogueShadowStyle style)

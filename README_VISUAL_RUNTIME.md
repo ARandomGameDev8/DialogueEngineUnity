@@ -158,7 +158,23 @@ treatment as everything else:
   panel appears on the canvas: that is the choice event panel, at the exact
   rect and with the exact styles Play will use. It has the FULL main-panel
   customization surface — anchor, fill mode, size, min/max, padding,
-  background, border, shadow, opacity, z-layer.
+  background, border, shadow, opacity, z-layer. In the Choice Panel
+  inspector the panel's own surface is the **Choice Panel Surface (this
+  panel)** section at the TOP, right where "Main Panel Style" sits for the
+  main box; the **Choice Button Preset** further down styles the buttons
+  only, never the panel.
+- A panel's **border stays visible above its children** (canvas and Play):
+  the border is drawn/emitted on its own overlay layer, so a region or slot
+  that covers the panel cannot hide it. Padding decides how much of the
+  panel's background shows around the region — set Padding 0 and the region
+  fills the panel completely, hiding the background (the border still
+  shows). While the Choice Panel / Main Panel is selected the region stops
+  tinting it, so colour and border edits are plainly visible.
+- Background **Mode = None** means the element paints NOTHING (the canvas
+  only shows a placeholder tint so you can see it while editing). Picking a
+  colour switches the mode to Solid Colour for you, and the same goes for a
+  border: editing a colour/thickness on an `Enabled = false` or fully
+  transparent border switches it on.
 - Its **Choice Region** IS an inner region — exactly the same object, the
   same resolver math and the same inspector as the **Inner Region** of the
   main panel: Display Name, Enabled, Width/Height (percent of the panel!),

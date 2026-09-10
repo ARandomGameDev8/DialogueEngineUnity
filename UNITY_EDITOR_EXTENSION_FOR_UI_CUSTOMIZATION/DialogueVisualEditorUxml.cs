@@ -230,6 +230,11 @@ public static class DialogueVisualEditorUxml
         float hintLeft = Mathf.Max(0f, hintArea.xMax - 170f);
         boxEl.Append($"<ui:Label name=\"AdvanceHint\" text=\"{Escape(engine.advanceHintText)}\" style=\"position: absolute; left: {hintLeft:0.#}px; top: {hintTop:0.#}px; width: 170px; color: {Rgba(engine.hintColour)}; font-size: {engine.hintFontSize}px; {(engine.showAdvanceHint ? "" : "display: none; ")}-unity-text-align: middle-right;\" />" + "\n");
 
+        // The main panel's border, painted above its children (same rule as the
+        // choice panel): moving/resizing/padding can make the inner region or a
+        // component cover the panel's surface, and the border must survive it.
+        boxEl.Append(BorderOverlayElement("VisualPanelBorder", PanelBorderOverlay(asset.MainPanel, media)));
+
         body.Append($"<ui:VisualElement name=\"DialogueBox\" style=\"position: absolute; left: {Pct(box.x, canvas.x)}; top: {Pct(box.y, canvas.y)}; width: {Pct(box.width, canvas.x)}; height: {Pct(box.height, canvas.y)}; overflow: visible;\">\n{boxEl}</ui:VisualElement>" + "\n");
 
         // Portraits/names come AFTER the box in DOM order so they paint on top
@@ -430,6 +435,9 @@ public static class DialogueVisualEditorUxml
             }
         }
 
+        // The panel's border, painted above the region/slots/buttons so panel
+        // customization stays visible whatever its children cover.
+        sb.Append("    " + BorderOverlayElement("ChoicePanelBorder", PanelBorderOverlay(panel, media)));
         sb.Append("  </ui:VisualElement>\n</ui:VisualElement>" + "\n");
         return sb.ToString();
     }
@@ -541,6 +549,42 @@ public static class DialogueVisualEditorUxml
         return SurfaceStyle(panel.Background, panel.Border, panel.Opacity);
     }
 
+    static string BorderOverlayElement(string name, string overlayStyle)
+    {
+        if (string.IsNullOrEmpty(overlayStyle)) return "";
+        return $"<ui:VisualElement name=\"{name}\" picking-mode=\"Ignore\" style=\"{overlayStyle}\" />\n";
+    }
+
+    /// <summary>
+    /// A panel's border, emitted on its OWN element so it paints ABOVE the
+    /// panel's children. Children (the inner region, slots, buttons) are drawn
+    /// after their parent, so a child that covers the panel's whole area would
+    /// otherwise hide the panel's border — panel customization has to stay
+    /// visible whatever the children do. Returns "" when there is no border.
+    /// </summary>
+    static string PanelBorderOverlay(DialogueMainPanelDefinition panel, DialogueUiMediaImport media)
+    {
+        if (panel == null || panel.Border == null || !panel.Border.Enabled) return "";
+        // An image-based panel replaces its whole surface (border included) with
+        // the stretched image, exactly as documented — no border overlay.
+        if (panel.UseImageBackground && media != null &&
+            !string.IsNullOrEmpty(media.ImageStyleFor(panel.ImageBackgroundPath))) return "";
+        float opacity = panel.Opacity != null ? Mathf.Clamp01(panel.Opacity.Opacity) : 1f;
+        DialogueBorderStyle border = panel.Border;
+        if (opacity <= 0f || Mathf.Clamp01(border.Opacity) <= 0f) return "";
+
+        Color bc = border.BorderColor;
+        bc.a *= Mathf.Clamp01(border.Opacity) * opacity;
+        var sb = new StringBuilder();
+        sb.Append("position: absolute; left: 0; top: 0; right: 0; bottom: 0; background-color: rgba(0,0,0,0); ");
+        sb.Append($"border-color: {Rgba(bc)}; ");
+        sb.Append($"border-left-width: {Mathf.Max(0f, border.LeftThickness):0.#}px; border-right-width: {Mathf.Max(0f, border.RightThickness):0.#}px; ");
+        sb.Append($"border-top-width: {Mathf.Max(0f, border.TopThickness):0.#}px; border-bottom-width: {Mathf.Max(0f, border.BottomThickness):0.#}px; ");
+        sb.Append($"border-top-left-radius: {Mathf.Max(0f, border.CornerRadiusTopLeft):0.#}px; border-top-right-radius: {Mathf.Max(0f, border.CornerRadiusTopRight):0.#}px; ");
+        sb.Append($"border-bottom-left-radius: {Mathf.Max(0f, border.CornerRadiusBottomLeft):0.#}px; border-bottom-right-radius: {Mathf.Max(0f, border.CornerRadiusBottomRight):0.#}px; ");
+        return sb.ToString();
+    }
+
     // ─── Free-floating UI panels (as many as the layout declares) ─────────────
     static string FreePanelXml(ResolvedDialogueLayout resolved, DialogueLayoutAsset asset,
         DialogueUiMediaImport media)
@@ -599,6 +643,9 @@ public static class DialogueVisualEditorUxml
                 sb.Append(areaEl);
             }
 
+            // Border above the free panel's children, exactly like the choice
+            // and main panels.
+            sb.Append("    " + BorderOverlayElement("FreePanelBorder" + f, PanelBorderOverlay(panel, media)));
             sb.Append("  </ui:VisualElement>\n</ui:VisualElement>\n");
             all.Append(sb);
         }
