@@ -1807,6 +1807,11 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             Mathf.Clamp(layoutAsset.ChoicePreviewCount, 0, 6), 0, 6);
 
         EditorGUILayout.Space(6f);
+        EditorGUILayout.HelpBox(
+            "DIALOGUE UI REVISION          " + DialogueVisualLayoutResolver.ChoiceLayoutRevision,
+            MessageType.None);
+
+        EditorGUILayout.Space(6f);
         GUILayout.Label("Choice Button Preset", EditorStyles.boldLabel);
         DialogueChoiceButtonSettings preset = layoutAsset.ChoiceButtons;
         if (preset == null) { preset = new DialogueChoiceButtonSettings(); layoutAsset.ChoiceButtons = preset; }
