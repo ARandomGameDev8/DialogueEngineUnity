@@ -1812,7 +1812,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         if (preset == null) { preset = new DialogueChoiceButtonSettings(); layoutAsset.ChoiceButtons = preset; }
         preset.SizingMode = (DialogueChoiceButtonSizing)EditorGUILayout.EnumPopup(
             new GUIContent("Sizing",
-                "Fixed: one size for EVERY button, relative to the choice holder — identical across all instances. Variable: each button may set its own width/height; everything else still comes from this preset."),
+                "Fixed: one size for EVERY button, relative to the CELL the auto-arrangement gives it (the holder split into rows/columns) — identical across all instances, and always inside the holder. Variable: each button may set its own width/height; everything else still comes from this preset."),
             preset.SizingMode);
         if (preset.SizingMode == DialogueChoiceButtonSizing.Fixed)
         {
@@ -1827,7 +1827,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         DrawTextStyle(preset.TextStyle);
         preset.HoverBackground = EditorGUILayout.ColorField("Hover Background", preset.HoverBackground);
         EditorGUILayout.HelpBox(
-            "Every button instance shares these properties exactly. In Variable sizing, a button's own width/height (select the button on the canvas) is the ONLY per-instance difference.",
+            "Every button instance shares these properties exactly. In Variable sizing, a button's own width/height (select the button on the canvas) is the ONLY per-instance difference.\n" +
+            "Widths/heights are relative to the button's own cell — the holder split into the rows/columns the arrangement needs (1 button per row up to 3 options, then 2 per row). 100% fills the cell, so buttons stay inside the holder however many options you preview.",
             MessageType.None);
 
         EditorGUILayout.Space(6f);
@@ -1930,7 +1931,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         if (selection.AreaKind == ResolvedDialogueAreaKind.ChoiceLeaf)
         {
             EditorGUILayout.HelpBox(
-                "One choice button, auto-arranged inside the holder slot (the arrangement follows the actual option count at Play; Preview Choice Count on the Choice Panel previews it here). In FIXED sizing every button shares the preset size; in VARIABLE sizing this button's Width/Height below is its own — the only per-instance difference.",
+                "One choice button, auto-arranged inside the holder slot (the arrangement follows the actual option count at Play; Preview Choice Count on the Choice Panel previews it here). In FIXED sizing every button shares the preset size; in VARIABLE sizing this button's Width/Height below is its own — the only per-instance difference. Either way the size is relative to this button's CELL in the arrangement (100% = fill the cell) and is clamped inside the holder, so more than 3 options can never push a button outside its parent.",
                 MessageType.None);
         }
 

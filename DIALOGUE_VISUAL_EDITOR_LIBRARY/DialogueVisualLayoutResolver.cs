@@ -257,8 +257,14 @@ public static class DialogueVisualLayoutResolver
     /// <summary>
     /// Auto-arranges up to 6 choice buttons inside the holder slot for a given
     /// button count (round-robin over at most 3 rows x 2 buttons, gaps of 8).
-    /// Fixed sizing centers the preset size in each cell; Variable sizing
-    /// honors each leaf's explicit Width/Height inside its cell.
+    ///
+    /// Sizing is CELL-relative: the holder content rect is split into the rows
+    /// and columns the arrangement needs, and every button resolves its size
+    /// against its OWN cell — Fixed uses the shared preset size, Variable uses
+    /// that leaf's Width/Height. The button is centered in its cell, clamped to
+    /// it, and finally clamped to the holder content rect, so a button can
+    /// never be wider or taller than the container it lives in, whatever the
+    /// option count, preview count or row count.
     /// </summary>
     public static bool ResolveChoiceButtonRects(DialogueLayoutAsset asset, Rect canvasRect,
         int buttonCount, out Rect holderSlotRect, out Rect holderContentRect, out List<Rect> buttonRects)
@@ -329,33 +335,57 @@ public static class DialogueVisualLayoutResolver
             float cellCursor = regionHorizontal ? holderContentRect.y : holderContentRect.x;
             for (int c = 0; c < count; c++)
             {
+                // The cell is this button's whole world: rows/columns already
+                // account for the gaps, so nothing resolved here can spill out
+                // of the holder — which is what made rows of 2 buttons (4+
+                // options) overflow their parent container.
+                Rect cell = regionHorizontal
+                    ? new Rect(cursor, cellCursor, rowSize, cellSize)
+                    : new Rect(cellCursor, cursor, cellSize, rowSize);
+
                 DialogueSlotDefinition leaf = GetChoiceLeaf(asset, k);
                 float w, h;
                 if (fixedSizing)
                 {
-                    w = Mathf.Min(ResolveSize(preset.FixedWidth, secondary, secondary), secondary);
-                    h = Mathf.Min(ResolveSize(preset.FixedHeight, rowSize, rowSize), rowSize);
+                    // One shared size for every button, relative to the cell.
+                    w = ResolveChoiceButtonSize(preset.FixedWidth, cell.width);
+                    h = ResolveChoiceButtonSize(preset.FixedHeight, cell.height);
                 }
                 else
                 {
-                    w = leaf != null && leaf.Width != null && leaf.Width.Unit == DialogueSizeUnit.Pixels && leaf.Width.Value > 0f
-                        ? Mathf.Min(leaf.Width.Value, secondary) : cellSize;
-                    h = leaf != null && leaf.Height != null && leaf.Height.Unit == DialogueSizeUnit.Pixels && leaf.Height.Value > 0f
-                        ? Mathf.Min(leaf.Height.Value, rowSize) : rowSize;
+                    // Per-button size (pixels or percent of that button's cell).
+                    w = ResolveChoiceButtonSize(leaf != null ? leaf.Width : null, cell.width);
+                    h = ResolveChoiceButtonSize(leaf != null ? leaf.Height : null, cell.height);
                 }
 
-                Rect cell = regionHorizontal
-                    ? new Rect(cursor, cellCursor, rowSize, cellSize)
-                    : new Rect(cellCursor, cursor, cellSize, rowSize);
-                buttonRects.Add(new Rect(
-                    cell.center.x - w * 0.5f, cell.center.y - h * 0.5f, w, h));
+                // Centered in its cell, then pulled back inside the holder's
+                // content rect — the hard guarantee that a button never
+                // overflows its parent container, even with manual pixel sizes
+                // larger than the holder or a holder thinner than its gaps.
+                Rect button = new Rect(
+                    cell.center.x - w * 0.5f, cell.center.y - h * 0.5f, w, h);
+                buttonRects.Add(ClampRectInside(button, holderContentRect));
 
-                if (regionHorizontal) cellCursor += cellSize + gap; else cellCursor += cellSize + gap;
+                cellCursor += cellSize + gap;
                 k++;
             }
             cursor += rowSize + gap;
         }
         return true;
+    }
+
+    /// <summary>Resolves ONE choice button's axis size inside its cell: Auto
+    /// (or a null/zero size) fills the cell, percent is relative to the cell,
+    /// pixels are honored, and the result is always clamped to the cell so the
+    /// button cannot be wider/taller than the container it sits in.</summary>
+    static float ResolveChoiceButtonSize(DialogueSizeValue size, float cellSize)
+    {
+        if (cellSize <= 0f) return 0f;
+        if (size == null || size.Unit == DialogueSizeUnit.Auto) return cellSize;
+
+        float resolved = ResolveSize(size, cellSize, cellSize);
+        if (resolved <= 0f) return cellSize; // 0/negative = no explicit size
+        return Mathf.Clamp(resolved, 1f, cellSize);
     }
 
     static DialogueSlotDefinition GetChoiceLeaf(DialogueLayoutAsset asset, int index)

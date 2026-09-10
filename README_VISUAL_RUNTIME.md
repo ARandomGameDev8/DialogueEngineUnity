@@ -184,9 +184,13 @@ treatment as everything else:
 - The **Choice Button Preset** (on the Choice Panel inspector) styles every
   button: background, border, shadow, opacity, text padding, full text style,
   hover colour. Every instance shares it EXACTLY. Sizing: **Fixed** = one
-  width/height relative to the choice holder, identical for all buttons;
+  width/height relative to the **button's cell** (the holder split into the
+  rows/columns the arrangement needs), identical for all buttons;
   **Variable** = each button may set its own width/height (select it on the
-  canvas) — the ONLY per-instance difference.
+  canvas) — the ONLY per-instance difference. Either way 100% fills the cell
+  and the resolved size is clamped to the cell, then to the holder's content
+  rect: a button can never be wider or taller than the container it lives in,
+  so 4+ options (rows of 2) stay inside the holder instead of overflowing it.
 - At Play the panel is hidden until a choice fires; each option's text lands
   on its button, unused buttons/groups hide, clicking a button picks that
   option. More options than buttons logs a warning and shows the first N

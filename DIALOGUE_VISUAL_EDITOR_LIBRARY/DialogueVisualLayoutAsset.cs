@@ -733,8 +733,10 @@ public sealed class DialogueChoiceButtonSettings
 {
     public DialogueChoiceButtonSizing SizingMode = DialogueChoiceButtonSizing.Fixed;
 
-    // Fixed sizing: relative to the choice holder content rect, identical for
-    // every button instance.
+    // Fixed sizing: relative to the CELL the auto-arrangement gives a button
+    // (the holder content rect split into its rows/columns), identical for
+    // every button instance. 100% = fill the cell; the resolved rect is always
+    // clamped inside the holder so buttons never overflow their container.
     public DialogueSizeValue FixedWidth = new DialogueSizeValue
     { Unit = DialogueSizeUnit.Percent, Value = 100f };
     public DialogueSizeValue FixedHeight = new DialogueSizeValue
