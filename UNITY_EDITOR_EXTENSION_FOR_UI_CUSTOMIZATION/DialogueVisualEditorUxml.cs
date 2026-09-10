@@ -405,8 +405,9 @@ public static class DialogueVisualEditorUxml
                         ? region.Slots[i] : null;
                     if (slot == null || slotDef == null) continue;
 
+                    bool isHolderSlot = i == resolved.ChoiceHolderSlotIndex;
                     var slotEl = new StringBuilder();
-                    if (i == resolved.ChoiceHolderSlotIndex)
+                    if (isHolderSlot)
                     {
                         // This slot holds the choice BUTTONS (grouped leaves),
                         // styled entirely by the shared preset.
@@ -416,7 +417,10 @@ public static class DialogueVisualEditorUxml
                     {
                     slotEl.Append(StaticChoiceSlotComponents(resolved, asset, region, i, slot, slotDef));
                     }
-                    areaEl.Append($@"    <ui:VisualElement name=""ChoiceSlot{i}"" style=""{AbsStyle(slot.Rect.x - area.Rect.x, slot.Rect.y - area.Rect.y, slot.Rect.width, slot.Rect.height)}{Join(SurfaceStyle(slotDef.Background, slotDef.Border, slotDef.Opacity))} overflow: hidden;"">
+                    // Non-holder slots are CHOICE OPTIONS: the class lets the
+                    // engine bind them (text, visibility, click-to-pick).
+                    string slotClass = isHolderSlot ? "" : " class=\"dlg-choice-slot\"";
+                    areaEl.Append($@"    <ui:VisualElement name=""ChoiceSlot{i}""{slotClass} style=""{AbsStyle(slot.Rect.x - area.Rect.x, slot.Rect.y - area.Rect.y, slot.Rect.width, slot.Rect.height)}{Join(SurfaceStyle(slotDef.Background, slotDef.Border, slotDef.Opacity))} overflow: hidden;"">
 ");
                     areaEl.Append(slotEl);
                     areaEl.Append("    </ui:VisualElement>" + "\n");
@@ -660,7 +664,26 @@ public static class DialogueVisualEditorUxml
             style += TextStyle(name.TextStyle);
             return $"<ui:Label text=\"\" style=\"{style}\" />\n";
         }
+        DialogueImagePanelDefinition image = comp as DialogueImagePanelDefinition;
+        if (image != null)
+        {
+            // Decorative image panel (e.g. inside a choice option slot). The
+            // engine binds character sprites only to the layout's visual slots,
+            // so here the component paints its own frame in its authored shape
+            // instead of an empty box.
+            style += IconShapeStyle(image.Shape);
+            return $"<ui:VisualElement style=\"{style}\" />\n";
+        }
         return $"<ui:VisualElement style=\"{style}\" />\n";
+    }
+
+    /// <summary>Corner radii matching an icon panel's authored shape.</summary>
+    static string IconShapeStyle(DialogueIconShape shape)
+    {
+        return shape == DialogueIconShape.Circle
+            ? "border-top-left-radius: 50%; border-top-right-radius: 50%; " +
+              "border-bottom-left-radius: 50%; border-bottom-right-radius: 50%; "
+            : "";
     }
 
     // ─── Chrome ────────────────────────────────────────────────────────────────
@@ -724,6 +747,11 @@ $@"<ui:Button name=""ToolbarToggle"" class=""dlg-toolbar-button"" text=""Menu"" 
             uss.AppendLine("}");
             uss.AppendLine($".dlg-choice-btn:hover {{ background-color: {Rgba(asset.ChoiceButtons.HoverBackground)}; }}");
         }
+        uss.AppendLine(".dlg-choice-slot {");
+        uss.AppendLine("    transition-property: background-color, border-color;");
+        uss.AppendLine("    transition-duration: 0.12s;");
+        uss.AppendLine("}");
+        uss.AppendLine($".dlg-choice-slot:hover {{ border-color: {RgbaOpaque(new Color(0.55f, 0.75f, 1f, 1f))}; }}");
         uss.AppendLine(".dlg-choice-selected {");
         uss.AppendLine($"    background-color: {Rgba(Color.Lerp(baseBg, new Color(0.3f, 0.45f, 0.8f), 0.55f))};");
         uss.AppendLine("    border-color: rgba(166, 209, 255, 1);");

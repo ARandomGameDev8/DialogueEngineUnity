@@ -222,7 +222,10 @@ public static class DialogueVisualLayoutResolver
         string areaName, ResolvedDialogueAreaKind kind, bool horizontal, ResolvedDialogueLayout resolved,
         int freePanelIndex = -1)
     {
-        if (def == null) return;
+        // The region's Enabled toggle is authoritative for EVERY inner region,
+        // the choice region included — a disabled region resolves to nothing
+        // (no area, no slots, no components), exactly like a disabled panel.
+        if (def == null || !def.Enabled) return;
 
         float width = ResolveSize(def.Width, parentRect.width, parentRect.width);
         float height = ResolveSize(def.Height, parentRect.height, parentRect.height);
@@ -249,7 +252,10 @@ public static class DialogueVisualLayoutResolver
             AreaKind = kind,
             Side = DialogueAttachedAreaSide.Top,
             Rect = areaRect,
-            ZLayer = 0,
+            // The region's own Z Layer is carried through, so inner regions
+            // (the choice region included) sort against the attached areas
+            // exactly like every other element.
+            ZLayer = def.ZLayer,
             FreePanelIndex = freePanelIndex
         });
 

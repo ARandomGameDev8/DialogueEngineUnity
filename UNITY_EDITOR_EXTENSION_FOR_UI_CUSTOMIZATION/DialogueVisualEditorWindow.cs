@@ -430,9 +430,26 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             GUI.Label(new Rect(layout.MainPanelRect.x + 6f, layout.MainPanelRect.y + 4f, 240f, 18f),
                 "Main Panel", EditorStyles.whiteBoldLabel);
 
-        for (int i = 0; i < layout.Areas.Count; i++)
+        // Areas paint in Z order (ties keep their resolved order), so an inner
+        // region's Z Layer — main OR choice region — behaves like every other
+        // element's Z Layer.
+        List<int> areaOrder = new List<int>();
+        for (int i = 0; i < layout.Areas.Count; i++) areaOrder.Add(i);
+        for (int i = 1; i < areaOrder.Count; i++)
         {
-            ResolvedDialogueArea area = layout.Areas[i];
+            int current = areaOrder[i];
+            int j = i - 1;
+            while (j >= 0 && layout.Areas[areaOrder[j]].ZLayer > layout.Areas[current].ZLayer)
+            {
+                areaOrder[j + 1] = areaOrder[j];
+                j--;
+            }
+            areaOrder[j + 1] = current;
+        }
+
+        for (int oi = 0; oi < areaOrder.Count; oi++)
+        {
+            ResolvedDialogueArea area = layout.Areas[areaOrder[oi]];
             if (area.AreaKind == ResolvedDialogueAreaKind.ChoiceInner ||
                 area.AreaKind == ResolvedDialogueAreaKind.FreeInner)
                 continue; // the choice/free subtrees draw LAST, above everything
@@ -777,12 +794,19 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                     slot.Rect, slotDef != null ? slotDef.Border : null,
                     new Color(1f, 1f, 0.45f, 1f), 2f);
             if (showLabels)
-                GUI.Label(new Rect(slot.Rect.x + 4f, slot.Rect.y + 2f, 120f, 18f),
-                    slot.SlotIndex == holder ? slot.SlotId + " (choices)" : slot.SlotId,
+            {
+                int optionIndex = EffectiveChoiceOptionIndex(slot.SlotIndex);
+                GUI.Label(new Rect(slot.Rect.x + 4f, slot.Rect.y + 2f, 220f, 18f),
+                    slot.SlotIndex == holder
+                        ? slot.SlotId + " (choice buttons)"
+                        : optionIndex >= 0 ? slot.SlotId + " (option " + (optionIndex + 1) + ")" : slot.SlotId,
                     EditorStyles.miniLabel);
+            }
 
-            // Non-holder slots keep their designed components.
+            // Non-holder slots keep their designed components — each of them is
+            // one choice option, exactly like a slot in any other region.
             if (slot.SlotIndex == holder) continue;
+            bool optionLabelDrawn = false;
             for (int c = 0; c < layout.Components.Count; c++)
             {
                 ResolvedDialogueComponentRect component = layout.Components[c];
@@ -803,6 +827,17 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                     DialogueVisualStylePreviewUtility.DrawSelectionOutline(
                         component.Rect, componentDef != null ? componentDef.Border : null,
                         new Color(1f, 1f, 0.45f, 1f), 2f);
+
+                // The FIRST Text Panel of the slot is the option's live label —
+                // say so, so nobody wonders where the option text will appear.
+                DialogueTextPanelDefinition optionText = componentDef as DialogueTextPanelDefinition;
+                if (showLabels && !optionLabelDrawn && optionText != null)
+                {
+                    optionLabelDrawn = true;
+                    GUI.Label(new Rect(component.Rect.x + 4f, component.Rect.y + 2f,
+                            Mathf.Max(60f, component.Rect.width - 8f), 18f),
+                        "[option text → here]", EditorStyles.whiteMiniLabel);
+                }
             }
         }
 
@@ -1335,6 +1370,44 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         return index;
     }
 
+    /// <summary>Index of a choice-region slot among the NON-holder visible
+    /// slots — i.e. which choice OPTION that slot represents (-1 when the slot
+    /// is the button holder or beyond the visible partition).</summary>
+    int EffectiveChoiceOptionIndex(int slotIndex)
+    {
+        if (layoutAsset == null || layoutAsset.ChoicePanel == null ||
+            layoutAsset.ChoicePanel.InnerRegion == null) return -1;
+        DialogueInnerRegionDefinition region = layoutAsset.ChoicePanel.InnerRegion;
+        int visible = DialogueVisualEditorUtility.GetVisibleSlotCount(region);
+        if (slotIndex < 0 || slotIndex >= visible) return -1;
+        int holder = EffectiveChoiceHolderIndex();
+        if (slotIndex == holder) return -1;
+
+        int option = 0;
+        for (int i = 0; i < visible; i++)
+        {
+            if (i == holder) continue;
+            if (i == slotIndex) return option;
+            option++;
+        }
+        return -1;
+    }
+
+    /// <summary>How many choice options the NON-holder region slots can show
+    /// (the buttons in the holder are counted separately).</summary>
+    int ChoiceOptionSlotCount()
+    {
+        if (layoutAsset == null || layoutAsset.ChoicePanel == null ||
+            layoutAsset.ChoicePanel.InnerRegion == null) return 0;
+        DialogueInnerRegionDefinition region = layoutAsset.ChoicePanel.InnerRegion;
+        int visible = DialogueVisualEditorUtility.GetVisibleSlotCount(region);
+        int holder = EffectiveChoiceHolderIndex();
+        int count = 0;
+        for (int i = 0; i < visible; i++)
+            if (i != holder) count++;
+        return count;
+    }
+
     void DrawHierarchy()
     {
         DrawHierarchyButton("Main Panel", SelectionKind.MainPanel, ResolvedDialogueAreaKind.MainInner, -1, -1, 0);
@@ -1356,10 +1429,27 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 layoutAsset, ResolvedDialogueAreaKind.ChoiceInner);
             for (int i = 0; i < choicePartition && choiceSlots != null && i < choiceSlots.Count; i++)
             {
-                string label = choiceSlots[i].DisplayName + (i == holder ? "  ▼ CHOICES" : "");
+                DialogueSlotDefinition choiceSlot = choiceSlots[i];
+                if (choiceSlot == null) continue;
+                int optionIndex = EffectiveChoiceOptionIndex(i);
+                string label = choiceSlot.DisplayName + (i == holder
+                    ? "  ▼ CHOICES"
+                    : optionIndex >= 0 ? "  (option " + (optionIndex + 1) + ")" : "");
                 DrawHierarchyButton(label, SelectionKind.Slot, ResolvedDialogueAreaKind.ChoiceInner, i, -1, 2);
 
-                if (i != holder) continue;
+                if (i != holder)
+                {
+                    // Non-holder choice slots are ordinary slots: their
+                    // components are listed (and selectable) like any other.
+                    if (choiceSlot.Components == null) continue;
+                    for (int c = 0; c < choiceSlot.Components.Count; c++)
+                    {
+                        if (choiceSlot.Components[c] == null) continue;
+                        DrawHierarchyButton(choiceSlot.Components[c].DisplayName, SelectionKind.Component,
+                            ResolvedDialogueAreaKind.ChoiceInner, i, c, 3);
+                    }
+                    continue;
+                }
                 int previewButtons = Mathf.Clamp(layoutAsset.ChoicePreviewCount, 0, 6);
                 for (int k = 0; k < previewButtons; k++)
                     DrawHierarchyButton("Choice Button " + (k + 1), SelectionKind.Slot,
@@ -1818,6 +1908,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 "Hypothetical choice count while designing (0-6). The holder partitions itself AUTOMATICALLY — at Play the ACTUAL option count decides how many buttons appear (up to 6; the DSL is unlimited)."),
             Mathf.Clamp(layoutAsset.ChoicePreviewCount, 0, 6), 0, 6);
 
+        DrawChoiceOptionSlotsCheck(choiceRegion, choicePartition);
+
         EditorGUILayout.Space(6f);
         EditorGUILayout.HelpBox(
             "DIALOGUE UI REVISION          " + DialogueVisualLayoutResolver.ChoiceLayoutRevision,
@@ -1865,6 +1957,61 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             MessageType.None);
     }
 
+    /// <summary>
+    /// The choice region partitions exactly like the main inner region, so at
+    /// partition level 1+ every NON-holder slot is one choice option. This
+    /// reports what each option slot currently offers and flags the ones whose
+    /// option text would have nowhere to appear.
+    /// </summary>
+    void DrawChoiceOptionSlotsCheck(DialogueInnerRegionDefinition choiceRegion, int visibleSlots)
+    {
+        if (choiceRegion == null) return;
+        if (visibleSlots <= 1)
+        {
+            EditorGUILayout.Space(6f);
+            EditorGUILayout.HelpBox(
+                "Partition Level 0: the whole choice region is the BUTTON HOLDER. To make each choice its own customizable slot " +
+                "(text, icons, frames — with per-option components), select the Choice Region and raise Partition Level to 1 or 2.",
+                MessageType.None);
+            return;
+        }
+
+        int holder = EffectiveChoiceHolderIndex();
+        List<DialogueSlotDefinition> slots = choiceRegion.Slots;
+        EditorGUILayout.Space(6f);
+        GUILayout.Label("Choice Option Slots", EditorStyles.boldLabel);
+
+        int labelCount = 0;
+        for (int i = 0; i < visibleSlots && slots != null && i < slots.Count; i++)
+        {
+            if (i == holder) continue;
+            DialogueSlotDefinition slot = slots[i];
+            bool hasLabel = false;
+            if (slot != null && slot.Components != null)
+                for (int c = 0; c < slot.Components.Count; c++)
+                {
+                    DialogueTextPanelDefinition text = slot.Components[c] as DialogueTextPanelDefinition;
+                    if (text != null && text.Enabled) { hasLabel = true; break; }
+                }
+            if (hasLabel)
+            {
+                labelCount++;
+                continue;
+            }
+            EditorGUILayout.HelpBox(
+                "Option slot \"" + (slot != null ? slot.DisplayName : "?") +
+                "\" has no Text Panel, so that option's text has nowhere to appear. Add one (the first Text Panel in the slot is used).",
+                MessageType.Warning);
+        }
+
+        int optionSlots = ChoiceOptionSlotCount();
+        EditorGUILayout.HelpBox(
+            labelCount + " of " + optionSlots + " option slot" + (optionSlots == 1 ? "" : "s") + " ready" +
+            (labelCount > 0 ? " — option text is written into the first Text Panel of each slot in order, and clicking the slot picks that option." : ".") +
+            "\nThe holder slot holds the auto-arranged BUTTONS (up to 6 options); options past the number of option slots have no slot of their own.",
+            MessageType.None);
+    }
+
     void DrawAreaInspector()
     {
         if (selection.AreaKind == ResolvedDialogueAreaKind.MainInner)
@@ -1905,10 +2052,29 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         area.PartitionLevel = EditorGUILayout.IntSlider("Partition Level", area.PartitionLevel, 0, 2);
         area.InterSlotSpacing = EditorGUILayout.FloatField("Default Inter-Slot Spacing", area.InterSlotSpacing);
         area.ZLayer = EditorGUILayout.IntSlider("Z Layer", area.ZLayer, -10, 10);
-        if (area.PartitionLevel != oldPartition && area.PartitionLevel > oldPartition)
-            DialogueVisualEditorUtility.SyncVisibleSlotsFromArea(area);
-        if (area.PartitionLevel > 0 && GUILayout.Button("Sync Visible Slots From Parent Area", GUILayout.Height(22f)))
-            DialogueVisualEditorUtility.SyncVisibleSlotsFromArea(area);
+        if (area.PartitionLevel != oldPartition)
+            DialogueVisualEditorUtility.EnsureAreaSlots(area);
+        if (area.PartitionLevel > 0)
+        {
+            if (GUILayout.Button(new GUIContent("Copy Area Style To Slots",
+                "OPT-IN: writes this area's background/border/shadow/opacity onto each visible slot. Never happens automatically."),
+                GUILayout.Height(22f)))
+            {
+                RecordLayoutAndEngine("Copy Area Style To Slots");
+                DialogueVisualEditorUtility.CopyAreaStyleToSlots(area);
+                CommitLayoutMutation();
+                return;
+            }
+            if (GUILayout.Button(new GUIContent("Reset Slot Sizes/Offsets To Auto",
+                "OPT-IN: returns each visible slot's size, offset and spacing to the area's partitioning. Slot colours are left untouched."),
+                GUILayout.Height(22f)))
+            {
+                RecordLayoutAndEngine("Reset Slot Layout To Auto");
+                DialogueVisualEditorUtility.ResetSlotLayoutToAuto(area);
+                CommitLayoutMutation();
+                return;
+            }
+        }
         ResolvedDialogueAreaKind oppositeAreaKind;
         if (DialogueVisualEditorUtility.TryGetOppositeAreaKind(selection.AreaKind, out oppositeAreaKind) &&
             GUILayout.Button("Copy This Area To " + DialogueVisualEditorUtility.GetAreaKindDisplayName(oppositeAreaKind), GUILayout.Height(22f)))
@@ -1940,10 +2106,27 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             bool isHolder = EffectiveChoiceHolderIndex() == selection.SlotIndex;
             bool setHolder = EditorGUILayout.Toggle(
                 new GUIContent("Holds The Choice Buttons",
-                    "This region slot itself becomes the choice area — its content partitions AUTOMATICALLY into the actual number of choice buttons (up to 6) at Play; Preview Choice Count on the Choice Panel previews it here. At partition level 0 the whole region is the choice area. Other slots hold whatever components you like. Default is the bottom-most slot."),
+                    "This region slot itself becomes the choice area — its content partitions AUTOMATICALLY into the actual number of choice buttons (up to 6) at Play; Preview Choice Count on the Choice Panel previews it here. At partition level 0 the whole region is the choice area. Every OTHER slot is one choice option: add components to it exactly like a normal slot (the first Text Panel becomes that option's live label). Default is the bottom-most slot."),
                 isHolder);
             if (setHolder != isHolder)
                 layoutAsset.ChoiceHolderSlotIndex = setHolder ? selection.SlotIndex : -1;
+
+            if (isHolder)
+            {
+                EditorGUILayout.HelpBox(
+                    "This slot holds the choice BUTTONS, so components added here would never show. Add components to the other choice slots instead — each of them is one option.",
+                    MessageType.Info);
+            }
+            else
+            {
+                int optionIndex = EffectiveChoiceOptionIndex(selection.SlotIndex);
+                EditorGUILayout.HelpBox(
+                    optionIndex >= 0
+                        ? "This slot is CHOICE OPTION " + (optionIndex + 1) +
+                          ". Add components exactly like a normal slot: the first Text Panel becomes this option's live label (option text is written into it at Play), and any further text/image/name panels render as decoration. Clicking this slot at Play picks the option."
+                        : "This slot is an extra choice slot: it stays hidden at Play unless the choice has enough options. Its index among the non-holder slots decides which option it shows.",
+                    MessageType.None);
+            }
         }
         if (selection.AreaKind == ResolvedDialogueAreaKind.ChoiceLeaf)
         {
@@ -1954,7 +2137,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
         if (selection.AreaKind != ResolvedDialogueAreaKind.ChoiceLeaf)
         EditorGUILayout.HelpBox(
-            "Slots are the final partition pieces. They cannot be partitioned further. They inherit their parent region's visual settings by default, but you can override their own size, position, spacing-after, and visual styling here.",
+            "Slots are the final partition pieces — they cannot be partitioned further. Their styling is fully INDEPENDENT of the region: this slot keeps its own background, border, shadow and opacity, and the region keeps its own. A slot with Background = None is transparent, so the region's colour is visible through it; set a Solid Colour / Gradient / Sprite on the slot to make it opaque. Size, offset, spacing-after and Z Layer are per slot too. Nothing here is ever overwritten by the region automatically.",
             MessageType.None);
         slot.Offset = EditorGUILayout.Vector2Field("Offset", slot.Offset);
         DrawSizeField("Width", slot.Width);
@@ -2028,6 +2211,11 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
         region.DisplayName = EditorGUILayout.TextField("Display Name", region.DisplayName);
         region.Enabled = EditorGUILayout.Toggle("Enabled", region.Enabled);
+        if (!region.Enabled)
+            EditorGUILayout.HelpBox(
+                "This region is DISABLED: it resolves to nothing — no area, no slots, no components. " +
+                "For the main panel that also removes the dialogue-text area, so no text appears at Play.",
+                MessageType.Warning);
         DrawSizeField("Width", region.Width);
         DrawSizeField("Height", region.Height);
         region.Offset = EditorGUILayout.Vector2Field("Offset", region.Offset);
@@ -2035,10 +2223,32 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         region.PartitionLevel = EditorGUILayout.IntSlider("Partition Level", region.PartitionLevel, 0, 2);
         region.InterSlotSpacing = EditorGUILayout.FloatField("Default Inter-Slot Spacing", region.InterSlotSpacing);
         region.ZLayer = EditorGUILayout.IntSlider("Z Layer", region.ZLayer, -10, 10);
-        if (region.PartitionLevel != oldPartition && region.PartitionLevel > 0)
-            DialogueVisualEditorUtility.SyncVisibleSlotsFromRegion(region);
-        if (region.PartitionLevel > 0 && GUILayout.Button("Sync Visible Slots From Parent Region", GUILayout.Height(22f)))
-            DialogueVisualEditorUtility.SyncVisibleSlotsFromRegion(region);
+        // Adding partition pieces only GUARANTEES the slot definitions exist.
+        // Region styling is never pushed onto slots — region and slot colours
+        // are independent, and copying is available as an explicit action.
+        if (region.PartitionLevel != oldPartition)
+            DialogueVisualEditorUtility.EnsureRegionSlots(region);
+        if (region.PartitionLevel > 0)
+        {
+            if (GUILayout.Button(new GUIContent("Copy Region Style To Slots",
+                "OPT-IN: writes this region's background/border/shadow/opacity onto each visible slot. Never happens automatically, so slots keep their own styling otherwise."),
+                GUILayout.Height(22f)))
+            {
+                RecordLayoutAndEngine("Copy Region Style To Slots");
+                DialogueVisualEditorUtility.CopyRegionStyleToSlots(region);
+                CommitLayoutMutation();
+                return;
+            }
+            if (GUILayout.Button(new GUIContent("Reset Slot Sizes/Offsets To Auto",
+                "OPT-IN: returns each visible slot's size, offset and spacing to the region's partitioning. Slot colours are left untouched."),
+                GUILayout.Height(22f)))
+            {
+                RecordLayoutAndEngine("Reset Slot Layout To Auto");
+                DialogueVisualEditorUtility.ResetSlotLayoutToAuto(region);
+                CommitLayoutMutation();
+                return;
+            }
+        }
         DrawBackgroundStyle(region.Background);
         DrawBorderStyle(region.Border);
         DrawShadowStyle(region.Shadow);
@@ -2313,6 +2523,14 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         {
             ShowNotification(new GUIContent(
                 "Choice buttons are styled by the shared Choice Button Preset — they hold no components."));
+            return;
+        }
+        if (slotSelection.AreaKind == ResolvedDialogueAreaKind.ChoiceInner &&
+            slotSelection.SlotIndex == EffectiveChoiceHolderIndex())
+        {
+            ShowNotification(new GUIContent(
+                "This slot holds the CHOICE BUTTONS, so components added here would never show. " +
+                "Select one of the other choice slots — each one is a choice option."));
             return;
         }
         DialogueSlotDefinition slot = DialogueVisualEditorUtility.GetSlot(layoutAsset,

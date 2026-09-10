@@ -159,19 +159,37 @@ treatment as everything else:
   rect and with the exact styles Play will use. It has the FULL main-panel
   customization surface — anchor, fill mode, size, min/max, padding,
   background, border, shadow, opacity, z-layer.
-- Its **Choice Region** partitions into 1-3 terminal slots (partition level
-  0-2, exactly like the main inner region; slots cannot be divided further).
-  One slot = one choice option.
-- Every slot is fully customizable (background, border, shadow, opacity,
-  padding, offset). Put a **Text Panel** component in each slot: the first
-  one becomes that option's live label with its complete text style (colour,
-  font size, spacing, weight, alignment). Image components render statically
-  next to it, so decorative option icons work too.
+- Its **Choice Region** IS an inner region — exactly the same object, the
+  same resolver math and the same inspector as the **Inner Region** of the
+  main panel: Display Name, Enabled, Width/Height (percent of the panel!),
+  Offset, Partition Level 0-2, inter-slot spacing and Z Layer. Slots cannot
+  be partitioned further. A disabled region resolves to nothing.
+- **Region styling and slot styling are fully independent.** A slot keeps
+  its own background, border, shadow and opacity; the region keeps its own,
+  and changing one never changes the other. Adding partition pieces only
+  creates the slot definitions. Two buttons in the region inspector are the
+  only ways to touch slot data: **Copy Region Style To Slots** (writes the
+  region's surface onto the visible slots — opt-in, never automatic) and
+  **Reset Slot Sizes/Offsets To Auto** (geometry only, colours untouched).
+  Note that a slot with Background = None is *transparent*, so the region's
+  colour is visible through it — give the slot its own background to make it
+  opaque. The same applies to attached areas.
+- **Partition Level 1+ turns every NON-holder slot into one choice option**
+  ("one slot = one option", counted in order). Those slots behave exactly
+  like any other slot: add components, style them, move/resize them, select
+  them from the hierarchy or canvas. The **first Text Panel** in the slot is
+  that option's live label — at Play the option text is written into it with
+  its complete text style (colour, font size, spacing, weight, alignment) —
+  and clicking the slot picks that option. Padding and offset per slot work
+  as everywhere else, and slots past the option count hide. The Choice Panel
+  inspector lists the option slots and warns when one has no Text Panel.
 - The region slots: **choose which one holds the buttons** ("Holds The Choice
   Buttons" on the slot, or the Button Holder popup on the panel). Default is
   the bottom-most slot (or the slot itself at partition level 0); the other
   slots hold whatever components you like. Region orientation Vertical
-  (stacked rows, default) or Horizontal (columns).
+  (stacked rows, default) or Horizontal (columns). The holder slot cannot
+  take components (it renders buttons only) — the visual editor says so
+  instead of silently adding something that would never show.
 - The holder slot IS the choice area — ONE slot inside the choice region,
   in its rightful place (no ghost panels, no group boxes). Its content
   partitions **AUTOMATICALLY**: at Play the ACTUAL option count decides the
@@ -192,9 +210,13 @@ treatment as everything else:
   rect: a button can never be wider or taller than the container it lives in,
   so 4+ options (rows of 2) stay inside the holder instead of overflowing it.
 - At Play the panel is hidden until a choice fires; each option's text lands
-  on its button, unused buttons/groups hide, clicking a button picks that
-  option. More options than buttons logs a warning and shows the first N
+  on its button AND on its option slot's label, unused buttons and unused
+  option slots hide, and clicking either a button or an option slot picks
+  that option. More options than buttons logs a warning and shows the first N
   (the DSL itself is not limited).
+- Shadows are an editor-side preview only (UI Toolkit has no box-shadow); a
+  panel/region/slot shadow shows on the canvas but is not written to the UXML,
+  for the main panel and the choice panel alike.
 - The **True Preview** window has a **Peek Choice Panel** toggle so you can
   design the panel without running a dialogue.
 

@@ -833,6 +833,13 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
     VisualElement choicePanelRoot;
     readonly List<VisualElement> visualChoiceButtons = new List<VisualElement>();
     readonly List<Label> visualChoiceButtonTexts = new List<Label>();
+    // Per-OPTION choice slots: with the choice region partitioned (level 1+),
+    // every non-holder slot is one option — it gets that option's text in its
+    // first Text Panel, hides when the choice has fewer options, and clicking
+    // it picks the option. Entirely layout-driven: the engine only reads the
+    // elements the visual editor generated.
+    readonly List<VisualElement> visualChoiceSlots = new List<VisualElement>();
+    readonly List<Label> visualChoiceSlotLabels = new List<Label>();
     bool visualFrameHooked;
 
     VisualElement toolbarPanel;
@@ -1093,6 +1100,34 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                 int index = i;
                 button.pickingMode = PickingMode.Position;
                 button.RegisterCallback<ClickEvent>(_ =>
+                {
+                    if (currentChoiceToken == null) return;
+                    if (index < 0 || index >= choiceOptions.Count) return;
+                    OnOptionSelected(choiceOptions[index]);
+                });
+            }
+        }
+
+        // Per-option choice slots (partition level 1+): option i lives in the
+        // i-th slot marked by the editor. Binding is name-based, so a layout
+        // without option slots simply has an empty list.
+        visualChoiceSlots.Clear();
+        visualChoiceSlotLabels.Clear();
+        if (choicePanelRoot != null)
+        {
+            int holderIndex = VisualChoiceHolderSlotIndex();
+            for (int i = 0; i < 3; i++)
+            {
+                VisualElement slot = docRoot.Q("ChoiceSlot" + i);
+                if (slot == null) continue;
+                if (i == holderIndex) continue; // the holder belongs to the buttons
+                if (!slot.ClassListContains("dlg-choice-slot")) continue;
+                visualChoiceSlots.Add(slot);
+                visualChoiceSlotLabels.Add(docRoot.Q<Label>("ChoiceLabel" + i));
+
+                int index = visualChoiceSlots.Count - 1;
+                slot.pickingMode = PickingMode.Position;
+                slot.RegisterCallback<ClickEvent>(_ =>
                 {
                     if (currentChoiceToken == null) return;
                     if (index < 0 || index >= choiceOptions.Count) return;
@@ -2614,7 +2649,10 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         currentCharacterToken = null;
 
         // Visual-layout runtime: the layout's own designed choice panel.
-        if (visualLayoutRuntimeActive && choicePanelRoot != null && visualChoiceButtons.Count > 0)
+        // Either the holder's buttons or the per-option slots are enough — a
+        // layout may use just one of the two.
+        if (visualLayoutRuntimeActive && choicePanelRoot != null &&
+            (visualChoiceButtons.Count > 0 || visualChoiceSlots.Count > 0))
         {
             ShowVisualChoices(choice);
             return;
@@ -2687,6 +2725,19 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
                 visualChoiceButtonTexts[i].text = choiceOptions[i].OptionText;
         }
 
+        // Per-option slots (partition level 1+): option i lands in slot i, and
+        // slots past the option count hide — "one slot = one option", exactly
+        // like the holder hides its unused buttons.
+        for (int i = 0; i < visualChoiceSlots.Count; i++)
+        {
+            VisualElement slot = visualChoiceSlots[i];
+            if (slot == null) continue;
+            bool active = i < choiceOptions.Count;
+            slot.style.display = active ? DisplayStyle.Flex : DisplayStyle.None;
+            if (active && i < visualChoiceSlotLabels.Count && visualChoiceSlotLabels[i] != null)
+                visualChoiceSlotLabels[i].text = choiceOptions[i].OptionText;
+        }
+
         choicePanelRoot.style.display = DisplayStyle.Flex;
 
         currentTextName = "CHOICE_" + choice.ChoiceIndex;
@@ -2742,19 +2793,27 @@ public class Dialogue_Engine : MonoBehaviour, IDialogueService
         }
     }
 
-    VisualElement FindVisualChoiceHolderElement()
+    /// <summary>Index of the region slot that holds the choice BUTTONS. Same
+    /// effective-holder rule as the resolver: the designated slot, else the
+    /// bottom-most visible region slot.</summary>
+    int VisualChoiceHolderSlotIndex()
     {
-        if (choicePanelRoot == null || visualLayoutAsset == null ||
-            visualLayoutAsset.ChoicePanel == null || visualLayoutAsset.ChoicePanel.InnerRegion == null)
-            return null;
+        if (visualLayoutAsset == null || visualLayoutAsset.ChoicePanel == null ||
+            visualLayoutAsset.ChoicePanel.InnerRegion == null) return -1;
 
-        // Same effective-holder rule as the resolver: designated slot, else
-        // the bottom-most visible region slot.
         DialogueInnerRegionDefinition region = visualLayoutAsset.ChoicePanel.InnerRegion;
         int partition = 1 + Mathf.Clamp(region.PartitionLevel, 0, 2);
         int holder = visualLayoutAsset.ChoiceHolderSlotIndex;
         if (holder < 0 || holder >= partition)
             holder = Mathf.Clamp(partition - 1, 0, 2);
+        return holder;
+    }
+
+    VisualElement FindVisualChoiceHolderElement()
+    {
+        if (choicePanelRoot == null) return null;
+        int holder = VisualChoiceHolderSlotIndex();
+        if (holder < 0) return null;
         return choicePanelRoot.Q("ChoiceSlot" + holder);
     }
 

@@ -216,24 +216,75 @@ public static class DialogueVisualEditorUtility
         return area != null ? 1 + Mathf.Clamp(area.PartitionLevel, 0, 2) : 1;
     }
 
-    public static void SyncVisibleSlotsFromRegion(DialogueInnerRegionDefinition region)
+    /// <summary>
+    /// Makes sure the region has one slot definition per visible partition
+    /// piece. This NEVER touches the styling or the geometry of a slot that
+    /// already exists — region styling and slot styling are independent, so
+    /// changing the region can never change a slot.
+    /// </summary>
+    public static void EnsureRegionSlots(DialogueInnerRegionDefinition region)
+    {
+        if (region == null) return;
+        EnsureSlots(region);
+    }
+
+    public static void EnsureAreaSlots(DialogueAttachedAreaDefinition area)
+    {
+        if (area == null) return;
+        EnsureSlots(area);
+    }
+
+    /// <summary>OPT-IN helper (never automatic): copies the parent region's
+    /// surface styling onto its visible slots. Only called from an explicit
+    /// button, so a slot keeps its own colours and borders everything else.</summary>
+    public static void CopyRegionStyleToSlots(DialogueInnerRegionDefinition region)
     {
         if (region == null || region.Slots == null) return;
         EnsureSlots(region.Slots);
         int count = GetVisibleSlotCount(region);
         for (int i = 0; i < count && i < region.Slots.Count; i++)
-            ApplyParentDefaultsToSlot(region.Slots[i], region.Background, region.Border,
-                region.Shadow, region.Opacity, region.ZLayer);
+            CopySurfaceStyle(region.Slots[i], region.Background, region.Border,
+                region.Shadow, region.Opacity);
     }
 
-    public static void SyncVisibleSlotsFromArea(DialogueAttachedAreaDefinition area)
+    public static void CopyAreaStyleToSlots(DialogueAttachedAreaDefinition area)
     {
         if (area == null || area.Slots == null) return;
         EnsureSlots(area.Slots);
         int count = GetVisibleSlotCount(area);
         for (int i = 0; i < count && i < area.Slots.Count; i++)
-            ApplyParentDefaultsToSlot(area.Slots[i], area.Background, area.Border,
-                area.Shadow, area.Opacity, area.ZLayer);
+            CopySurfaceStyle(area.Slots[i], area.Background, area.Border,
+                area.Shadow, area.Opacity);
+    }
+
+    /// <summary>OPT-IN helper (never automatic): resets the visible slots'
+    /// size/offset/spacing to inherit the parent's partitioning again. Styling
+    /// is left exactly as the slot had it.</summary>
+    public static void ResetSlotLayoutToAuto(DialogueInnerRegionDefinition region)
+    {
+        if (region == null || region.Slots == null) return;
+        EnsureSlots(region.Slots);
+        int count = GetVisibleSlotCount(region);
+        for (int i = 0; i < count && i < region.Slots.Count; i++)
+            ResetSlotLayout(region.Slots[i]);
+    }
+
+    public static void ResetSlotLayoutToAuto(DialogueAttachedAreaDefinition area)
+    {
+        if (area == null || area.Slots == null) return;
+        EnsureSlots(area.Slots);
+        int count = GetVisibleSlotCount(area);
+        for (int i = 0; i < count && i < area.Slots.Count; i++)
+            ResetSlotLayout(area.Slots[i]);
+    }
+
+    static void ResetSlotLayout(DialogueSlotDefinition slot)
+    {
+        if (slot == null) return;
+        if (slot.Width != null) { slot.Width.Unit = DialogueSizeUnit.Auto; slot.Width.Value = 0f; }
+        if (slot.Height != null) { slot.Height.Unit = DialogueSizeUnit.Auto; slot.Height.Value = 0f; }
+        slot.GapAfter = -1f;
+        slot.Offset = Vector2.zero;
     }
 
     static void EnsureSlots(DialogueInnerRegionDefinition region)
@@ -277,18 +328,11 @@ public static class DialogueVisualEditorUtility
         return index >= 0 && index < letters.Length ? letters[index].ToString() : "S" + index;
     }
 
-    static void ApplyParentDefaultsToSlot(DialogueSlotDefinition slot,
+    static void CopySurfaceStyle(DialogueSlotDefinition slot,
         DialogueBackgroundStyle background, DialogueBorderStyle border,
-        DialogueShadowStyle shadow, DialogueOpacitySettings opacity,
-        int zLayer)
+        DialogueShadowStyle shadow, DialogueOpacitySettings opacity)
     {
         if (slot == null) return;
-        slot.Width.Unit = DialogueSizeUnit.Auto;
-        slot.Width.Value = 0f;
-        slot.Height.Unit = DialogueSizeUnit.Auto;
-        slot.Height.Value = 0f;
-        slot.GapAfter = -1f;
-        slot.Offset = Vector2.zero;
 
         if (background != null)
         {
@@ -324,7 +368,6 @@ public static class DialogueVisualEditorUtility
         }
         if (opacity != null)
             slot.Opacity.Opacity = opacity.Opacity;
-        slot.ZLayer = zLayer;
     }
 
     public static bool TryGetOppositeAreaKind(ResolvedDialogueAreaKind kind,
