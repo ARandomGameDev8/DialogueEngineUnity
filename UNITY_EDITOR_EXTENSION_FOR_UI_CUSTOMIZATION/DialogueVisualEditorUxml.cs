@@ -205,13 +205,14 @@ public static class DialogueVisualEditorUxml
             }
 
             DialogueAttachedAreaDefinition areaDef = GetArea(asset, area.AreaKind);
+            // The area's own surface ALWAYS emits; an image background paints
+            // over it (transparent image = the colour shows through), and a
+            // missing/invalid image simply leaves the colour.
             string areaSurface = SurfaceStyle(bg, border, opacity);
             if (areaDef != null && areaDef.UseImageBackground)
             {
-                // Missing/invalid image keeps the area's NORMAL surface —
-                // never an empty one.
                 string imgStyle = media.ImageStyleFor(areaDef.ImageBackgroundPath);
-                if (!string.IsNullOrEmpty(imgStyle)) areaSurface = imgStyle;
+                if (!string.IsNullOrEmpty(imgStyle)) areaSurface += imgStyle;
             }
             boxEl.Append(AbsEl(null,
                 AbsStyle(area.Rect.x - box.x, area.Rect.y - box.y, area.Rect.width, area.Rect.height) +
@@ -233,7 +234,7 @@ public static class DialogueVisualEditorUxml
         // The main panel's border, painted above its children (same rule as the
         // choice panel): moving/resizing/padding can make the inner region or a
         // component cover the panel's surface, and the border must survive it.
-        boxEl.Append(BorderOverlayElement("VisualPanelBorder", PanelBorderOverlay(asset.MainPanel, media)));
+        boxEl.Append(BorderOverlayElement("VisualPanelBorder", PanelBorderOverlay(asset.MainPanel)));
 
         body.Append($"<ui:VisualElement name=\"DialogueBox\" style=\"position: absolute; left: {Pct(box.x, canvas.x)}; top: {Pct(box.y, canvas.y)}; width: {Pct(box.width, canvas.x)}; height: {Pct(box.height, canvas.y)}; overflow: visible;\">\n{boxEl}</ui:VisualElement>" + "\n");
 
@@ -437,7 +438,7 @@ public static class DialogueVisualEditorUxml
 
         // The panel's border, painted above the region/slots/buttons so panel
         // customization stays visible whatever its children cover.
-        sb.Append("    " + BorderOverlayElement("ChoicePanelBorder", PanelBorderOverlay(panel, media)));
+        sb.Append("    " + BorderOverlayElement("ChoicePanelBorder", PanelBorderOverlay(panel)));
         sb.Append("  </ui:VisualElement>\n</ui:VisualElement>" + "\n");
         return sb.ToString();
     }
@@ -535,18 +536,22 @@ public static class DialogueVisualEditorUxml
             count, out slotRect, out content, out rects);
     }
 
-    /// <summary>Surface style for a panel definition: image-based panels emit
-    /// ONLY the stretched background image (their own surface is invisible at
-    /// Play); normal panels emit background/border/opacity as before.</summary>
+    /// <summary>Surface style for a panel definition: the panel's own
+    /// background/border/opacity ALWAYS emit, and an Image Background paints
+    /// OVER that surface (background-image sits on top of background-color in
+    /// USS). A transparent image therefore lets the panel's colour through, so
+    /// the colour and border controls are never dead while an image is set.
+    /// Mode = None is still available for "image only, no colour".</summary>
     static string PanelSurfaceStyle(DialogueMainPanelDefinition panel, DialogueUiMediaImport media)
     {
         if (panel == null) return "";
+        string surface = SurfaceStyle(panel.Background, panel.Border, panel.Opacity);
         if (panel.UseImageBackground && media != null)
         {
             string img = media.ImageStyleFor(panel.ImageBackgroundPath);
-            if (!string.IsNullOrEmpty(img)) return img;
+            if (!string.IsNullOrEmpty(img)) surface += img;
         }
-        return SurfaceStyle(panel.Background, panel.Border, panel.Opacity);
+        return surface;
     }
 
     static string BorderOverlayElement(string name, string overlayStyle)
@@ -562,13 +567,12 @@ public static class DialogueVisualEditorUxml
     /// otherwise hide the panel's border — panel customization has to stay
     /// visible whatever the children do. Returns "" when there is no border.
     /// </summary>
-    static string PanelBorderOverlay(DialogueMainPanelDefinition panel, DialogueUiMediaImport media)
+    static string PanelBorderOverlay(DialogueMainPanelDefinition panel)
     {
         if (panel == null || panel.Border == null || !panel.Border.Enabled) return "";
-        // An image-based panel replaces its whole surface (border included) with
-        // the stretched image, exactly as documented — no border overlay.
-        if (panel.UseImageBackground && media != null &&
-            !string.IsNullOrEmpty(media.ImageStyleFor(panel.ImageBackgroundPath))) return "";
+        // An image background does NOT exempt the border: the border belongs to
+        // the panel's own customization and paints above everything, image
+        // included.
         float opacity = panel.Opacity != null ? Mathf.Clamp01(panel.Opacity.Opacity) : 1f;
         DialogueBorderStyle border = panel.Border;
         if (opacity <= 0f || Mathf.Clamp01(border.Opacity) <= 0f) return "";
@@ -645,7 +649,7 @@ public static class DialogueVisualEditorUxml
 
             // Border above the free panel's children, exactly like the choice
             // and main panels.
-            sb.Append("    " + BorderOverlayElement("FreePanelBorder" + f, PanelBorderOverlay(panel, media)));
+            sb.Append("    " + BorderOverlayElement("FreePanelBorder" + f, PanelBorderOverlay(panel)));
             sb.Append("  </ui:VisualElement>\n</ui:VisualElement>\n");
             all.Append(sb);
         }

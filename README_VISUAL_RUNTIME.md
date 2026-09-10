@@ -177,6 +177,18 @@ treatment as everything else:
   transparent border switches it on. A panel whose background paints nothing
   says so on the canvas label (`background: NONE (placeholder tint — pick a
   colour)`), because that placeholder is NOT your colour.
+- **A colour edit always produces a visible surface.** Picking a colour on
+  an element that could not show it lifts every silent state: Background
+  Mode None becomes Solid Colour, a background Opacity 0 becomes 1, a colour
+  whose ALPHA is 0 gets 0.75, and an Overall Opacity 0 becomes 1. Borders do
+  the same (a colour/thickness edit switches `Enabled` on and clears a 0
+  opacity). Dragging an opacity slider to 0 yourself is a deliberate choice
+  and is left alone — the inspector then warns instead.
+- **An Image Background never disables the colour and border controls**: the
+  image paints OVER the panel's own surface, so a transparent image lets the
+  chosen colour and border show through. Background Mode = None gives the
+  old image-only look. This is true on the canvas and at Play (the border
+  overlay is emitted for image panels too).
 - Every panel inspector ends its style block with a one-line report —
   `MAIN PANEL paints:  background SolidColor rgba(24, 20, 32, 0.75) | border
   4px rgba(...) | overall opacity 1 | padding 20` — computed from the same

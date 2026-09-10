@@ -406,20 +406,21 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         // Image-based main panel: the image IS the panel; the panel outline
         // stays faintly visible while editing. Attached areas and children
         // keep rendering normally on top.
-        bool mainIsImage = mainPanel != null && mainPanel.UseImageBackground &&
-                           TryDrawImageBackground(layout.MainPanelRect, mainPanel.ImageBackgroundPath);
-        if (!mainIsImage)
-        {
+        bool mainWantsImage = mainPanel != null && mainPanel.UseImageBackground;
+        // The panel's own surface ALWAYS paints; an image background paints OVER
+        // it (transparent image = the colour shows through), so the colour and
+        // border controls are never dead just because an image is set.
         DialogueVisualStylePreviewUtility.DrawStyledElement(
             layout.MainPanelRect,
             mainPanel != null ? mainPanel.Background : null,
             mainPanel != null ? mainPanel.Border : null,
             mainPanel != null ? mainPanel.Shadow : null,
             mainPanel != null ? mainPanel.Opacity : null,
-            new Color(0.16f, 0.20f, 0.30f, 0.88f),
+            mainWantsImage ? new Color(0f, 0f, 0f, 0f) : new Color(0.16f, 0.20f, 0.30f, 0.88f),
             new Color(0.70f, 0.82f, 1f, 1f),
             2f);
-        }
+        if (mainWantsImage)
+            TryDrawImageBackground(layout.MainPanelRect, mainPanel.ImageBackgroundPath);
         MarkUnpaintedPanel(layout.MainPanelRect, mainPanel);
         if (selection.Kind == SelectionKind.MainPanel)
             DialogueVisualStylePreviewUtility.DrawSelectionOutline(
@@ -496,25 +497,25 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 opacity = areaDef != null ? areaDef.Opacity : null;
             }
 
-            bool areaIsImage = false;
-            if (area.AreaKind != ResolvedDialogueAreaKind.MainInner)
-            {
-                DialogueAttachedAreaDefinition imageAreaDef = DialogueVisualEditorUtility.GetArea(layoutAsset, area.AreaKind);
-                if (imageAreaDef != null && imageAreaDef.UseImageBackground)
-                    areaIsImage = TryDrawImageBackground(area.Rect, imageAreaDef.ImageBackgroundPath);
-            }
-            if (!areaIsImage)
-            {
+            DialogueAttachedAreaDefinition imageAreaDef =
+                area.AreaKind != ResolvedDialogueAreaKind.MainInner
+                    ? DialogueVisualEditorUtility.GetArea(layoutAsset, area.AreaKind) : null;
+            bool areaWantsImage = imageAreaDef != null && imageAreaDef.UseImageBackground;
+
+            // The area's own surface ALWAYS paints (colour, border, shadow); an
+            // image background then paints OVER it, so a transparent image lets
+            // the colour through and the colour/border controls never go dead.
             DialogueVisualStylePreviewUtility.DrawStyledElement(
                 area.Rect,
                 background,
                 border,
                 shadow,
                 opacity,
-                fallbackFill,
+                areaWantsImage ? new Color(0f, 0f, 0f, 0f) : fallbackFill,
                 new Color(0.65f, 0.95f, 0.70f, 1f),
                 1.5f);
-            }
+            if (areaWantsImage)
+                TryDrawImageBackground(area.Rect, imageAreaDef.ImageBackgroundPath);
             if (IsSelected(area))
                 DialogueVisualStylePreviewUtility.DrawSelectionOutline(
                     area.Rect,
@@ -623,7 +624,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         // and component placeholder fills must never hide the panel's border
         // (the runtime emits the same overlay). Drawn before the free/choice
         // subtrees so those still sit above the main box, its runtime z-order.
-        DrawPanelBorderOverlay(layout.MainPanelRect, mainPanel, mainIsImage);
+        DrawPanelBorderOverlay(layout.MainPanelRect, mainPanel);
 
         DrawFreeSubtree(layout);
         DrawChoiceSubtree(layout);
@@ -644,8 +645,10 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     static string PanelPaintProblem(DialogueMainPanelDefinition panel)
     {
         if (panel == null) return "no panel";
+        // An Image Background paints over the surface: whatever the colours do,
+        // the panel is not blank, so it is not reported as painting nothing.
         if (panel.UseImageBackground && System.IO.File.Exists(panel.ImageBackgroundPath))
-            return "body = image (background/border colours ignored)";
+            return "";
         float overall = panel.Opacity != null ? Mathf.Clamp01(panel.Opacity.Opacity) : 1f;
         if (overall <= 0.0001f) return "overall opacity 0 - NOTHING shows";
         DialogueBackgroundStyle bg = panel.Background;
@@ -686,18 +689,10 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     {
         if (panel == null) return;
 
-        if (panel.UseImageBackground && System.IO.File.Exists(panel.ImageBackgroundPath))
-        {
-            EditorGUILayout.HelpBox(
-                what + ": the body is the IMAGE '" + System.IO.Path.GetFileName(panel.ImageBackgroundPath) +
-                "', stretched over the panel. While that is on, the background and border COLOURS below are " +
-                "ignored on the canvas and at Play — turn Image Background off to paint with colours.",
-                MessageType.Warning);
-            return;
-        }
-
         var sb = new StringBuilder();
         bool problem = false;
+        bool hasImage = panel.UseImageBackground &&
+                        System.IO.File.Exists(panel.ImageBackgroundPath);
         float overall = panel.Opacity != null ? Mathf.Clamp01(panel.Opacity.Opacity) : 1f;
 
         DialogueBackgroundStyle bg = panel.Background;
@@ -773,6 +768,18 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         if (thinnestPadding <= 0f)
             sb.Append("  |  padding 0: the region covers the panel's background (the border still shows)");
 
+        if (hasImage)
+        {
+            sb.Append("  |  image background '").Append(System.IO.Path.GetFileName(panel.ImageBackgroundPath))
+              .Append("' paints OVER this surface (a transparent image lets the colour through)");
+            problem = false; // the image paints, so the panel is not blank
+        }
+        else if (panel.UseImageBackground)
+        {
+            sb.Append("  |  image background set but NOT loadable — the surface above is what shows");
+            problem = true;
+        }
+
         EditorGUILayout.HelpBox(what + " paints:  " + sb,
             problem ? MessageType.Warning : MessageType.None);
 
@@ -799,12 +806,12 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     // A panel's border, drawn ON TOP of its children — the canvas mirror of
     // the runtime border overlay (PanelBorderOverlay in the UXML). Children are
     // always painted after their parent, so a region, slot or component that
-    // covers the panel's surface would otherwise hide the panel's border.
-    // Image-based panels draw no overlay (the image replaces the whole
-    // surface), exactly like the runtime emit.
-    void DrawPanelBorderOverlay(Rect rect, DialogueMainPanelDefinition panel, bool imagePanel)
+    // covers the panel's surface would otherwise hide the panel's border. An
+    // image background does not exempt the border either: the border is part of
+    // the panel's own customization and always paints.
+    void DrawPanelBorderOverlay(Rect rect, DialogueMainPanelDefinition panel)
     {
-        if (panel == null || imagePanel) return;
+        if (panel == null) return;
         DialogueVisualStylePreviewUtility.DrawStyledElement(
             rect,
             null,                     // no fill: the panel's own body was drawn earlier
@@ -831,20 +838,19 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             if (rectIndex >= layout.FreePanelRects.Count) break;
             Rect panelRect = layout.FreePanelRects[rectIndex++];
 
-            bool isImage = freePanel.UseImageBackground &&
-                           TryDrawImageBackground(panelRect, freePanel.ImageBackgroundPath);
-            if (!isImage)
-            {
-                DialogueVisualStylePreviewUtility.DrawStyledElement(
-                    panelRect,
-                    freePanel.Background,
-                    freePanel.Border,
-                    freePanel.Shadow,
-                    freePanel.Opacity,
-                    new Color(0.10f, 0.28f, 0.30f, 0.85f),
-                    new Color(0.62f, 0.95f, 0.92f, 1f),
-                    2f);
-            }
+            bool wantsImage = freePanel.UseImageBackground;
+            // Style first, image over it — colours and borders stay live.
+            DialogueVisualStylePreviewUtility.DrawStyledElement(
+                panelRect,
+                freePanel.Background,
+                freePanel.Border,
+                freePanel.Shadow,
+                freePanel.Opacity,
+                wantsImage ? new Color(0f, 0f, 0f, 0f) : new Color(0.10f, 0.28f, 0.30f, 0.85f),
+                new Color(0.62f, 0.95f, 0.92f, 1f),
+                2f);
+            if (wantsImage)
+                TryDrawImageBackground(panelRect, freePanel.ImageBackgroundPath);
             MarkUnpaintedPanel(panelRect, freePanel);
             if (selection.Kind == SelectionKind.FreePanel && selection.FreePanelIndex == f)
                 DialogueVisualStylePreviewUtility.DrawSelectionOutline(
@@ -858,7 +864,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             DialogueInnerRegionDefinition region = freePanel.InnerRegion;
             if (regionArea == null || region == null)
             {
-                DrawPanelBorderOverlay(panelRect, freePanel, isImage);
+                DrawPanelBorderOverlay(panelRect, freePanel);
                 continue;
             }
 
@@ -918,7 +924,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             }
 
             // This panel's own border, above its region/slots/components.
-            DrawPanelBorderOverlay(panelRect, freePanel, isImage);
+            DrawPanelBorderOverlay(panelRect, freePanel);
         }
     }
 
@@ -934,20 +940,20 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         DialogueMainPanelDefinition choicePanel = layoutAsset.ChoicePanel;
         DialogueInnerRegionDefinition choiceRegion = choicePanel != null ? choicePanel.InnerRegion : null;
 
-        bool choiceIsImage = choicePanel != null && choicePanel.UseImageBackground &&
-                             TryDrawImageBackground(layout.ChoicePanelRect, choicePanel.ImageBackgroundPath);
-        if (!choiceIsImage)
-        {
+        bool choiceWantsImage = choicePanel != null && choicePanel.UseImageBackground;
+        // The panel's own surface ALWAYS paints; an image background paints OVER
+        // it (transparent image = the colour shows through).
         DialogueVisualStylePreviewUtility.DrawStyledElement(
             layout.ChoicePanelRect,
             choicePanel != null ? choicePanel.Background : null,
             choicePanel != null ? choicePanel.Border : null,
             choicePanel != null ? choicePanel.Shadow : null,
             choicePanel != null ? choicePanel.Opacity : null,
-            new Color(0.30f, 0.18f, 0.38f, 0.95f),
+            choiceWantsImage ? new Color(0f, 0f, 0f, 0f) : new Color(0.30f, 0.18f, 0.38f, 0.95f),
             new Color(0.85f, 0.62f, 1f, 1f),
             2f);
-        }
+        if (choiceWantsImage)
+            TryDrawImageBackground(layout.ChoicePanelRect, choicePanel.ImageBackgroundPath);
         MarkUnpaintedPanel(layout.ChoicePanelRect, choicePanel);
         if (selection.Kind == SelectionKind.ChoicePanel)
             DialogueVisualStylePreviewUtility.DrawSelectionOutline(
@@ -1099,7 +1105,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         // slots and the buttons — so the panel's surface customization is
         // always visible no matter how much of it its children cover (exactly
         // how the runtime border overlay is emitted into the UXML).
-        DrawPanelBorderOverlay(layout.ChoicePanelRect, choicePanel, choiceIsImage);
+        DrawPanelBorderOverlay(layout.ChoicePanelRect, choicePanel);
     }
 
     void DrawSelectionHandles(ResolvedDialogueLayout layout)
@@ -1890,8 +1896,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
         EditorGUILayout.Space(8f);
         GUILayout.Label("Main Panel Style", EditorStyles.boldLabel);
-        DrawBackgroundStyle(panel.Background);
-        DrawBorderStyle(panel.Border);
+        DrawBackgroundStyle(panel.Background, panel.Opacity);
+        DrawBorderStyle(panel.Border, panel.Opacity);
         DrawShadowStyle(panel.Shadow);
         DrawOpacity(panel.Opacity);
         DrawPanelSurfaceSummary("MAIN PANEL", panel);
@@ -1949,8 +1955,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
         EditorGUILayout.Space(8f);
         GUILayout.Label("Free Panel Style", EditorStyles.boldLabel);
-        DrawBackgroundStyle(panel.Background);
-        DrawBorderStyle(panel.Border);
+        DrawBackgroundStyle(panel.Background, panel.Opacity);
+        DrawBorderStyle(panel.Border, panel.Opacity);
         DrawShadowStyle(panel.Shadow);
         DrawOpacity(panel.Opacity);
         DrawPanelSurfaceSummary("THIS FREE PANEL", panel);
@@ -1967,7 +1973,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         if (panel == null) return;
         panel.UseImageBackground = EditorGUILayout.Toggle(
             new GUIContent("Image Background",
-                "The panel's own surface goes INVISIBLE at Play and this image becomes the panel body, stretched exactly with the panel (bigger panel = bigger image, width/height included). Children stay fully visible; the panel outline stays faintly visible while editing."),
+                "The image is stretched over the panel exactly with it (bigger panel = bigger image). The panel's background colour and border still paint UNDER it, so a transparent image lets them through and nothing is ignored — set Background Mode = None for image-only."),
             panel.UseImageBackground);
         if (panel.UseImageBackground) DrawImageBackgroundPathFields(ref panel.ImageBackgroundPath);
     }
@@ -1977,7 +1983,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         if (area == null) return;
         area.UseImageBackground = EditorGUILayout.Toggle(
             new GUIContent("Image Background",
-                "The area's own surface goes INVISIBLE at Play and this image becomes the area body, stretched exactly with the area. Its slots and components stay fully visible and are altered separately."),
+                "The image is stretched over the area exactly with it. The area's background colour and border still paint UNDER it (a transparent image lets them through) — set Background Mode = None for image-only. Its slots and components stay visible and are styled separately."),
             area.UseImageBackground);
         if (area.UseImageBackground) DrawImageBackgroundPathFields(ref area.ImageBackgroundPath);
     }
@@ -2123,8 +2129,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         GUILayout.Label("Choice Panel Surface (this panel)", EditorStyles.boldLabel);
         EditorGUILayout.Space(2f);
         DrawImageBackgroundFields(panel);
-        DrawBackgroundStyle(panel.Background);
-        DrawBorderStyle(panel.Border);
+        DrawBackgroundStyle(panel.Background, panel.Opacity);
+        DrawBorderStyle(panel.Border, panel.Opacity);
         DrawShadowStyle(panel.Shadow);
         DrawOpacity(panel.Opacity);
         EditorGUILayout.HelpBox(
@@ -2182,8 +2188,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             DrawSizeField("Button Height (All)", preset.FixedHeight);
         }
         DrawPaddingField("Text Padding", preset.Padding);
-        DrawBackgroundStyle(preset.Background);
-        DrawBorderStyle(preset.Border);
+        DrawBackgroundStyle(preset.Background, preset.Opacity);
+        DrawBorderStyle(preset.Border, preset.Opacity);
         DrawShadowStyle(preset.Shadow);
         DrawOpacity(preset.Opacity);
         DrawTextStyle(preset.TextStyle);
@@ -2330,8 +2336,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         GUILayout.Label("Image Background", EditorStyles.boldLabel);
         DrawImageBackgroundFields(area);
 
-        DrawBackgroundStyle(area.Background);
-        DrawBorderStyle(area.Border);
+        DrawBackgroundStyle(area.Background, area.Opacity);
+        DrawBorderStyle(area.Border, area.Opacity);
         DrawShadowStyle(area.Shadow);
         DrawOpacity(area.Opacity);
     }
@@ -2389,8 +2395,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         slot.ZLayer = EditorGUILayout.IntSlider("Z Layer", slot.ZLayer, -10, 10);
         if (selection.AreaKind != ResolvedDialogueAreaKind.ChoiceLeaf)
         {
-            DrawBackgroundStyle(slot.Background);
-            DrawBorderStyle(slot.Border);
+            DrawBackgroundStyle(slot.Background, slot.Opacity);
+            DrawBorderStyle(slot.Border, slot.Opacity);
             DrawShadowStyle(slot.Shadow);
             DrawOpacity(slot.Opacity);
         }
@@ -2491,8 +2497,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 return;
             }
         }
-        DrawBackgroundStyle(region.Background);
-        DrawBorderStyle(region.Border);
+        DrawBackgroundStyle(region.Background, region.Opacity);
+        DrawBorderStyle(region.Border, region.Opacity);
         DrawShadowStyle(region.Shadow);
         DrawOpacity(region.Opacity);
     }
@@ -2536,8 +2542,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         component.ClipToSlot = EditorGUILayout.Toggle("Clip To Slot", component.ClipToSlot);
         component.ZLayer = EditorGUILayout.IntSlider("Z Layer", component.ZLayer, -10, 10);
 
-        DrawBackgroundStyle(component.Background);
-        DrawBorderStyle(component.Border);
+        DrawBackgroundStyle(component.Background, component.Opacity);
+        DrawBorderStyle(component.Border, component.Opacity);
         DrawShadowStyle(component.Shadow);
         DrawOpacity(component.Opacity);
 
@@ -2657,7 +2663,15 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         style.Tint = EditorGUILayout.ColorField("Tint", style.Tint);
     }
 
-    void DrawBackgroundStyle(DialogueBackgroundStyle style)
+    /// <summary>
+    /// Background style fields. A colour edit is guaranteed to be VISIBLE: if
+    /// the element was in any "paints nothing" state (Mode = None, background
+    /// opacity 0, a colour whose alpha is 0, or the owner's overall opacity 0)
+    /// the edit switches that state on, so picking a colour can never look like
+    /// it did nothing.
+    /// </summary>
+    void DrawBackgroundStyle(DialogueBackgroundStyle style,
+        DialogueOpacitySettings overall = null)
     {
         if (style == null) return;
         EditorGUILayout.Space(4f);
@@ -2673,15 +2687,39 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         style.SpriteSourceKey = EditorGUILayout.TextField("Sprite Source Key", style.SpriteSourceKey);
         style.GradientDirection = (DialogueGradientDirection)EditorGUILayout.EnumPopup("Gradient Direction", style.GradientDirection);
 
+        bool colourEdited = ColourChanged(style.ColorA, colorABefore) ||
+                            ColourChanged(style.ColorB, colorBBefore);
+        bool backgroundOpacityEdited = !Mathf.Approximately(style.Opacity, backgroundOpacityBefore);
+
         // Mode = None paints NOTHING — the canvas only shows a placeholder tint
         // so the element stays visible while editing. Picking a colour on such
         // an element therefore looks like "customization does nothing", so an
         // actual colour/opacity edit switches the mode for the user.
-        if (style.Mode == DialogueBackgroundMode.None &&
-            (ColourChanged(style.ColorA, colorABefore) ||
-             ColourChanged(style.ColorB, colorBBefore) ||
-             !Mathf.Approximately(style.Opacity, backgroundOpacityBefore)))
+        if (style.Mode == DialogueBackgroundMode.None && (colourEdited || backgroundOpacityEdited))
             style.Mode = DialogueBackgroundMode.SolidColor;
+
+        // A colour edit must be SEEN. Every invisible state is lifted, but only
+        // when the COLOUR is what the user just changed — dragging an opacity
+        // slider to 0 is a deliberate choice and is respected as-is.
+        if (colourEdited)
+        {
+            if (style.Opacity <= 0.001f)
+                style.Opacity = 1f;
+            if (style.ColorA.a <= 0.001f)
+            {
+                Color c = style.ColorA;
+                c.a = 0.75f;
+                style.ColorA = c;
+            }
+            if (style.Mode == DialogueBackgroundMode.Gradient && style.ColorB.a <= 0.001f)
+            {
+                Color c = style.ColorB;
+                c.a = 0.75f;
+                style.ColorB = c;
+            }
+            if (overall != null && overall.Opacity <= 0.001f)
+                overall.Opacity = 1f;
+        }
 
         if (style.Mode == DialogueBackgroundMode.None)
             EditorGUILayout.HelpBox(
@@ -2691,9 +2729,18 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             EditorGUILayout.HelpBox(
                 "Background Opacity is 0: the background is fully see-through. Raise it to paint the element.",
                 MessageType.Warning);
+        else if (style.ColorA.a <= 0.001f)
+            EditorGUILayout.HelpBox(
+                "The colour's ALPHA is 0: the background is fully see-through however the RGB is set. Raise the A value in the colour picker (or pick a colour again and it is raised for you).",
+                MessageType.Warning);
+        if (overall != null && overall.Opacity <= 0.001f)
+            EditorGUILayout.HelpBox(
+                "This element's Overall Opacity is 0: NOTHING of it shows, background and border alike. Raise it above to see this panel.",
+                MessageType.Warning);
     }
 
-    void DrawBorderStyle(DialogueBorderStyle style)
+    void DrawBorderStyle(DialogueBorderStyle style,
+        DialogueOpacitySettings overall = null)
     {
         if (style == null) return;
         EditorGUILayout.Space(4f);
@@ -2734,6 +2781,14 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             if (opacityBefore <= 0.001f)
                 style.Opacity = 1f; // was invisible: give the new colour a visible opacity
         }
+        if (colourOrSizeEdited && style.BorderColor.a <= 0.001f)
+        {
+            Color c = style.BorderColor;
+            c.a = 1f;
+            style.BorderColor = c;
+        }
+        if (colourOrSizeEdited && overall != null && overall.Opacity <= 0.001f)
+            overall.Opacity = 1f;
         if (style.Enabled && style.LeftThickness <= 0f && style.RightThickness <= 0f &&
             style.TopThickness <= 0f && style.BottomThickness <= 0f)
             EditorGUILayout.HelpBox(
