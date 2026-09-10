@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using UnityEditor;
 using UnityEngine;
+using System.Text;
 using System.Collections.Generic;
 
 public sealed class DialogueVisualEditorWindow : EditorWindow
@@ -664,7 +665,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     /// unmistakably marked on the canvas.</summary>
     void MarkUnpaintedPanel(Rect rect, DialogueMainPanelDefinition panel)
     {
-        if (rect.width <= 0f || rect.height <= 0f) return;
+        if (panel == null || rect.width <= 0f || rect.height <= 0f) return;
         if (string.IsNullOrEmpty(PanelPaintProblem(panel))) return;
         Handles.color = new Color(1f, 0.45f, 0.85f, 0.9f);
         DrawDashedRect(rect, 7f);
@@ -675,6 +676,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     /// colour it does not paint.</summary>
     static string PanelPaintSuffix(DialogueMainPanelDefinition panel)
     {
+        if (panel == null) return "";
         string problem = PanelPaintProblem(panel);
         return string.IsNullOrEmpty(problem) ? "" : "  ·  " + problem;
     }
@@ -784,8 +786,8 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             problem ? MessageType.Warning : MessageType.None);
 
         // One click instead of a hunt: make the surface paint something, now.
-        string problem = PanelPaintProblem(panel);
-        if (!string.IsNullOrEmpty(problem))
+        string paintProblem = PanelPaintProblem(panel);
+        if (!string.IsNullOrEmpty(paintProblem))
         {
             if (GUILayout.Button("Paint this panel now (Solid Colour, opacity 1)", GUILayout.Height(24f)))
             {
