@@ -378,6 +378,13 @@ public static class DialogueVisualLayoutResolver
         return true;
     }
 
+    /// <summary>Public containment helper: clamps a rect inside a parent rect
+    /// (same rule slots and choice buttons resolve with).</summary>
+    public static Rect ClampInside(Rect rect, Rect parentRect)
+    {
+        return ClampRectInside(rect, parentRect);
+    }
+
     /// <summary>Resolves ONE choice button's axis size inside its cell: Auto
     /// (or a null/zero size) fills the cell, percent is relative to the cell,
     /// pixels are honored, and the result is always clamped to the cell so the

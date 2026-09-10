@@ -479,6 +479,16 @@ public static class DialogueVisualEditorUxml
         bool hasPreview = TryCallArrange(asset, resolved, Mathf.Clamp(asset.ChoicePreviewCount, 0, 6), out previewRects);
         bool hasFull    = TryCallArrange(asset, resolved, 6, out fullRects);
 
+        // Containment is re-asserted here so the file can never contain a
+        // button rect that leaves the holder, whatever produced the rect.
+        DialogueInnerRegionDefinition regionDef = asset.ChoicePanel != null ? asset.ChoicePanel.InnerRegion : null;
+        int holderIndex = resolved.ChoiceHolderSlotIndex;
+        DialogueSlotDefinition holderDef = regionDef != null && regionDef.Slots != null &&
+                                           holderIndex >= 0 && holderIndex < regionDef.Slots.Count
+            ? regionDef.Slots[holderIndex] : null;
+        Rect holderContentRect = DialogueVisualLayoutResolver.ShrinkRect(holderSlot.Rect,
+            holderDef != null ? holderDef.Padding : null);
+
         var sb = new StringBuilder();
         int total = 6;
         for (int k = 0; k < total; k++)
@@ -488,6 +498,7 @@ public static class DialogueVisualEditorUxml
             if (hasPreview && k < previewRects.Count) { rect = previewRects[k]; visible = true; }
             else if (hasFull && k < fullRects.Count)  { rect = fullRects[k];    visible = false; }
             else continue;
+            rect = DialogueVisualLayoutResolver.ClampInside(rect, holderContentRect);
 
             string buttonStyle = AbsStyle(rect.x - holderSlot.Rect.x,
                 rect.y - holderSlot.Rect.y, rect.width, rect.height) +

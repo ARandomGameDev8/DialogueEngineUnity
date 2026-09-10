@@ -811,12 +811,24 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         if (layoutAsset.ChoiceButtons != null)
         {
             DialogueChoiceButtonSettings preset = layoutAsset.ChoiceButtons;
+            // Hard clamp at DRAW time as well: whatever a button's resolved
+            // rect says, it is never rendered outside the holder's content
+            // rect (no overlap with a sibling, no spill past the panel).
+            ResolvedDialogueSlot holderSlot = FindResolvedSlot(
+                layout, ResolvedDialogueAreaKind.ChoiceInner, holder);
+            DialogueSlotDefinition holderSlotDef = DialogueVisualEditorUtility.GetSlot(
+                layoutAsset, ResolvedDialogueAreaKind.ChoiceInner, holder);
+            Rect holderContent = holderSlot != null
+                ? DialogueVisualLayoutResolver.ShrinkRect(holderSlot.Rect,
+                    holderSlotDef != null ? holderSlotDef.Padding : null)
+                : layout.ChoicePanelRect;
             for (int k = 0; k < preview; k++)
             {
                 ResolvedDialogueSlot leaf = FindResolvedSlot(layout, ResolvedDialogueAreaKind.ChoiceLeaf, k);
                 if (leaf == null) continue;
+                Rect leafRect = DialogueVisualLayoutResolver.ClampInside(leaf.Rect, holderContent);
                 DialogueVisualStylePreviewUtility.DrawStyledElement(
-                    leaf.Rect,
+                    leafRect,
                     preset.Background,
                     preset.Border,
                     preset.Shadow,
@@ -826,9 +838,9 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                     1.2f);
                 if (IsSelected(leaf))
                     DialogueVisualStylePreviewUtility.DrawSelectionOutline(
-                        leaf.Rect, preset.Border, new Color(1f, 1f, 0.45f, 1f), 2f);
+                        leafRect, preset.Border, new Color(1f, 1f, 0.45f, 1f), 2f);
                 if (showLabels)
-                    GUI.Label(new Rect(leaf.Rect.x + 4f, leaf.Rect.y + 2f, 160f, 18f),
+                    GUI.Label(new Rect(leafRect.x + 4f, leafRect.y + 2f, 160f, 18f),
                         "Choice " + (k + 1), EditorStyles.whiteMiniLabel);
             }
         }
