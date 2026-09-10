@@ -1209,11 +1209,20 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
         switch (selection.Kind)
         {
             case SelectionKind.Area:
-                if (selection.AreaKind == ResolvedDialogueAreaKind.MainInner)
+                if (selection.AreaKind == ResolvedDialogueAreaKind.MainInner ||
+                    selection.AreaKind == ResolvedDialogueAreaKind.ChoiceInner)
                 {
-                    DialogueInnerRegionDefinition region = layoutAsset.MainPanel != null
-                        ? layoutAsset.MainPanel.InnerRegion : null;
+                    DialogueInnerRegionDefinition region = selection.AreaKind == ResolvedDialogueAreaKind.ChoiceInner
+                        ? (layoutAsset.ChoicePanel != null ? layoutAsset.ChoicePanel.InnerRegion : null)
+                        : (layoutAsset.MainPanel != null ? layoutAsset.MainPanel.InnerRegion : null);
                     if (region != null) dragStartSelectionOffset = region.Offset;
+                }
+                else if (selection.AreaKind == ResolvedDialogueAreaKind.FreeInner)
+                {
+                    DialogueMainPanelDefinition freeDef = DialogueVisualEditorUtility.FreePanelAt(
+                        layoutAsset, selection.FreePanelIndex);
+                    DialogueInnerRegionDefinition freeRegion = freeDef != null ? freeDef.InnerRegion : null;
+                    if (freeRegion != null) dragStartSelectionOffset = freeRegion.Offset;
                 }
                 else
                 {
