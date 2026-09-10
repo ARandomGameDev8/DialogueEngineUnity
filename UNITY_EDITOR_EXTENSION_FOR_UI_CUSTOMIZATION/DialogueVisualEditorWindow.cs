@@ -420,6 +420,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             new Color(0.70f, 0.82f, 1f, 1f),
             2f);
         }
+        MarkUnpaintedPanel(layout.MainPanelRect, mainPanel);
         if (selection.Kind == SelectionKind.MainPanel)
             DialogueVisualStylePreviewUtility.DrawSelectionOutline(
                 layout.MainPanelRect,
@@ -428,8 +429,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 2.5f);
         if (showLabels)
             GUI.Label(new Rect(layout.MainPanelRect.x + 6f, layout.MainPanelRect.y + 4f, 300f, 18f),
-                "Main Panel" + (PanelBackgroundPaintsNothing(mainPanel)
-                    ? "  ·  background: NONE (placeholder tint — pick a colour)" : ""),
+                "Main Panel" + PanelPaintSuffix(mainPanel),
                 EditorStyles.whiteBoldLabel);
 
         // Areas paint in Z order (ties keep their resolved order), so an inner
@@ -633,21 +633,47 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
     }
 
     /// <summary>
-    /// True when the panel paints NO background whatsoever with its colours:
-    /// Mode = None, an invisible colour (alpha 0 / opacity 0) or overall
-    /// opacity 0. The canvas then only shows a placeholder tint, so the label
-    /// says so instead of letting a colour edit look like it did nothing.
+    /// Short reason why a panel paints NO background of its own, or "" when it
+    /// paints one. This is what the canvas label shows: a panel that paints
+    /// nothing is marked as such instead of a colour edit silently doing
+    /// nothing. Covers every way a surface can end up invisible — Mode = None
+    /// (the canvas placeholder is NOT the panel's colour), a colour whose ALPHA
+    /// is 0, background/overall opacity 0, and an Image Background panel whose
+    /// image replaces the whole surface.
     /// </summary>
-    static bool PanelBackgroundPaintsNothing(DialogueMainPanelDefinition panel)
+    static string PanelPaintProblem(DialogueMainPanelDefinition panel)
     {
-        if (panel == null) return true;
+        if (panel == null) return "no panel";
         if (panel.UseImageBackground && System.IO.File.Exists(panel.ImageBackgroundPath))
-            return false; // the image is the panel body, not the colours
+            return "body = image (background/border colours ignored)";
         float overall = panel.Opacity != null ? Mathf.Clamp01(panel.Opacity.Opacity) : 1f;
-        if (overall <= 0.0001f) return true;
+        if (overall <= 0.0001f) return "overall opacity 0 - NOTHING shows";
         DialogueBackgroundStyle bg = panel.Background;
-        if (bg == null || bg.Mode == DialogueBackgroundMode.None) return true;
-        return bg.ColorA.a * Mathf.Clamp01(bg.Opacity) * overall <= 0.0001f;
+        if (bg == null || bg.Mode == DialogueBackgroundMode.None)
+            return "background: NONE (placeholder tint, Play shows through)";
+        if (bg.ColorA.a * Mathf.Clamp01(bg.Opacity) * overall <= 0.0001f)
+            return "background TRANSPARENT (colour alpha 0 or opacity 0)";
+        return "";
+    }
+
+    /// <summary>A dashed outline on a panel that paints no background, so a
+    /// panel the user styled but that paints nothing is still visible and
+    /// unmistakably marked on the canvas.</summary>
+    void MarkUnpaintedPanel(Rect rect, DialogueMainPanelDefinition panel)
+    {
+        if (rect.width <= 0f || rect.height <= 0f) return;
+        if (string.IsNullOrEmpty(PanelPaintProblem(panel))) return;
+        Handles.color = new Color(1f, 0.45f, 0.85f, 0.9f);
+        DrawDashedRect(rect, 7f);
+    }
+
+    /// <summary>Canvas label suffix: "" for a panel that paints a background,
+    /// otherwise "  ·  &lt;reason&gt;" so the canvas never pretends a panel has a
+    /// colour it does not paint.</summary>
+    static string PanelPaintSuffix(DialogueMainPanelDefinition panel)
+    {
+        string problem = PanelPaintProblem(panel);
+        return string.IsNullOrEmpty(problem) ? "" : "  ·  " + problem;
     }
 
     /// <summary>
@@ -749,6 +775,25 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
 
         EditorGUILayout.HelpBox(what + " paints:  " + sb,
             problem ? MessageType.Warning : MessageType.None);
+
+        // One click instead of a hunt: make the surface paint something, now.
+        string problem = PanelPaintProblem(panel);
+        if (!string.IsNullOrEmpty(problem))
+        {
+            if (GUILayout.Button("Paint this panel now (Solid Colour, opacity 1)", GUILayout.Height(24f)))
+            {
+                if (panel.Background == null) panel.Background = new DialogueBackgroundStyle();
+                panel.Background.Mode = DialogueBackgroundMode.SolidColor;
+                panel.Background.Opacity = 1f;
+                Color fixedColour = panel.Background.ColorA;
+                if (fixedColour.a <= 0.0001f) fixedColour.a = 0.75f;
+                panel.Background.ColorA = fixedColour;
+                panel.Background.ColorB = fixedColour;
+                if (panel.Opacity != null && panel.Opacity.Opacity <= 0.0001f)
+                    panel.Opacity.Opacity = 1f;
+                GUI.changed = true; // the inspector commits it like any other edit
+            }
+        }
     }
 
     // A panel's border, drawn ON TOP of its children — the canvas mirror of
@@ -800,13 +845,13 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                     new Color(0.62f, 0.95f, 0.92f, 1f),
                     2f);
             }
+            MarkUnpaintedPanel(panelRect, freePanel);
             if (selection.Kind == SelectionKind.FreePanel && selection.FreePanelIndex == f)
                 DialogueVisualStylePreviewUtility.DrawSelectionOutline(
                     panelRect, freePanel.Border, new Color(1f, 1f, 0.45f, 1f), 2.5f);
             if (showLabels)
                 GUI.Label(new Rect(panelRect.x + 6f, panelRect.y + 4f, 300f, 18f),
-                    freePanel.DisplayName + (PanelBackgroundPaintsNothing(freePanel)
-                        ? "  ·  background: NONE (placeholder tint — pick a colour)" : ""),
+                    freePanel.DisplayName + PanelPaintSuffix(freePanel),
                     EditorStyles.whiteBoldLabel);
 
             ResolvedDialogueArea regionArea = FindFreeArea(layout, f);
@@ -903,6 +948,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
             new Color(0.85f, 0.62f, 1f, 1f),
             2f);
         }
+        MarkUnpaintedPanel(layout.ChoicePanelRect, choicePanel);
         if (selection.Kind == SelectionKind.ChoicePanel)
             DialogueVisualStylePreviewUtility.DrawSelectionOutline(
                 layout.ChoicePanelRect,
@@ -911,8 +957,7 @@ public sealed class DialogueVisualEditorWindow : EditorWindow
                 2.5f);
         if (showLabels)
             GUI.Label(new Rect(layout.ChoicePanelRect.x + 6f, layout.ChoicePanelRect.y + 4f, 300f, 18f),
-                "Choice Panel" + (PanelBackgroundPaintsNothing(choicePanel)
-                    ? "  ·  background: NONE (placeholder tint — pick a colour)" : ""),
+                "Choice Panel" + PanelPaintSuffix(choicePanel),
                 EditorStyles.whiteBoldLabel);
 
         ResolvedDialogueArea regionArea = FindAreaByKind(layout, ResolvedDialogueAreaKind.ChoiceInner);
